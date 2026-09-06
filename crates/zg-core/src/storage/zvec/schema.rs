@@ -1,0 +1,145 @@
+//! Entity collection schema: field names, index types, vector metric.
+//!
+//! Ports `createSchema`, `metricToZvec`, and the field helpers from
+//! `engine/storage/zvec.ts` onto the zvec-rust 0.7 builder API.
+
+use zvec_rust::{CollectionSchema, DataType, FieldSchema, IndexParams, MetricType};
+
+use crate::error::{EngineError, EngineErrorCode, EngineResult};
+use crate::types::{SearchMetric, WorkspaceIndexEmbeddingSchema};
+
+/// Vector field holding fragment embeddings.
+pub const ENTITY_VECTOR_FIELD: &str = "embedding";
+/// Full-text indexed field holding fragment text.
+pub const ENTITY_TEXT_FIELD: &str = "text";
+
+/// Builds the `zvec_grep_entities` collection schema for `embedding`.
+pub fn create_entities_schema(
+    embedding: &WorkspaceIndexEmbeddingSchema,
+) -> EngineResult<CollectionSchema> {
+    let dimension: u32 = embedding.dimension.try_into().map_err(|_| {
+        EngineError::new(
+            EngineErrorCode::new("STORAGE.INVALID_EMBEDDING_DIMENSION"),
+            "embedding dimension does not fit a u32",
+        )
+        .with_context(format!("dimension={}", embedding.dimension))
+    })?;
+    let mut schema = CollectionSchema::new("zvec_grep_entities").map_err(|error| {
+        EngineError::new(
+            EngineErrorCode::new("STORAGE.SCHEMA_FAILED"),
+            "failed to create entity collection schema",
+        )
+        .with_context(format!("error={error}"))
+    })?;
+    indexed_string_field(&mut schema, "group", true)?;
+    indexed_string_field(&mut schema, "file_id", false)?;
+    plain_string_field(&mut schema, "content_kind", false)?;
+    plain_string_field(&mut schema, "content_hash", true)?;
+    plain_string_field(&mut schema, "metadata_kind", true)?;
+    indexed_string_field(&mut schema, "symbol_type", true)?;
+    indexed_string_field(&mut schema, "symbol_name", true)?;
+    plain_string_field(&mut schema, "symbol_scope", true)?;
+    plain_string_field(&mut schema, "symbol_signature", true)?;
+    plain_string_field(&mut schema, "symbol_doc", true)?;
+    plain_string_field(&mut schema, "symbol_modifiers", true)?;
+    plain_string_field(&mut schema, "node_type", true)?;
+    plain_string_field(&mut schema, "heading", true)?;
+    int_field(&mut schema, "heading_level", true)?;
+    fts_text_field(&mut schema, ENTITY_TEXT_FIELD)?;
+    int_field(&mut schema, "fragment_index", false)?;
+    plain_string_field(&mut schema, "range_json", false)?;
+    plain_string_field(&mut schema, "content_base64", true)?;
+    plain_string_field(&mut schema, "image_format", true)?;
+    vector_field(
+        &mut schema,
+        ENTITY_VECTOR_FIELD,
+        dimension,
+        metric_to_zvec(embedding.metric)?,
+    )?;
+    Ok(schema)
+}
+
+/// Maps a workspace search metric onto the zvec metric type.
+pub fn metric_to_zvec(metric: SearchMetric) -> EngineResult<MetricType> {
+    match metric {
+        SearchMetric::Cosine => Ok(MetricType::Cosine),
+        SearchMetric::Dot => Ok(MetricType::Ip),
+        SearchMetric::Euclidean => Ok(MetricType::L2),
+    }
+}
+
+fn indexed_string_field(
+    schema: &mut CollectionSchema,
+    name: &str,
+    nullable: bool,
+) -> EngineResult<()> {
+    let mut field = FieldSchema::new(name, DataType::String, nullable, 0)
+        .map_err(|error| schema_error(name, &error.to_string()))?;
+    let params = IndexParams::invert(false, false)
+        .map_err(|error| schema_error(name, &error.to_string()))?;
+    field
+        .set_index_params(&params)
+        .map_err(|error| schema_error(name, &error.to_string()))?;
+    schema
+        .add_field(&field)
+        .map_err(|error| schema_error(name, &error.to_string()))
+}
+
+fn plain_string_field(
+    schema: &mut CollectionSchema,
+    name: &str,
+    nullable: bool,
+) -> EngineResult<()> {
+    let field = FieldSchema::new(name, DataType::String, nullable, 0)
+        .map_err(|error| schema_error(name, &error.to_string()))?;
+    schema
+        .add_field(&field)
+        .map_err(|error| schema_error(name, &error.to_string()))
+}
+
+fn int_field(schema: &mut CollectionSchema, name: &str, nullable: bool) -> EngineResult<()> {
+    let field = FieldSchema::new(name, DataType::Int32, nullable, 0)
+        .map_err(|error| schema_error(name, &error.to_string()))?;
+    schema
+        .add_field(&field)
+        .map_err(|error| schema_error(name, &error.to_string()))
+}
+
+fn fts_text_field(schema: &mut CollectionSchema, name: &str) -> EngineResult<()> {
+    let mut field = FieldSchema::new(name, DataType::String, false, 0)
+        .map_err(|error| schema_error(name, &error.to_string()))?;
+    let params = IndexParams::fts(Some("jieba"), Some(&["lowercase"]), None)
+        .map_err(|error| schema_error(name, &error.to_string()))?;
+    field
+        .set_index_params(&params)
+        .map_err(|error| schema_error(name, &error.to_string()))?;
+    schema
+        .add_field(&field)
+        .map_err(|error| schema_error(name, &error.to_string()))
+}
+
+fn vector_field(
+    schema: &mut CollectionSchema,
+    name: &str,
+    dimension: u32,
+    metric: MetricType,
+) -> EngineResult<()> {
+    let mut field = FieldSchema::new(name, DataType::VectorFp32, false, dimension)
+        .map_err(|error| schema_error(name, &error.to_string()))?;
+    let params = IndexParams::hnsw(metric, 16, 200)
+        .map_err(|error| schema_error(name, &error.to_string()))?;
+    field
+        .set_index_params(&params)
+        .map_err(|error| schema_error(name, &error.to_string()))?;
+    schema
+        .add_field(&field)
+        .map_err(|error| schema_error(name, &error.to_string()))
+}
+
+fn schema_error(field: &str, detail: &str) -> EngineError {
+    EngineError::new(
+        EngineErrorCode::new("STORAGE.SCHEMA_FAILED"),
+        "failed to build entity collection schema",
+    )
+    .with_context(format!("field={field} error={detail}"))
+}

@@ -1,0 +1,74 @@
+[workspace]
+resolver = "3"
+members = ["crates/zg-core", "crates/zg-server", "crates/zg"]
+
+[workspace.package]
+version = "0.2.1"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/zvec-ai/zvec-grep"
+rust-version = "1.85"
+
+[workspace.dependencies]
+zg-core = { path = "crates/zg-core" }
+zg-server = { path = "crates/zg-server" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
+rayon = "1"
+crossbeam-channel = "0.5"
+walkdir = "2"
+ignore = "0.4"
+globset = "0.4"
+grep-searcher = "0.1"
+grep-matcher = "0.1"
+grep-regex = "0.1"
+zvec-rust = "0.7"
+tokenizers = { version = "0.21", default-features = false, features = ["onig", "http"] }
+safetensors = "0.6"
+half = "2"
+ureq = { version = "3", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking", "stream"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util", "process", "fs"] }
+axum = { version = "0.8", features = ["json"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors"] }
+rmcp = { version = "0.6", features = ["server", "client", "transport-streamable-http-server", "transport-child-process", "auth"] }
+clap = { version = "4", features = ["derive", "string", "env"] }
+clap_complete = "4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tree-sitter = "0.25"
+tree-sitter-c = "0.23"
+tree-sitter-cpp = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-rust = "0.23"
+tree-sitter-typescript = "0.23"
+pulldown-cmark = "0.13"
+futures = "0.3"
+async-trait = "0.1"
+rand = "0.9"
+hmac = "0.12"
+base64 = "0.22"
+url = "2"
+tempfile = "3"
+libc = "0.2"
+os_info = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[profile.dist]
+inherits = "release"
+lto = "fat"

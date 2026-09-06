@@ -1,0 +1,46 @@
+[package]
+name = "zg-core"
+description = "zvec-grep engine: workspace scanning, extraction, embeddings, index storage, and hybrid retrieval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+regex.workspace = true
+rayon.workspace = true
+walkdir.workspace = true
+ignore.workspace = true
+globset.workspace = true
+grep-searcher.workspace = true
+grep-matcher.workspace = true
+grep-regex.workspace = true
+zvec-rust.workspace = true
+tokenizers.workspace = true
+safetensors.workspace = true
+half.workspace = true
+ureq.workspace = true
+tree-sitter.workspace = true
+tree-sitter-c.workspace = true
+tree-sitter-cpp.workspace = true
+tree-sitter-go.workspace = true
+tree-sitter-java.workspace = true
+tree-sitter-javascript.workspace = true
+tree-sitter-python.workspace = true
+tree-sitter-rust.workspace = true
+tree-sitter-typescript.workspace = true
+libc.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[features]
+default = []

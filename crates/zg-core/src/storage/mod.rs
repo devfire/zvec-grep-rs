@@ -1,0 +1,135 @@
+//! Workspace index storage abstraction over zvec collections.
+
+pub mod layout;
+pub mod zvec;
+
+use std::path::Path;
+
+use crate::error::EngineResult;
+use crate::ids::{EntityId, FileId};
+use crate::types::{CodeSymbolType, EntityFragment, FileInfo, WorkspaceIndexEmbeddingSchema};
+
+/// Options for opening workspace index storage.
+#[derive(Debug, Clone)]
+pub enum StorageOptions<'a> {
+    ReadOnly {
+        storage_path: &'a Path,
+    },
+    ReadWrite {
+        storage_path: &'a Path,
+        embedding: &'a WorkspaceIndexEmbeddingSchema,
+    },
+}
+
+impl StorageOptions<'_> {
+    pub fn storage_path(&self) -> &Path {
+        match self {
+            Self::ReadOnly { storage_path } | Self::ReadWrite { storage_path, .. } => storage_path,
+        }
+    }
+
+    pub fn read_only(&self) -> bool {
+        matches!(self, Self::ReadOnly { .. })
+    }
+}
+
+/// An entity joined with its owning file, as returned by storage reads.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredEntity {
+    pub entity: crate::types::Entity,
+    pub file: FileInfo,
+}
+
+/// A fragment plus its embedding vector, ready to upsert.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexedFragment {
+    pub fragment: EntityFragment,
+    pub vector: Vec<f32>,
+}
+
+/// Per-file diagnostics recorded with an indexed file.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FileIndexDiagnostics {
+    pub truncated_fragment_count: Option<usize>,
+}
+
+/// Pagination for entity listing.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ListEntitiesOptions {
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
+/// Filters applied during FTS/vector recall.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StorageSearchFilter {
+    pub file_ids: Vec<FileId>,
+    pub group_ids: Vec<String>,
+    pub symbol_names: Vec<String>,
+    pub symbol_types: Vec<CodeSymbolType>,
+}
+
+/// Which recall path produced a hit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageSearchPath {
+    Fts,
+    Vector,
+}
+
+/// A raw storage-level search hit before fusion.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StorageSearchHit {
+    pub fragment: EntityFragment,
+    pub file: FileInfo,
+    pub path: StorageSearchPath,
+    pub score: f64,
+}
+
+/// Storage surface consumed by the indexing and search pipelines.
+pub trait WorkspaceIndexStorage: Send {
+    fn read_only(&self) -> bool;
+
+    fn get_file_by_path(&self, absolute_path: &str) -> Option<FileInfo>;
+    fn list_files_by_path_prefix(&self, absolute_path: &str) -> Vec<FileInfo>;
+    fn list_files_by_path_prefixes(&self, absolute_paths: &[String]) -> Vec<FileInfo>;
+    fn list_files(&self) -> Vec<FileInfo>;
+
+    fn list_entities_by_file(
+        &self,
+        file_id: &FileId,
+        options: ListEntitiesOptions,
+    ) -> Vec<StoredEntity>;
+    fn get_entity(&self, entity_id: &EntityId) -> Option<StoredEntity>;
+
+    fn search_fts(
+        &self,
+        query: &str,
+        limit: usize,
+        filter: Option<&StorageSearchFilter>,
+    ) -> EngineResult<Vec<StorageSearchHit>>;
+    fn search_vector(
+        &self,
+        vector: &[f32],
+        limit: usize,
+        filter: Option<&StorageSearchFilter>,
+    ) -> EngineResult<Vec<StorageSearchHit>>;
+
+    fn replace_file(
+        &mut self,
+        file: &FileInfo,
+        entries: &[IndexedFragment],
+        diagnostics: Option<&FileIndexDiagnostics>,
+    ) -> EngineResult<()>;
+    fn mark_file_failed(&mut self, file: &FileInfo, error: &str) -> EngineResult<()>;
+    fn delete_file(&mut self, file_id: &FileId) -> EngineResult<()>;
+
+    fn finalize_writes(&mut self) -> EngineResult<()>;
+    fn close(&mut self);
+}
+
+/// Opens workspace index storage per `options`.
+pub fn create_workspace_index_storage(
+    options: StorageOptions<'_>,
+) -> EngineResult<Box<dyn WorkspaceIndexStorage>> {
+    zvec::ZvecWorkspaceIndexStorage::open(options)
+}
