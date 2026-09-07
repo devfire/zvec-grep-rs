@@ -258,7 +258,7 @@ fn try_reclaim_stale(lock_dir: &Path, stale_ms: i64) -> Reclaim {
                     token: String::new(),
                     pid: 0,
                     hostname: String::new(),
-                    started_at: UnixMillis(dir_mtime_ms(lock_dir).unwrap_or_default()),
+                    started_at: UnixMillis::from_millis(dir_mtime_ms(lock_dir).unwrap_or_default()),
                     operation: "unknown".to_owned(),
                 }),
             };
@@ -272,7 +272,7 @@ fn try_reclaim_stale(lock_dir: &Path, stale_ms: i64) -> Reclaim {
 }
 
 fn is_stale(info: &FileLockInfo, stale_ms: i64) -> bool {
-    let age = UnixMillis::now().0 - info.started_at.0;
+    let age = UnixMillis::now().as_millis() - info.started_at.as_millis();
     if age > stale_ms {
         return true;
     }
@@ -298,7 +298,7 @@ fn io_other(error: serde_json::Error) -> std::io::Error {
 
 fn dir_age_ms(dir: &Path) -> Option<i64> {
     let mtime = dir_mtime_ms(dir)?;
-    Some(UnixMillis::now().0 - mtime)
+    Some(UnixMillis::now().as_millis() - mtime)
 }
 
 fn dir_mtime_ms(dir: &Path) -> Option<i64> {

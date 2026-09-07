@@ -229,7 +229,7 @@ fn file_info_for_structure(
         },
         root_path: crate::paths::to_display_path(root),
         size_bytes: metadata.len(),
-        last_modified_time: crate::types::UnixMillis(mtime_millis),
+        last_modified_time: crate::types::UnixMillis::from_millis(mtime_millis),
         content_hash: None,
         kind: detected.kind,
         format: detected.format,

@@ -113,10 +113,25 @@ pub struct ScanOptions {
 }
 
 /// Shared cancellation flag (replaces `AbortSignal` in sync code).
+///
+/// The inner [`Arc`] is private: construct with [`CancelFlag::new`], trip it
+/// with [`CancelFlag::cancel`], probe it with [`CancelFlag::is_cancelled`]
+/// (M2). Clones share one flag, so one `cancel()` trips every holder.
 #[derive(Debug, Clone, Default)]
-pub struct CancelFlag(pub std::sync::Arc<AtomicBool>);
+pub struct CancelFlag(std::sync::Arc<AtomicBool>);
 
 impl CancelFlag {
+    /// A flag that starts un-cancelled.
+    pub fn new() -> Self {
+        Self(std::sync::Arc::new(AtomicBool::new(false)))
+    }
+
+    /// Trips the flag for every clone sharing it.
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    /// True once [`CancelFlag::cancel`] ran on any clone.
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Relaxed)
     }
@@ -1101,7 +1116,7 @@ fn read_file_info(
     if known.is_some_and(|known| {
         known.content_hash.is_some()
             && known.size_bytes == info.len()
-            && known.last_modified_time.0 == last_modified_time
+            && known.last_modified_time.as_millis() == last_modified_time
     }) {
         return Ok(Some(FileInfo {
             id: make_file_id(workspace_index_id, absolute_path),
@@ -1109,7 +1124,7 @@ fn read_file_info(
             relative_path,
             root_path: root.absolute_path.clone(),
             size_bytes: info.len(),
-            last_modified_time: UnixMillis(last_modified_time),
+            last_modified_time: UnixMillis::from_millis(last_modified_time),
             content_hash: None,
             kind: detected.kind,
             format: detected.format,
@@ -1133,7 +1148,7 @@ fn read_file_info(
         relative_path,
         root_path: root.absolute_path.clone(),
         size_bytes: info.len(),
-        last_modified_time: UnixMillis(last_modified_time),
+        last_modified_time: UnixMillis::from_millis(last_modified_time),
         content_hash: None,
         kind: detected.kind,
         format: detected.format,

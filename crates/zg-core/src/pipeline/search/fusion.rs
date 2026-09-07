@@ -231,7 +231,7 @@ mod tests {
                 relative_path: "f".to_owned(),
                 root_path: "/".to_owned(),
                 size_bytes: 0,
-                last_modified_time: crate::types::UnixMillis(0),
+                last_modified_time: crate::types::UnixMillis::from_millis(0),
                 content_hash: None,
                 kind: crate::types::FileKind::Text,
                 format: crate::types::FileFormat::parse("text"),

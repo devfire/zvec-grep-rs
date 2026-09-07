@@ -10,8 +10,8 @@ pub const ENGINE_ERROR_CODE_PREFIX: &str = "ZVEC_GREP.ENGINE";
 ///
 /// The wire string is the contract and never changes; the representation is
 /// a `&'static str` suffix so codes are `Copy`, allocation-free, and
-/// exhaustiveness-checkable at the call site. Assembling a code from a
-/// runtime string (`EngineErrorCode::new(&format!(..))`) is impossible by
+/// exhaustiveness-checkable at the call site. There is no constructor taking
+/// a runtime string, so assembling a code from one is impossible by
 /// construction — every code in the tree is a literal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct EngineErrorCode(&'static str);

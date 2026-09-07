@@ -21,13 +21,6 @@ use crate::types::{
 /// boundary via `spawn_blocking`; borrowed `&dyn Fn` is leaf-only.
 pub type AbortCheck = Arc<dyn Fn() -> bool + Send + Sync>;
 
-/// How the embedding model handle is owned by the service.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EmbeddingModelOwnership {
-    Owned,
-    Borrowed,
-}
-
 /// Options accepted by [`crate::service::ZvecGrepService::index`].
 #[derive(Default)]
 pub struct ZvecGrepIndexOptions<'a> {

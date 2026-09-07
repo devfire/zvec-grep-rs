@@ -245,12 +245,16 @@ fn validate_search_plan(plan: &SearchPlan) -> EngineResult<ResolvedSearchPlan> {
     let modified_after = normalize_modified_time(plan.modified_after, "modifiedAfter")?;
     let modified_before = normalize_modified_time(plan.modified_before, "modifiedBefore")?;
     if let (Some(after), Some(before)) = (modified_after, modified_before) {
-        if after.0 > before.0 {
+        if after.as_millis() > before.as_millis() {
             return Err(EngineError::new(
                 EngineErrorCode::from_static("SEARCH_PLAN.INVALID_MODIFIED_TIME_RANGE"),
                 "search plan modified-after filter must not be later than modified-before",
             )
-            .with_context(format!("modifiedAfter={} modifiedBefore={}", after.0, before.0)));
+            .with_context(format!(
+                "modifiedAfter={} modifiedBefore={}",
+                after.as_millis(),
+                before.as_millis()
+            )));
         }
     }
     Ok(ResolvedSearchPlan {
@@ -359,12 +363,12 @@ fn normalize_modified_time(
 ) -> EngineResult<Option<UnixMillis>> {
     match value {
         None => Ok(None),
-        Some(time) if time.0 >= 0 => Ok(Some(time)),
+        Some(time) if time.as_millis() >= 0 => Ok(Some(time)),
         Some(time) => Err(EngineError::new(
             EngineErrorCode::from_static("SEARCH_PLAN.INVALID_MODIFIED_TIME_FILTER"),
             "search plan modified time filters must be non-negative epoch milliseconds",
         )
-        .with_context(format!("field={field} value={}", time.0))),
+        .with_context(format!("field={field} value={}", time.as_millis()))),
     }
 }
 
@@ -972,10 +976,16 @@ fn resolve_filtered_file_ids(
 }
 
 fn matches_modified_time_filter(file: &FileInfo, plan: &SearchPlan) -> bool {
-    if plan.modified_after.is_some_and(|after| file.last_modified_time.0 < after.0) {
+    if plan
+        .modified_after
+        .is_some_and(|after| file.last_modified_time.as_millis() < after.as_millis())
+    {
         return false;
     }
-    if plan.modified_before.is_some_and(|before| file.last_modified_time.0 > before.0) {
+    if plan
+        .modified_before
+        .is_some_and(|before| file.last_modified_time.as_millis() > before.as_millis())
+    {
         return false;
     }
     true

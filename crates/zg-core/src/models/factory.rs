@@ -2,22 +2,24 @@
 //!
 //! [`plan_embedding_model`] resolves a catalog reference plus user options
 //! into a fully-validated [`ModelBuildPlan`] — endpoints defaulted, API keys
-//! required, cache directories defaulted. The backends wave consumes each
-//! plan variant in its constructor; [`create_embedding_model`] is the
-//! dispatch entry point and reports `NOT_IMPLEMENTED` (exactly like the
-//! TypeScript `unsupportedCatalogEntry` arm) until a backend claims its arm.
+//! required, cache directories defaulted. Each plan variant feeds its owning
+//! backend constructor; [`create_embedding_model`] is the dispatch entry
+//! point. Entries whose backend has no implementation yet (llama-cpp and
+//! transformers-js until phases C/D land their cargo-feature gates) report
+//! [`ModelError::BackendUnavailable`], mirroring the TypeScript
+//! `unsupportedCatalogEntry` arm with a typed error instead of a string.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::EmbeddingModel;
+use super::backends::{Model2VecEmbeddingModel, Qwen3VlEmbeddingModel, QwenTextEmbeddingModel};
 use super::catalog::{
-    EmbeddingCatalogEntry, LlamaCppEntry, Model2VecEntry, ModelReference, QwenMultimodalEntry,
-    QwenTextEntry, TransformersJsEntry, get_embedding_model_catalog_entry,
+    BackendKind, EmbeddingCatalogEntry, LlamaCppEntry, Model2VecEntry, ModelReference,
+    QwenMultimodalEntry, QwenTextEntry, TransformersJsEntry, get_embedding_model_catalog_entry,
 };
 use super::embeddings::{ApiKey, CreateEmbeddingModelOptions};
 use super::error::{ModelError, QwenBackend, QwenTextModel};
-use crate::error::{EngineError, EngineResult};
 use crate::paths::default_home;
 
 /// Environment variable overriding the local model cache directory.
@@ -88,11 +90,11 @@ impl ModelBuildPlan {
 pub fn plan_embedding_model(
     reference: &ModelReference,
     options: &CreateEmbeddingModelOptions,
-) -> EngineResult<ModelBuildPlan> {
+) -> Result<ModelBuildPlan, ModelError> {
     let entry = get_embedding_model_catalog_entry(reference.as_str()).ok_or_else(|| {
-        EngineError::from(ModelError::CatalogModelNotFound {
+        ModelError::CatalogModelNotFound {
             reference: reference.as_str().to_owned(),
-        })
+        }
     })?;
     match entry {
         EmbeddingCatalogEntry::LlamaCpp(entry) => Ok(ModelBuildPlan::LlamaCpp {
@@ -144,24 +146,45 @@ pub fn plan_embedding_model(
 /// Dispatch entry point: plans the model, then hands the plan to the owning
 /// backend constructor.
 ///
-/// Per-backend arms currently report `EMBEDDING_MODEL_NOT_IMPLEMENTED` —
-/// the exact TypeScript `unsupportedCatalogEntry` behavior — until the
-/// backends wave claims them. Unknown references report
-/// `EMBEDDING_CATALOG_MODEL_NOT_FOUND` via [`plan_embedding_model`].
+/// Model2vec and both Qwen arms construct working models. The llama-cpp and
+/// transformers-js arms report [`ModelError::BackendUnavailable`] until
+/// phases C/D land their cargo-feature gates; unknown references report
+/// [`ModelError::CatalogModelNotFound`] via [`plan_embedding_model`].
 pub fn create_embedding_model(
     reference: &ModelReference,
     options: &CreateEmbeddingModelOptions,
-) -> EngineResult<Arc<dyn EmbeddingModel>> {
+) -> Result<Arc<dyn EmbeddingModel>, ModelError> {
     let plan = plan_embedding_model(reference, options)?;
-    Err(EngineError::from(ModelError::NotImplemented {
-        reference: reference.as_str().to_owned(),
-        backend: match &plan {
-            ModelBuildPlan::LlamaCpp { .. } => "llama-cpp",
-            ModelBuildPlan::QwenText { .. } | ModelBuildPlan::QwenMultimodal { .. } => "qwen",
-            ModelBuildPlan::TransformersJs { .. } => "transformers-js",
-            ModelBuildPlan::Model2Vec { .. } => "model2vec",
-        },
-    }))
+    match plan {
+        ModelBuildPlan::Model2Vec { entry, cache_dir } => Ok(Arc::new(
+            Model2VecEmbeddingModel::from_plan(entry, cache_dir),
+        )),
+        ModelBuildPlan::QwenText {
+            entry,
+            api_key,
+            endpoint,
+        } => Ok(Arc::new(QwenTextEmbeddingModel::from_plan(
+            entry, api_key, endpoint,
+        ))),
+        ModelBuildPlan::QwenMultimodal {
+            entry,
+            api_key,
+            endpoint,
+        } => Ok(Arc::new(Qwen3VlEmbeddingModel::from_plan(
+            entry, api_key, endpoint,
+        ))),
+        // No `onnx`/`llama` cargo features exist yet (phases C/D): these
+        // entries resolve but cannot load, so the typed answer is
+        // `BackendUnavailable`, not a stringly `NOT_IMPLEMENTED`.
+        ModelBuildPlan::TransformersJs { entry, .. } => Err(ModelError::BackendUnavailable {
+            reference: entry.reference.to_owned(),
+            backend: BackendKind::TransformersJs,
+        }),
+        ModelBuildPlan::LlamaCpp { entry, .. } => Err(ModelError::BackendUnavailable {
+            reference: entry.reference.to_owned(),
+            backend: BackendKind::LlamaCpp,
+        }),
+    }
 }
 
 /// Requires a non-blank API key, mirroring the Qwen backend constructors.
@@ -172,12 +195,10 @@ pub fn require_api_key(
     reference: &str,
     backend: QwenBackend,
     api_key: Option<&str>,
-) -> EngineResult<ApiKey> {
+) -> Result<ApiKey, ModelError> {
     let key = api_key.unwrap_or("").trim();
     if key.is_empty() {
-        return Err(EngineError::from(ModelError::missing_api_key(
-            reference, backend,
-        )));
+        return Err(ModelError::missing_api_key(reference, backend));
     }
     Ok(ApiKey::new(key))
 }
@@ -189,12 +210,10 @@ pub fn resolve_endpoint(
     default_endpoint: &str,
     backend: QwenBackend,
     endpoint: Option<&str>,
-) -> EngineResult<String> {
+) -> Result<String, ModelError> {
     let resolved = endpoint.unwrap_or(default_endpoint).trim();
     if resolved.is_empty() {
-        return Err(EngineError::from(ModelError::missing_endpoint(
-            reference, backend,
-        )));
+        return Err(ModelError::missing_endpoint(reference, backend));
     }
     Ok(resolved.to_owned())
 }
@@ -260,5 +279,54 @@ mod tests {
             err.code().to_string(),
             "ZVEC_GREP.ENGINE.MODELS.QWEN_TEXT_EMBEDDING_V4_MISSING_ENDPOINT"
         );
+    }
+
+    #[test]
+    fn create_resolves_model2vec_with_catalog_dimension() {
+        let model =
+            create_embedding_model(&reference("local/potion-retrieval-32m"), &options()).unwrap();
+        assert_eq!(model.info().dimension, 512);
+    }
+
+    #[test]
+    fn create_resolves_qwen_models_with_catalog_dimensions() {
+        let mut opts = options();
+        opts.api_key = Some("test-key".to_owned());
+        for (name, dimension) in [
+            ("qwen/text-embedding-v4", 1024),
+            ("qwen/qwen3.7-text-embedding", 1024),
+            ("qwen/qwen3-vl-embedding", 2560),
+        ] {
+            let model = create_embedding_model(&reference(name), &opts).unwrap();
+            assert_eq!(model.info().dimension, dimension, "{name}");
+        }
+    }
+
+    #[test]
+    fn create_reports_unknown_reference() {
+        let Err(err) = create_embedding_model(&reference("nope/unknown"), &options()) else {
+            panic!("expected CatalogModelNotFound");
+        };
+        assert!(matches!(err, ModelError::CatalogModelNotFound { .. }));
+        assert_eq!(
+            err.code().to_string(),
+            "ZVEC_GREP.ENGINE.MODELS.EMBEDDING_CATALOG_MODEL_NOT_FOUND"
+        );
+    }
+
+    #[test]
+    fn create_reports_backend_unavailable_when_compiled_out() {
+        // No `onnx`/`llama` cargo features exist yet (phases C/D), so the
+        // transformers-js and llama-cpp entries resolve but cannot load.
+        for name in ["local/embeddinggemma-300m", "local/bge-small-en-v1.5"] {
+            let Err(err) = create_embedding_model(&reference(name), &options()) else {
+                panic!("expected BackendUnavailable for {name}");
+            };
+            assert!(matches!(err, ModelError::BackendUnavailable { .. }), "{name}");
+            assert_eq!(
+                err.code().to_string(),
+                "ZVEC_GREP.ENGINE.MODELS.EMBEDDING_BACKEND_UNAVAILABLE"
+            );
+        }
     }
 }

@@ -45,5 +45,12 @@ tempfile.workspace = true
 [features]
 default = []
 test-support = []
+# Heavy local-inference backends (M7): off by default so `cargo install zg`
+# needs no C++ toolchain and `cargo test -p zg-core` stays hermetic.
+# Phases C/D fill these with `dep:ort` / `dep:llama-cpp-2` plus
+# `#[cfg(feature)]`-gated factory arms; until then the factory answers
+# `ModelError::BackendUnavailable` for both entries.
+onnx = []
+llama = []
 [lints]
 workspace = true

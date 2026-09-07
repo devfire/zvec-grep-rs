@@ -35,15 +35,29 @@ pub use workspace::{
 };
 
 /// Milliseconds since the Unix epoch.
+///
+/// The field is private so wall-clock values flow through [`UnixMillis::now`]
+/// or the explicitly-untrusted [`UnixMillis::from_millis`]; readers use
+/// [`UnixMillis::as_millis`] (M2).
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,
 )]
-pub struct UnixMillis(pub i64);
+pub struct UnixMillis(i64);
 
 impl UnixMillis {
     /// Current wall-clock time.
     pub fn now() -> Self {
         Self(chrono::Utc::now().timestamp_millis())
+    }
+
+    /// Wraps a raw millisecond count (file mtimes, wire values).
+    pub fn from_millis(millis: i64) -> Self {
+        Self(millis)
+    }
+
+    /// The wrapped millisecond count.
+    pub fn as_millis(self) -> i64 {
+        self.0
     }
 }
 
