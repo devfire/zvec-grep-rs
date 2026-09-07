@@ -63,16 +63,18 @@ pub fn delete_workspace_index_storage(storage_path: &Path) -> EngineResult<()> {
             )
             .with_context(format!("path={}", target.display())));
         }
-        std::fs::remove_dir_all(target)
+        // `files.json` is a file and `index.zvec` a directory:
+        // `remove_dir_all` on a file fails with `ENOTDIR`, so branch on the
+        // file kind first instead of only falling back on `NotFound`.
+        let removal = if target.is_dir() {
+            std::fs::remove_dir_all(target)
+        } else {
+            std::fs::remove_file(target)
+        };
+        removal
             .or_else(|error| {
                 if error.kind() == std::io::ErrorKind::NotFound {
-                    std::fs::remove_file(target).or_else(|file_error| {
-                        if file_error.kind() == std::io::ErrorKind::NotFound {
-                            Ok(())
-                        } else {
-                            Err(file_error)
-                        }
-                    })
+                    Ok(())
                 } else {
                     Err(error)
                 }

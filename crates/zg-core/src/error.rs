@@ -120,6 +120,10 @@ pub mod codes {
         EngineErrorCode::from_static("DAEMON_LEASE_ACTIVE")
     }
 
+    pub const fn service_read_session_closed() -> EngineErrorCode {
+        EngineErrorCode::from_static("SERVICE.READ_SESSION_CLOSED")
+    }
+
     pub const fn extractor_code_invalid_chunk_size() -> EngineErrorCode {
         EngineErrorCode::from_static("EXTRACTORS.CODE_INVALID_CHUNK_SIZE")
     }

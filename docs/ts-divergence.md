@@ -29,6 +29,32 @@ strings, auth prompt text) never diverge; only internal structure does.
   Reason: GC-language artifact — in Rust ownership is the type system and
   the discriminant next to an `Arc` invites impossible-state matches (M3).
 
+## Storage
+
+- `zvec.ts` FTS `tokenizerName: "jieba"`; `schema.rs` uses `"standard"`.
+  Reason: the server refuses `jieba` without a `jieba_dict_dir` that
+  neither package ships — with `jieba` no collection can be created at
+  all. `standard` segments space-separated text identically; CJK recall
+  may differ. Revisit when dicts are vendored (phase E).
+- `deleteWorkspaceIndexStorage`; `layout.rs` branches file-vs-directory
+  removal. Reason: `remove_dir_all` on `files.json` fails with `ENOTDIR`
+  (bug fix, no behavior divergence).
+- Optional doc readers (`group`, `content_hash`, `heading_level`, ...);
+  `codec.rs` maps absent fields to `None` via `has_field`. Reason: writers
+  skip `None`, and reading an absent field errors — without this every
+  recall hit fails to decode and search returns nothing (bug fix).
+
+## Service
+
+- `zvec-grep.ts` lives in `service/service.rs`; here it is
+  `service/facade.rs`. Reason: `clippy::module_inception` (deny) forbids a
+  module with its parent's name.
+- `ZvecGrepService` methods are sync and the search method is named
+  `context()` after the TS method and DTOs (the plan's "search" label).
+  Reason: `EmbeddingModel::embed` is sync; async wrapping is phase G's
+  `spawn_blocking` seam (M4/M6). Cancellation crosses via a poll thread
+  tripping `CancelFlag`; the daemon wires `CancellationToken` properly.
+
 ## Deferred (accepted gaps, not silence)
 
 - `ZvecGrepInfoResult` six-`Option` cluster stays until phase B, where the

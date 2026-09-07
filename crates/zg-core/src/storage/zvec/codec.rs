@@ -441,6 +441,11 @@ fn add_optional_string(
 }
 
 fn optional_string_field(doc: &Doc, field: &str, pk: &str) -> EngineResult<Option<String>> {
+    // Unset fields are absent from the document (writers skip `None`), and
+    // reading an absent field errors — so absence is `None`, not failure.
+    if !doc.has_field(field) || doc.is_field_null(field) {
+        return Ok(None);
+    }
     doc.get_string(field)
         .map_err(|error| doc_field_error(pk, field, &error.to_string()))
 }
@@ -457,6 +462,9 @@ fn required_string_field(doc: &Doc, field: &str, pk: &str) -> EngineResult<Strin
 }
 
 fn optional_i32_field(doc: &Doc, field: &str, pk: &str) -> EngineResult<Option<i32>> {
+    if !doc.has_field(field) || doc.is_field_null(field) {
+        return Ok(None);
+    }
     doc.get_i32(field)
         .map_err(|error| doc_field_error(pk, field, &error.to_string()))
 }
