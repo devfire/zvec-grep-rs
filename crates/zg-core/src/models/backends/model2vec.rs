@@ -22,14 +22,15 @@ use std::sync::OnceLock;
 
 use safetensors::Dtype;
 
-use crate::error::{EngineError, EngineErrorCode, EngineResult};
+use crate::error::{EngineError, EngineResult};
 
 use crate::models::catalog::{Model2VecEntry, ModelReference};
 use crate::models::download::{self, ModelDownloadReporter};
 use crate::models::embeddings::{EmbeddingResult, embed_validated};
+use crate::models::error::ModelError;
 use crate::models::{
     EmbeddingInput, EmbeddingInputKind, EmbeddingModel, EmbeddingModelInfo, EmbeddingPurpose,
-    ProgressSink,
+    ModelLoadSink,
 };
 use crate::types::SearchMetric;
 
@@ -65,6 +66,26 @@ pub struct Model2VecEmbeddingModel {
     loaded: OnceLock<Result<LoadedModel2Vec, EngineError>>,
 }
 
+/// Builds the typed `MODELS.MODEL2VEC_LOAD_FAILED` error for `entry`.
+fn load_failed(entry: &Model2VecEntry, detail: impl std::fmt::Display) -> EngineError {
+    EngineError::from(ModelError::Model2VecLoad {
+        reference: entry.reference.to_owned(),
+        repo: entry.repo.to_owned(),
+        revision: entry.revision.to_owned(),
+        detail: detail.to_string(),
+    })
+}
+
+/// Builds the typed `MODELS.MODEL2VEC_DOWNLOAD_FAILED` error for `entry`.
+fn download_failed(entry: &Model2VecEntry, detail: impl std::fmt::Display) -> EngineError {
+    EngineError::from(ModelError::Model2VecDownload {
+        reference: entry.reference.to_owned(),
+        repo: entry.repo.to_owned(),
+        revision: entry.revision.to_owned(),
+        detail: detail.to_string(),
+    })
+}
+
 impl Model2VecEmbeddingModel {
     /// Builds the backend from the resolved factory plan fields for the
     /// `ModelBuildPlan::Model2Vec` arm (catalog entry plus cache directory).
@@ -91,19 +112,19 @@ impl Model2VecEmbeddingModel {
 
     /// Downloads (when the cache misses) and loads weights plus tokenizer,
     /// reporting through `sink`. Idempotent: later calls reuse the load.
-    pub fn prepare(&self, sink: Option<ProgressSink>) -> EngineResult<()> {
+    pub fn prepare(&self, sink: Option<ModelLoadSink>) -> EngineResult<()> {
         self.ensure_loaded(sink)?;
         Ok(())
     }
 
-    fn ensure_loaded(&self, sink: Option<ProgressSink>) -> EngineResult<&LoadedModel2Vec> {
+    fn ensure_loaded(&self, sink: Option<ModelLoadSink>) -> EngineResult<&LoadedModel2Vec> {
         self.loaded
             .get_or_init(|| self.load(sink))
             .as_ref()
             .map_err(Clone::clone)
     }
 
-    fn load(&self, sink: Option<ProgressSink>) -> EngineResult<LoadedModel2Vec> {
+    fn load(&self, sink: Option<ModelLoadSink>) -> EngineResult<LoadedModel2Vec> {
         let reference = ModelReference::from(self.entry.reference);
         let mut reporter = ModelDownloadReporter::new(
             &reference,
@@ -131,16 +152,7 @@ impl Model2VecEmbeddingModel {
         let model_file_name = Path::new(entry.model_file)
             .file_name()
             .and_then(|name| name.to_str())
-            .ok_or_else(|| {
-                EngineError::new(
-                    EngineErrorCode::new("MODELS.MODEL2VEC_LOAD_FAILED"),
-                    "unable to load Model2Vec model",
-                )
-                .with_context(format!(
-                    "model={} repo={} revision={} detail=invalid model file name",
-                    entry.reference, entry.repo, entry.revision
-                ))
-            })?;
+            .ok_or_else(|| load_failed(entry, "invalid model file name"))?;
         let model_path = download::scoped_cache_path(
             &self.cache_dir,
             "model2vec",
@@ -165,16 +177,7 @@ impl Model2VecEmbeddingModel {
             model_file_name,
             reporter,
         )
-        .map_err(|err| {
-            EngineError::new(
-                EngineErrorCode::new("MODELS.MODEL2VEC_DOWNLOAD_FAILED"),
-                "unable to download Model2Vec model artifact",
-            )
-            .with_context(format!(
-                "model={} repo={} revision={} detail={err}",
-                entry.reference, entry.repo, entry.revision
-            ))
-        })?;
+        .map_err(|err| download_failed(entry, format_args!("{err}")))?;
         download::download_cached_file(
             entry.repo,
             entry.revision,
@@ -183,28 +186,12 @@ impl Model2VecEmbeddingModel {
             entry.tokenizer_file,
             reporter,
         )
-        .map_err(|err| {
-            EngineError::new(
-                EngineErrorCode::new("MODELS.MODEL2VEC_DOWNLOAD_FAILED"),
-                "unable to download Model2Vec model artifact",
-            )
-            .with_context(format!(
-                "model={} repo={} revision={} detail={err}",
-                entry.reference, entry.repo, entry.revision
-            ))
-        })?;
+        .map_err(|err| download_failed(entry, format_args!("{err}")))?;
         if let Some(dir) = tokenizer_json_path.parent() {
             let config_path = dir.join("tokenizer_config.json");
             if !download::is_usable_file(&config_path) {
                 fs::write(&config_path, TOKENIZER_CONFIG_STUB).map_err(|err| {
-                    EngineError::new(
-                        EngineErrorCode::new("MODELS.MODEL2VEC_LOAD_FAILED"),
-                        "unable to load Model2Vec model",
-                    )
-                    .with_context(format!(
-                        "model={} repo={} revision={} detail=write tokenizer config: {err}",
-                        entry.reference, entry.repo, entry.revision
-                    ))
+                    load_failed(entry, format_args!("write tokenizer config: {err}"))
                 })?;
             }
         }
@@ -216,16 +203,8 @@ impl Model2VecEmbeddingModel {
             entry.repo,
             entry.revision,
         )?;
-        let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_json_path).map_err(|err| {
-            EngineError::new(
-                EngineErrorCode::new("MODELS.MODEL2VEC_LOAD_FAILED"),
-                "unable to load Model2Vec model",
-            )
-            .with_context(format!(
-                "model={} repo={} revision={} detail=load tokenizer: {err}",
-                entry.reference, entry.repo, entry.revision
-            ))
-        })?;
+        let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_json_path)
+            .map_err(|err| load_failed(entry, format_args!("load tokenizer: {err}")))?;
         let unk_id = resolve_unknown_token_id(&tokenizer_json_path, &tokenizer);
         Ok(LoadedModel2Vec {
             tokenizer,
@@ -244,11 +223,10 @@ impl Model2VecEmbeddingModel {
             match input {
                 EmbeddingInput::Text { text } => texts.push(*text),
                 EmbeddingInput::Image { .. } => {
-                    return Err(EngineError::new(
-                        EngineErrorCode::new("MODELS.EMBEDDING_UNSUPPORTED_CONTENT"),
-                        "model does not support image input",
-                    )
-                    .with_context(format!("model={}", self.entry.reference)));
+                    return Err(EngineError::from(ModelError::UnsupportedImage {
+                        reference: self.entry.reference.to_owned(),
+                        index: None,
+                    }));
                 }
             }
         }
@@ -263,14 +241,11 @@ impl Model2VecEmbeddingModel {
             self.entry.reference,
         )
         .map_err(|err| {
-            EngineError::new(
-                EngineErrorCode::new("MODELS.MODEL2VEC_EMBED_FAILED"),
-                "Model2Vec embedding failed",
-            )
-            .with_context(format!(
-                "model={} repo={} detail={err}",
-                self.entry.reference, self.entry.repo
-            ))
+            EngineError::from(ModelError::Model2VecEmbed {
+                reference: self.entry.reference.to_owned(),
+                repo: self.entry.repo.to_owned(),
+                detail: err.to_string(),
+            })
         })?;
         Ok(EmbeddingResult { vectors, truncated })
     }
@@ -285,7 +260,7 @@ impl EmbeddingModel for Model2VecEmbeddingModel {
         self.entry.max_batch_size
     }
 
-    fn prepare(&self, sink: Option<ProgressSink>) -> EngineResult<()> {
+    fn prepare(&self, sink: Option<ModelLoadSink>) -> EngineResult<()> {
         self.ensure_loaded(sink)?;
         Ok(())
     }
@@ -317,13 +292,12 @@ fn read_static_embedding_table(
     revision: &str,
 ) -> EngineResult<EmbeddingTable> {
     let load_failed = |detail: String| {
-        EngineError::new(
-            EngineErrorCode::new("MODELS.MODEL2VEC_LOAD_FAILED"),
-            "unable to load Model2Vec model",
-        )
-        .with_context(format!(
-            "model={reference} repo={repo} revision={revision} detail={detail}"
-        ))
+        EngineError::from(ModelError::Model2VecLoad {
+            reference: reference.to_owned(),
+            repo: repo.to_owned(),
+            revision: revision.to_owned(),
+            detail,
+        })
     };
     let bytes = fs::read(path).map_err(|err| load_failed(format!("read weights: {err}")))?;
     let parsed = safetensors::SafeTensors::deserialize(&bytes)
@@ -408,11 +382,10 @@ fn tokenize_text(
     reference: &str,
 ) -> EngineResult<(Vec<u32>, bool)> {
     let encoding = tokenizer.encode(text, false).map_err(|err| {
-        EngineError::new(
-            EngineErrorCode::new("MODELS.MODEL2VEC_EMBED_FAILED"),
-            "Model2Vec tokenization failed",
-        )
-        .with_context(format!("model={reference} detail={err}"))
+        EngineError::from(ModelError::Model2VecTokenize {
+            reference: reference.to_owned(),
+            detail: err.to_string(),
+        })
     })?;
     let mut ids: Vec<u32> = encoding.get_ids().to_vec();
     let was_truncated = ids.len() > max_input_tokens;
@@ -438,20 +411,20 @@ fn pool_token_ids(
     for id in ids {
         let row_index = *id as usize;
         if row_index >= table.rows {
-            return Err(EngineError::new(
-                EngineErrorCode::new("MODELS.MODEL2VEC_EMBED_FAILED"),
-                "tokenizer returned out-of-range token id",
-            )
-            .with_context(format!("model={reference} id={id} rows={}", table.rows)));
+            return Err(EngineError::from(ModelError::TokenOutOfRange {
+                reference: reference.to_owned(),
+                id: *id,
+                rows: table.rows,
+            }));
         }
         let start = row_index.saturating_mul(table.dimension);
         let end = start.saturating_add(table.dimension);
         let row = table.data.get(start..end).ok_or_else(|| {
-            EngineError::new(
-                EngineErrorCode::new("MODELS.MODEL2VEC_EMBED_FAILED"),
-                "tokenizer returned out-of-range token id",
-            )
-            .with_context(format!("model={reference} id={id} rows={}", table.rows))
+            EngineError::from(ModelError::TokenOutOfRange {
+                reference: reference.to_owned(),
+                id: *id,
+                rows: table.rows,
+            })
         })?;
         for (acc, value) in vector.iter_mut().zip(row.iter()) {
             *acc += *value;
@@ -471,6 +444,10 @@ fn pool_token_ids(
     }
     Ok(vector)
 }
+
+/// One embedded chunk item: (input index, vector, was truncated). Counts are
+/// small, but the alias keeps the scoped-thread join types readable.
+type ChunkItem = (usize, Vec<f32>, bool);
 
 /// Embeds a batch across `concurrency` scoped threads (the TypeScript worker
 /// pool), preserving input order and returning sorted truncation indices.
@@ -501,10 +478,10 @@ fn embed_texts_parallel(
                     let vector = pool_token_ids(table, &ids, normalize, reference)?;
                     items.push((base.saturating_add(offset), vector, was_truncated));
                 }
-                Ok::<Vec<(usize, Vec<f32>, bool)>, EngineError>(items)
+                Ok::<Vec<ChunkItem>, EngineError>(items)
             }));
         }
-        let mut joined: EngineResult<Vec<Vec<(usize, Vec<f32>, bool)>>> = Ok(Vec::new());
+        let mut joined: EngineResult<Vec<Vec<ChunkItem>>> = Ok(Vec::new());
         for handle in handles {
             match handle.join() {
                 Ok(Ok(items)) => {
@@ -517,11 +494,9 @@ fn embed_texts_parallel(
                     break;
                 }
                 Err(_) => {
-                    joined = Err(EngineError::new(
-                        EngineErrorCode::new("MODELS.MODEL2VEC_EMBED_FAILED"),
-                        "Model2Vec worker thread failed",
-                    )
-                    .with_context(format!("model={reference}")));
+                    joined = Err(EngineError::from(ModelError::WorkerFailed {
+                        reference: reference.to_owned(),
+                    }));
                     break;
                 }
             }

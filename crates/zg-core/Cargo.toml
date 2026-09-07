@@ -44,3 +44,6 @@ tempfile.workspace = true
 
 [features]
 default = []
+test-support = []
+[lints]
+workspace = true

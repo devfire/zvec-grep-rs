@@ -315,10 +315,9 @@ pub fn find_identifier_leaf<'a>(node: &SyntaxNode<'a>) -> Option<SyntaxNode<'a>>
             | "init_declarator"
             | "parenthesized_declarator"
             | "pointer_declarator"
-            | "reference_declarator" => match current.field("declarator") {
-                Some(next) => current = next,
-                None => return None,
-            },
+            | "reference_declarator" => {
+                current = current.field("declarator")?;
+            }
             _ => return None,
         }
     }

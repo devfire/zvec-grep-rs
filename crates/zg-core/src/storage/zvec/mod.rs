@@ -70,7 +70,7 @@ impl ZvecWorkspaceIndexStorage {
         if !read_only {
             std::fs::create_dir_all(&paths.storage_path).map_err(|error| {
                 EngineError::new(
-                    EngineErrorCode::new("STORAGE.CREATE_FAILED"),
+                    EngineErrorCode::from_static("STORAGE.CREATE_FAILED"),
                     "failed to create workspace index storage directory",
                 )
                 .with_context(format!(
@@ -109,14 +109,14 @@ impl ZvecWorkspaceIndexStorage {
             })?
         } else if read_only {
             return Err(EngineError::new(
-                EngineErrorCode::new("STORAGE.ZVEC_COLLECTION_MISSING"),
+                EngineErrorCode::from_static("STORAGE.ZVEC_COLLECTION_MISSING"),
                 "zvec collection storage does not exist",
             )
             .with_context(format!("path={index_path}")));
         } else {
             let embedding = embedding.ok_or_else(|| {
                 EngineError::new(
-                    EngineErrorCode::new("STORAGE.MISSING_EMBEDDING_SCHEMA"),
+                    EngineErrorCode::from_static("STORAGE.MISSING_EMBEDDING_SCHEMA"),
                     "embedding schema is required to create workspace index storage",
                 )
                 .with_context(format!("path={index_path}"))
@@ -139,7 +139,7 @@ impl ZvecWorkspaceIndexStorage {
     fn require_collection(&self, operation: &str) -> EngineResult<&Collection> {
         self.collection.as_ref().ok_or_else(|| {
             EngineError::new(
-                EngineErrorCode::new("STORAGE.COLLECTION_CLOSED"),
+                EngineErrorCode::from_static("STORAGE.COLLECTION_CLOSED"),
                 "workspace index storage is closed",
             )
             .with_context(format!("operation={operation}"))
@@ -149,7 +149,7 @@ impl ZvecWorkspaceIndexStorage {
     fn assert_writable(&self, operation: &str) -> EngineResult<()> {
         if self.read_only {
             return Err(EngineError::new(
-                EngineErrorCode::new("STORAGE.READ_ONLY"),
+                EngineErrorCode::from_static("STORAGE.READ_ONLY"),
                 "cannot update read-only workspace index storage",
             )
             .with_context(format!("operation={operation}")));
@@ -171,7 +171,7 @@ impl ZvecWorkspaceIndexStorage {
             .fetch_with_options(&[pk], None, false)
             .map_err(|error| {
                 zvec_error(
-                    "STORAGE.ZVEC_FETCH_FAILED",
+                    EngineErrorCode::from_static("STORAGE.ZVEC_FETCH_FAILED"),
                     "zvec fetch failed",
                     format!("fragmentId={pk} error={error}"),
                 )
@@ -194,7 +194,7 @@ impl ZvecWorkspaceIndexStorage {
                         .fetch_with_options(&[group_id.as_str()], None, false)
                         .map_err(|error| {
                             zvec_error(
-                                "STORAGE.ZVEC_FETCH_FAILED",
+                                EngineErrorCode::from_static("STORAGE.ZVEC_FETCH_FAILED"),
                                 "zvec fetch failed",
                                 format!("fragmentId={group_id} error={error}"),
                             )
@@ -236,7 +236,7 @@ impl ZvecWorkspaceIndexStorage {
             ))
             .map_err(|error| {
                 zvec_error(
-                    "STORAGE.ZVEC_DELETE_FAILED",
+                    EngineErrorCode::from_static("STORAGE.ZVEC_DELETE_FAILED"),
                     "zvec delete by filter failed",
                     format!("fileId={} error={error}", file_id.as_str()),
                 )
@@ -251,7 +251,7 @@ impl ZvecWorkspaceIndexStorage {
             let refs: Vec<&Doc> = batch.iter().collect();
             let result = collection.upsert(&refs).map_err(|error| {
                 zvec_error(
-                    "STORAGE.ZVEC_UPSERT_FAILED",
+                    EngineErrorCode::from_static("STORAGE.ZVEC_UPSERT_FAILED"),
                     "zvec failed to upsert entity documents",
                     format!("fileId={} error={error}", file_id.as_str()),
                 )
@@ -260,7 +260,7 @@ impl ZvecWorkspaceIndexStorage {
             match failed {
                 Some(status) => {
                     return Err(zvec_error(
-                        "STORAGE.ZVEC_UPSERT_FAILED",
+                        EngineErrorCode::from_static("STORAGE.ZVEC_UPSERT_FAILED"),
                         "zvec failed to upsert entity documents",
                         format!(
                             "fileId={} batchStart={} batchSize={} code={} message={}",
@@ -274,7 +274,7 @@ impl ZvecWorkspaceIndexStorage {
                 }
                 None if result.error_count > 0 => {
                     return Err(zvec_error(
-                        "STORAGE.ZVEC_UPSERT_FAILED",
+                        EngineErrorCode::from_static("STORAGE.ZVEC_UPSERT_FAILED"),
                         "zvec failed to upsert entity documents",
                         format!(
                             "fileId={} batchStart={} batchSize={} errorCount={}",
@@ -459,7 +459,7 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
             for (index, entry) in entries.iter().enumerate() {
                 let fragment_index = i32::try_from(index).map_err(|_| {
                     EngineError::new(
-                        EngineErrorCode::new("STORAGE.DOC_ENCODE_FAILED"),
+                        EngineErrorCode::from_static("STORAGE.DOC_ENCODE_FAILED"),
                         "fragment index does not fit an i32",
                     )
                     .with_context(format!("fileId={}", file.id.as_str()))
@@ -519,7 +519,7 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
             let collection = self.require_collection("finalizeWrites")?;
             collection.optimize().map_err(|error| {
                 zvec_error(
-                    "STORAGE.ZVEC_OPTIMIZE_FAILED",
+                    EngineErrorCode::from_static("STORAGE.ZVEC_OPTIMIZE_FAILED"),
                     "zvec optimize failed",
                     format!("error={error}"),
                 )
@@ -542,13 +542,13 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
     }
 }
 
-fn zvec_error(code: &str, message: &str, detail: String) -> EngineError {
-    EngineError::new(EngineErrorCode::new(code), message).with_context(detail)
+fn zvec_error(code: EngineErrorCode, message: &str, detail: String) -> EngineError {
+    EngineError::new(code, message).with_context(detail)
 }
 
 fn zvec_error_open(detail: &str) -> EngineError {
     zvec_error(
-        "STORAGE.ZVEC_OPEN_FAILED",
+        EngineErrorCode::from_static("STORAGE.ZVEC_OPEN_FAILED"),
         "failed to prepare zvec collection open",
         detail.to_owned(),
     )
@@ -560,7 +560,7 @@ fn initialize_zvec() -> EngineResult<()> {
     let mutex = ZVEC_INIT_MUTEX.get_or_init(|| std::sync::Mutex::new(()));
     let _held = mutex.lock().map_err(|_| {
         EngineError::new(
-            EngineErrorCode::new("STORAGE.ZVEC_INIT_FAILED"),
+            EngineErrorCode::from_static("STORAGE.ZVEC_INIT_FAILED"),
             "zvec initialization lock was poisoned",
         )
     })?;
@@ -569,7 +569,7 @@ fn initialize_zvec() -> EngineResult<()> {
     }
     zvec_rust::initialize(None).map_err(|error| {
         zvec_error(
-            "STORAGE.ZVEC_INIT_FAILED",
+            EngineErrorCode::from_static("STORAGE.ZVEC_INIT_FAILED"),
             "failed to initialize zvec",
             error.to_string(),
         )
@@ -599,7 +599,7 @@ fn open_zvec_collection(
         }
     }
     Err(zvec_error(
-        "STORAGE.ZVEC_OPEN_FAILED",
+        EngineErrorCode::from_static("STORAGE.ZVEC_OPEN_FAILED"),
         "failed to open zvec collection storage",
         format!(
             "path={zvec_path} action={action} readOnly={read_only} attempts={ZVEC_OPEN_RETRY_ATTEMPTS} error={last_error}"

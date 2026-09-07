@@ -21,6 +21,9 @@ use serde_json::Value;
 use crate::error::{EngineError, EngineErrorCode, EngineResult};
 use crate::models::catalog::{QwenMultimodalEntry, QwenTextEntry};
 use crate::models::embeddings::{ApiKey, EmbeddingResult, embed_validated};
+use crate::models::error::{
+    ModelError, QwenTextFailure, QwenTextModel, QwenVlFailure, qwen_vl_code,
+};
 use crate::models::{
     EmbeddingInput, EmbeddingInputKind, EmbeddingModel, EmbeddingModelInfo, EmbeddingPurpose,
 };
@@ -55,16 +58,16 @@ fn post_embedding_json(
     endpoint: &str,
     api_key: &ApiKey,
     body: Value,
-    request_failed: &EngineErrorCode,
-    invalid_json: &EngineErrorCode,
-    api_error: &EngineErrorCode,
+    request_failed: EngineErrorCode,
+    invalid_json: EngineErrorCode,
+    api_error: EngineErrorCode,
 ) -> EngineResult<Value> {
     let mut response = agent
         .post(endpoint)
         .header("Authorization", &format!("Bearer {}", api_key.as_str()))
         .send_json(body)
         .map_err(|err| {
-            EngineError::new(request_failed.clone(), format!("{display} request failed")).with_context(
+            EngineError::new(request_failed, format!("{display} request failed")).with_context(
                 format!("model={reference} endpoint={endpoint} timeoutMs={REMOTE_TIMEOUT_MS} detail={err}"),
             )
         })?;
@@ -76,7 +79,7 @@ fn post_embedding_json(
         .and_then(parse_retry_after_ms);
     let parsed: Value = response.body_mut().read_json().map_err(|err| {
         EngineError::new(
-            invalid_json.clone(),
+            invalid_json,
             format!("{display} response was not valid JSON"),
         )
         .with_context(format!("model={reference} status={status} detail={err}"))
@@ -84,7 +87,7 @@ fn post_embedding_json(
     if !(200..300).contains(&status) {
         let error = read_provider_error(&parsed);
         return Err(EngineError::new(
-            api_error.clone(),
+            api_error,
             format!("{display} request returned an error"),
         )
         .with_context(provider_error_context(
@@ -180,7 +183,7 @@ fn parse_retry_after_ms(value: &str) -> Option<u64> {
 /// Reads one embedding vector, rejecting non-array payloads and non-numeric
 /// components with `INVALID_VECTOR`.
 fn read_vector(
-    code: &EngineErrorCode,
+    code: EngineErrorCode,
     display: &str,
     reference: &str,
     index: usize,
@@ -191,7 +194,7 @@ fn read_vector(
         .and_then(Value::as_array)
         .ok_or_else(|| {
             EngineError::new(
-                code.clone(),
+                code,
                 format!("{display} response included an invalid embedding"),
             )
             .with_context(format!("model={reference} index={index}"))
@@ -200,7 +203,7 @@ fn read_vector(
     for value in raw {
         let component = value.as_f64().ok_or_else(|| {
             EngineError::new(
-                code.clone(),
+                code,
                 format!("{display} response included an invalid embedding"),
             )
             .with_context(format!("model={reference} index={index}"))
@@ -255,7 +258,7 @@ pub struct QwenTextEmbeddingModel {
     api_key: ApiKey,
     agent: ureq::Agent,
     display_name: &'static str,
-    error_prefix: &'static str,
+    model_kind: QwenTextModel,
     max_batch_size: usize,
     model: String,
 }
@@ -265,11 +268,8 @@ impl QwenTextEmbeddingModel {
     /// `ModelBuildPlan::QwenText` arm. Display name and error-code prefix
     /// follow the entry's model id, mirroring the two TypeScript subclasses.
     pub fn from_plan(entry: QwenTextEntry, api_key: ApiKey, endpoint: String) -> Self {
-        let (display_name, error_prefix) = match entry.model {
-            "text-embedding-v4" => ("Qwen text-embedding-v4", "QWEN_TEXT_EMBEDDING_V4"),
-            "qwen3.7-text-embedding" => ("Qwen3.7 text embedding", "QWEN37_TEXT_EMBEDDING"),
-            _ => ("Qwen text embedding", "QWEN_TEXT_EMBEDDING"),
-        };
+        let model_kind = QwenTextModel::from_model_id(entry.model);
+        let display_name = model_kind.display_name();
         let info = EmbeddingModelInfo {
             reference: entry.reference.to_owned(),
             provider: entry.provider.to_owned(),
@@ -288,13 +288,13 @@ impl QwenTextEmbeddingModel {
             api_key,
             agent: remote_agent(),
             display_name,
-            error_prefix,
+            model_kind,
             max_batch_size: entry.max_batch_size,
         }
     }
 
-    fn code(&self, suffix: &str) -> EngineErrorCode {
-        EngineErrorCode::new(&format!("MODELS.{}_{suffix}", self.error_prefix))
+    fn code(&self, failure: QwenTextFailure) -> EngineErrorCode {
+        self.model_kind.code(failure)
     }
 
     fn embed_core(&self, inputs: &[EmbeddingInput<'_>]) -> EngineResult<EmbeddingResult> {
@@ -303,11 +303,10 @@ impl QwenTextEmbeddingModel {
             match input {
                 EmbeddingInput::Text { text } => texts.push(*text),
                 EmbeddingInput::Image { .. } => {
-                    return Err(EngineError::new(
-                        EngineErrorCode::new("MODELS.EMBEDDING_UNSUPPORTED_CONTENT"),
-                        "model does not support image input",
-                    )
-                    .with_context(format!("model={}", self.info.reference)));
+                    return Err(EngineError::from(ModelError::UnsupportedImage {
+                        reference: self.info.reference.clone(),
+                        index: None,
+                    }));
                 }
             }
         }
@@ -324,13 +323,13 @@ impl QwenTextEmbeddingModel {
             &self.endpoint,
             &self.api_key,
             request,
-            &self.code("REQUEST_FAILED"),
-            &self.code("INVALID_JSON"),
-            &self.code("API_ERROR"),
+            self.code(QwenTextFailure::RequestFailed),
+            self.code(QwenTextFailure::InvalidJson),
+            self.code(QwenTextFailure::ApiError),
         )?;
         let data = body.get("data").and_then(Value::as_array).ok_or_else(|| {
             EngineError::new(
-                self.code("MISSING_DATA"),
+                self.code(QwenTextFailure::MissingData),
                 format!("{} response did not include data", self.display_name),
             )
             .with_context(format!("model={}", self.info.reference))
@@ -340,7 +339,7 @@ impl QwenTextEmbeddingModel {
         for item in data {
             let object = item.as_object().ok_or_else(|| {
                 EngineError::new(
-                    self.code("INVALID_INDEX"),
+                    self.code(QwenTextFailure::InvalidIndex),
                     format!("{} response included an invalid index", self.display_name),
                 )
                 .with_context(format!("model={} index=unknown", self.info.reference))
@@ -354,14 +353,14 @@ impl QwenTextEmbeddingModel {
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "unknown".to_owned());
                 EngineError::new(
-                    self.code("INVALID_INDEX"),
+                    self.code(QwenTextFailure::InvalidIndex),
                     format!("{} response included an invalid index", self.display_name),
                 )
                 .with_context(format!("model={} index={raw}", self.info.reference))
             })?;
             if index < 0 || index as u64 >= texts.len() as u64 {
                 return Err(EngineError::new(
-                    self.code("INDEX_OUT_OF_RANGE"),
+                    self.code(QwenTextFailure::IndexOutOfRange),
                     format!("{} response index was out of range", self.display_name),
                 )
                 .with_context(format!(
@@ -372,7 +371,7 @@ impl QwenTextEmbeddingModel {
             }
             let index = index as usize;
             let vector = read_vector(
-                &self.code("INVALID_VECTOR"),
+                self.code(QwenTextFailure::InvalidVector),
                 self.display_name,
                 &self.info.reference,
                 index,
@@ -386,7 +385,7 @@ impl QwenTextEmbeddingModel {
                 Some(vector) => resolved.push(vector),
                 None => {
                     return Err(EngineError::new(
-                        self.code("INVALID_VECTOR"),
+                        self.code(QwenTextFailure::InvalidVector),
                         format!(
                             "{} response included an invalid embedding",
                             self.display_name
@@ -464,8 +463,8 @@ impl Qwen3VlEmbeddingModel {
         }
     }
 
-    fn code(suffix: &str) -> EngineErrorCode {
-        EngineErrorCode::new(&format!("MODELS.QWEN3_VL_EMBEDDING_{suffix}"))
+    fn code(failure: QwenVlFailure) -> EngineErrorCode {
+        qwen_vl_code(failure)
     }
 
     /// Enforces the VL-only input rules: supported image formats, the
@@ -480,7 +479,7 @@ impl Qwen3VlEmbeddingModel {
                     ImageFormat::Jpeg | ImageFormat::Png | ImageFormat::Webp => {}
                     ImageFormat::Gif => {
                         return Err(EngineError::new(
-                            Self::code("UNSUPPORTED_IMAGE_FORMAT"),
+                            Self::code(QwenVlFailure::UnsupportedImageFormat),
                             "Qwen3 VL embedding model does not support image format",
                         )
                         .with_context(format!(
@@ -491,22 +490,18 @@ impl Qwen3VlEmbeddingModel {
                     }
                 }
                 if data.len() as u64 > self.max_image_bytes {
-                    return Err(EngineError::new(
-                        EngineErrorCode::new("MODELS.EMBEDDING_IMAGE_TOO_LARGE"),
-                        "embedding image content exceeds model limit",
-                    )
-                    .with_context(format!(
-                        "model={} index={index} imageBytes={} maxImageBytes={}",
-                        self.info.reference,
-                        data.len(),
-                        self.max_image_bytes
-                    )));
+                    return Err(EngineError::from(ModelError::ImageTooLarge {
+                        reference: self.info.reference.clone(),
+                        index,
+                        bytes: data.len() as u64,
+                        max_bytes: self.max_image_bytes,
+                    }));
                 }
             }
         }
         if image_count > VL_MAX_IMAGE_COUNT {
             return Err(EngineError::new(
-                Self::code("TOO_MANY_IMAGES"),
+                Self::code(QwenVlFailure::TooManyImages),
                 "Qwen3 VL embedding image count exceeds model limit",
             )
             .with_context(format!(
@@ -542,9 +537,9 @@ impl Qwen3VlEmbeddingModel {
             &self.endpoint,
             &self.api_key,
             request,
-            &Self::code("REQUEST_FAILED"),
-            &Self::code("INVALID_JSON"),
-            &Self::code("API_ERROR"),
+            Self::code(QwenVlFailure::RequestFailed),
+            Self::code(QwenVlFailure::InvalidJson),
+            Self::code(QwenVlFailure::ApiError),
         )?;
         let embeddings = body
             .get("output")
@@ -552,7 +547,7 @@ impl Qwen3VlEmbeddingModel {
             .and_then(Value::as_array)
             .ok_or_else(|| {
                 EngineError::new(
-                    Self::code("MISSING_EMBEDDINGS"),
+                    Self::code(QwenVlFailure::MissingEmbeddings),
                     "Qwen3 VL embedding response did not include embeddings",
                 )
                 .with_context(format!("model={}", self.info.reference))
@@ -562,7 +557,7 @@ impl Qwen3VlEmbeddingModel {
         for (fallback_index, item) in embeddings.iter().enumerate() {
             let object = item.as_object().ok_or_else(|| {
                 EngineError::new(
-                    Self::code("INVALID_ITEM"),
+                    Self::code(QwenVlFailure::InvalidItem),
                     "Qwen3 VL embedding response included an invalid embedding item",
                 )
                 .with_context(format!(
@@ -573,7 +568,7 @@ impl Qwen3VlEmbeddingModel {
             let index = read_embedding_index(object, fallback_index);
             if index < 0 || index as u64 >= inputs.len() as u64 {
                 return Err(EngineError::new(
-                    Self::code("INDEX_OUT_OF_RANGE"),
+                    Self::code(QwenVlFailure::IndexOutOfRange),
                     "Qwen3 VL embedding response index was out of range",
                 )
                 .with_context(format!(
@@ -584,7 +579,7 @@ impl Qwen3VlEmbeddingModel {
             }
             let index = index as usize;
             let vector = read_vector(
-                &Self::code("INVALID_VECTOR"),
+                Self::code(QwenVlFailure::InvalidVector),
                 "Qwen3 VL embedding",
                 &self.info.reference,
                 index,
@@ -598,7 +593,7 @@ impl Qwen3VlEmbeddingModel {
                 Some(vector) => resolved.push(vector),
                 None => {
                     return Err(EngineError::new(
-                        Self::code("INVALID_VECTOR"),
+                        Self::code(QwenVlFailure::InvalidVector),
                         "Qwen3 VL embedding response included an invalid embedding",
                     )
                     .with_context(format!(

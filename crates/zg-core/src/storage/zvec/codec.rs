@@ -40,14 +40,14 @@ pub fn fragment_to_doc(
     let pk = fragment.entity.id.as_str();
     if pk.contains('\0') {
         return Err(EngineError::new(
-            EngineErrorCode::new("STORAGE.DOC_ENCODE_FAILED"),
+            EngineErrorCode::from_static("STORAGE.DOC_ENCODE_FAILED"),
             "fragment id contains a null byte",
         )
         .with_context(format!("fragmentId={pk}")));
     }
     let mut doc = Doc::new().map_err(|error| {
         EngineError::new(
-            EngineErrorCode::new("STORAGE.DOC_ENCODE_FAILED"),
+            EngineErrorCode::from_static("STORAGE.DOC_ENCODE_FAILED"),
             "failed to create entity document",
         )
         .with_context(format!("fragmentId={pk} error={error}"))
@@ -72,7 +72,7 @@ pub fn fragment_to_doc(
         .map_err(|error| doc_field_error(pk, "fragment_index", &error.to_string()))?;
     let range_json = serde_json::to_string(&entity.range).map_err(|error| {
         EngineError::new(
-            EngineErrorCode::new("STORAGE.DOC_ENCODE_FAILED"),
+            EngineErrorCode::from_static("STORAGE.DOC_ENCODE_FAILED"),
             "failed to serialize entity range",
         )
         .with_context(format!("fragmentId={pk} error={error}"))
@@ -107,7 +107,7 @@ pub fn doc_to_stored_fragment(
     let pk = doc.get_pk().unwrap_or_default().to_owned();
     if pk.is_empty() {
         return Err(EngineError::new(
-            EngineErrorCode::new("STORAGE.DOC_DECODE_FAILED"),
+            EngineErrorCode::from_static("STORAGE.DOC_DECODE_FAILED"),
             "stored entity document has no primary key",
         ));
     }
@@ -122,7 +122,7 @@ pub fn doc_to_stored_fragment(
     let range_json = required_string_field(doc, "range_json", &pk)?;
     let range: Range = serde_json::from_str(&range_json).map_err(|error| {
         EngineError::new(
-            EngineErrorCode::new("STORAGE.DOC_DECODE_FAILED"),
+            EngineErrorCode::from_static("STORAGE.DOC_DECODE_FAILED"),
             "stored entity has an invalid range",
         )
         .with_context(format!("fragmentId={pk} error={error}"))
@@ -193,7 +193,7 @@ pub fn validate_fragment_groups<'a>(
     for fragment in fragments {
         if fragment.entity.file_id != *file_id {
             return Err(EngineError::new(
-                EngineErrorCode::new("STORAGE.FRAGMENT_FILE_MISMATCH"),
+                EngineErrorCode::from_static("STORAGE.FRAGMENT_FILE_MISMATCH"),
                 "entity fragment belongs to the wrong file",
             )
             .with_context(format!(
@@ -205,7 +205,7 @@ pub fn validate_fragment_groups<'a>(
         }
         if !ids.insert(fragment.entity.id.as_str()) {
             return Err(EngineError::new(
-                EngineErrorCode::new("STORAGE.DUPLICATE_FRAGMENT_ID"),
+                EngineErrorCode::from_static("STORAGE.DUPLICATE_FRAGMENT_ID"),
                 "duplicate entity fragment id",
             )
             .with_context(format!(
@@ -225,7 +225,7 @@ pub fn validate_fragment_groups<'a>(
             .count();
         if major_count != 1 {
             return Err(EngineError::new(
-                EngineErrorCode::new("STORAGE.INVALID_FRAGMENT_GROUP"),
+                EngineErrorCode::from_static("STORAGE.INVALID_FRAGMENT_GROUP"),
                 "fragment group must have exactly one major fragment",
             )
             .with_context(format!(
@@ -285,14 +285,14 @@ fn parse_content(doc: &Doc, pk: &str) -> EngineResult<Content> {
             Ok(Content::Image {
                 data: base64_decode(&encoded).map_err(|detail| {
                     EngineError::new(
-                        EngineErrorCode::new("STORAGE.DOC_DECODE_FAILED"),
+                        EngineErrorCode::from_static("STORAGE.DOC_DECODE_FAILED"),
                         "stored entity has invalid image data",
                     )
                     .with_context(format!("fragmentId={pk} error={detail}"))
                 })?,
                 format: parse_image_format(&format).ok_or_else(|| {
                     EngineError::new(
-                        EngineErrorCode::new("STORAGE.UNSUPPORTED_STORED_CONTENT_KIND"),
+                        EngineErrorCode::from_static("STORAGE.UNSUPPORTED_STORED_CONTENT_KIND"),
                         "stored entity has unsupported image format",
                     )
                     .with_context(format!("fragmentId={pk} imageFormat={format}"))
@@ -300,7 +300,7 @@ fn parse_content(doc: &Doc, pk: &str) -> EngineResult<Content> {
             })
         }
         _ => Err(EngineError::new(
-            EngineErrorCode::new("STORAGE.UNSUPPORTED_STORED_CONTENT_KIND"),
+            EngineErrorCode::from_static("STORAGE.UNSUPPORTED_STORED_CONTENT_KIND"),
             "stored entity has unsupported content kind",
         )
         .with_context(format!("fragmentId={pk} contentKind={kind}"))),
@@ -317,7 +317,7 @@ fn parse_metadata(doc: &Doc, pk: &str) -> EngineResult<Option<EntityMetadata>> {
                 crate::types::CodeEntityMetadata {
                     symbol_type: parse_symbol_type(&symbol_type).ok_or_else(|| {
                         EngineError::new(
-                            EngineErrorCode::new("STORAGE.DOC_DECODE_FAILED"),
+                            EngineErrorCode::from_static("STORAGE.DOC_DECODE_FAILED"),
                             "stored entity has unsupported symbol type",
                         )
                         .with_context(format!("fragmentId={pk} symbolType={symbol_type}"))
@@ -449,7 +449,7 @@ fn required_string_field(doc: &Doc, field: &str, pk: &str) -> EngineResult<Strin
     match optional_string_field(doc, field, pk)? {
         Some(value) if !value.is_empty() => Ok(value),
         _ => Err(EngineError::new(
-            EngineErrorCode::new("STORAGE.DOC_DECODE_FAILED"),
+            EngineErrorCode::from_static("STORAGE.DOC_DECODE_FAILED"),
             "stored entity document is missing a required field",
         )
         .with_context(format!("fragmentId={pk} field={field}"))),
@@ -463,7 +463,7 @@ fn optional_i32_field(doc: &Doc, field: &str, pk: &str) -> EngineResult<Option<i
 
 fn doc_field_error(pk: &str, field: &str, detail: &str) -> EngineError {
     EngineError::new(
-        EngineErrorCode::new("STORAGE.DOC_FIELD_FAILED"),
+        EngineErrorCode::from_static("STORAGE.DOC_FIELD_FAILED"),
         "entity document field operation failed",
     )
     .with_context(format!("fragmentId={pk} field={field} error={detail}"))

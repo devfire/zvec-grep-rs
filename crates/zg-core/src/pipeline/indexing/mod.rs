@@ -31,7 +31,7 @@ use crate::extraction::{Source, extract_for_indexing};
 use crate::models::embeddings::EmbeddingResult;
 use crate::models::{
     EmbeddingInput, EmbeddingInputKind, EmbeddingModel, EmbeddingModelProgress, EmbeddingPurpose,
-    EmbeddingStageKind, ProgressSink,
+    EmbeddingStageKind, ModelLoadSink,
 };
 use crate::storage::{FileIndexDiagnostics, IndexedFragment, WorkspaceIndexStorage};
 use crate::types::{
@@ -48,8 +48,12 @@ use self::scanner::{
     scan_root_paths,
 };
 
-/// Progress callback shared across indexing threads.
-pub type ProgressCallback = Arc<dyn Fn(IndexProgress) + Send + Sync>;
+/// Index-progress sink shared across indexing threads.
+///
+/// Named per event type (M2): this is the single index-progress sink used by
+/// the pipeline, the service options, and the workspace index handle —
+/// distinct from the model-load sink ([`crate::models::ModelLoadSink`]).
+pub type IndexProgressSink = Arc<dyn Fn(IndexProgress) + Send + Sync>;
 
 /// Everything one index run needs (mirrors `IndexContext`).
 pub struct IndexContext<'a> {
@@ -57,7 +61,7 @@ pub struct IndexContext<'a> {
     pub storage: &'a mut dyn WorkspaceIndexStorage,
     pub embedding_model: Arc<dyn EmbeddingModel>,
     pub embedding_concurrency: Option<usize>,
-    pub on_progress: Option<ProgressCallback>,
+    pub on_progress: Option<IndexProgressSink>,
     pub cancel: Option<CancelFlag>,
 }
 
@@ -133,7 +137,7 @@ pub fn index_workspace(ctx: &mut IndexContext<'_>) -> EngineResult<IndexResult> 
     index_workspace_inner(ctx).map_err(|error| {
         let context = workspace_index_context(&ctx.workspace_index);
         EngineError::new(
-            EngineErrorCode::new("INDEXING.WORKSPACE_FAILED"),
+            EngineErrorCode::from_static("INDEXING.WORKSPACE_FAILED"),
             "indexing workspace failed",
         )
         .with_context(format!("{context}\ncause={}", error_to_message(&error)))
@@ -148,7 +152,7 @@ pub fn index_workspace_paths(
     index_workspace_paths_inner(ctx, changed_paths).map_err(|error| {
         let context = workspace_index_context(&ctx.workspace_index);
         EngineError::new(
-            EngineErrorCode::new("INDEXING.WORKSPACE_FAILED"),
+            EngineErrorCode::from_static("INDEXING.WORKSPACE_FAILED"),
             "indexing changed paths failed",
         )
         .with_context(format!("{context}\ncause={}", error_to_message(&error)))
@@ -238,7 +242,7 @@ pub fn get_workspace_index_status(
     })()
     .map_err(|error: EngineError| {
         EngineError::new(
-            EngineErrorCode::new("INDEXING.STATUS_FAILED"),
+            EngineErrorCode::from_static("INDEXING.STATUS_FAILED"),
             "inspecting workspace index status failed",
         )
         .with_context(format!(
@@ -259,21 +263,22 @@ fn index_workspace_inner(ctx: &mut IndexContext<'_>) -> EngineResult<IndexResult
     if passes[0].stats.files_failed > 0 {
         let failed = passes[0].stats.files_failed;
         progress_base = Some(retry_progress_base(&passes[0]));
-        let base = progress_base.expect("retry base just set");
-        report(
-            ctx,
-            IndexProgress {
-                phase: Some(IndexProgressPhase::Scanning),
-                files_total: Some(base.files_total),
-                files_indexed: Some(base.files_succeeded),
-                files_failed: None,
-                detail: Some(format!(
-                    "Retrying {failed} failed {}...",
-                    if failed == 1 { "file" } else { "files" }
-                )),
-                embedding: None,
-            },
-        );
+        if let Some(base) = progress_base {
+            report(
+                ctx,
+                IndexProgress {
+                    phase: Some(IndexProgressPhase::Scanning),
+                    files_total: Some(base.files_total),
+                    files_indexed: Some(base.files_succeeded),
+                    files_failed: None,
+                    detail: Some(format!(
+                        "Retrying {failed} failed {}...",
+                        if failed == 1 { "file" } else { "files" }
+                    )),
+                    embedding: None,
+                },
+            );
+        }
         passes.push(run_index_pass(
             ctx,
             "Scanning retry candidates...",
@@ -281,7 +286,10 @@ fn index_workspace_inner(ctx: &mut IndexContext<'_>) -> EngineResult<IndexResult
             progress_base,
         )?);
     }
-    let final_pass = passes.last().expect("at least one pass").clone();
+    let [.., final_pass] = passes.as_slice() else {
+        unreachable!("index passes always contain the initial pass");
+    };
+    let final_pass = final_pass.clone();
     throw_if_index_cancelled(ctx)?;
     report_index_finalizing(ctx, &final_pass, progress_base);
     timings.time("index_optimize", || optimize_storage(ctx))?;
@@ -338,7 +346,10 @@ fn index_workspace_paths_inner(
             progress_base,
         )?);
     }
-    let final_pass = passes.last().expect("at least one pass").clone();
+    let [.., final_pass] = passes.as_slice() else {
+        unreachable!("path index passes always contain the initial pass");
+    };
+    let final_pass = final_pass.clone();
     throw_if_index_cancelled(ctx)?;
     report_index_finalizing(ctx, &final_pass, progress_base);
     timings.time("index_optimize", || optimize_storage(ctx))?;
@@ -392,7 +403,7 @@ fn files_failed_error(
     ])
     .unwrap_or_default();
     EngineError::new(
-        EngineErrorCode::new("INDEXING.FILES_FAILED"),
+        EngineErrorCode::from_static("INDEXING.FILES_FAILED"),
         format!(
             "Indexing completed with {} failed {}",
             result.files_failed,
@@ -536,7 +547,7 @@ fn run_diff_pass(
             throw_if_index_cancelled(ctx)?;
             ctx.storage.delete_file(&file.id).map_err(|error| {
                 EngineError::new(
-                    EngineErrorCode::new("INDEXING.DELETE_FILE_FAILED"),
+                    EngineErrorCode::from_static("INDEXING.DELETE_FILE_FAILED"),
                     "indexing failed to delete stale file records",
                 )
                 .with_context(format!(
@@ -721,7 +732,7 @@ fn dedupe_by_id(files: Vec<FileInfo>) -> Vec<FileInfo> {
 fn optimize_storage(ctx: &mut IndexContext<'_>) -> EngineResult<()> {
     ctx.storage.finalize_writes().map_err(|error| {
         EngineError::new(
-            EngineErrorCode::new("INDEXING.OPTIMIZE_FAILED"),
+            EngineErrorCode::from_static("INDEXING.OPTIMIZE_FAILED"),
             "indexing failed to finalize storage",
         )
         .with_context(format!(
@@ -788,7 +799,7 @@ fn with_content_hash(file: &FileInfo) -> EngineResult<FileInfo> {
             Ok(hashed)
         }
         Err(err) => Err(EngineError::new(
-            EngineErrorCode::new("INDEXING.CONTENT_HASH_FAILED"),
+            EngineErrorCode::from_static("INDEXING.CONTENT_HASH_FAILED"),
             "indexing failed to compute file content hash",
         )
         .with_context(format!("{}\ndetail={err}", file_context(file)))),
@@ -839,7 +850,7 @@ fn index_files(
             Arc::new(move |progress: EmbeddingModelProgress| {
                 let snapshot = lock_stats(&stats);
                 report_download_progress(&callback, &scheduler, &snapshot, &progress);
-            }) as ProgressSink
+            }) as ModelLoadSink
         });
         let started = Instant::now();
         ctx.embedding_model.prepare(sink)?;
@@ -952,7 +963,7 @@ fn index_files(
                         outcomes.push((
                             unit.clone(),
                             UnitOutcome::Failed(EngineError::new(
-                                EngineErrorCode::new("INDEXING.EMBEDDING_THREAD_FAILED"),
+                                EngineErrorCode::from_static("INDEXING.EMBEDDING_THREAD_FAILED"),
                                 "embedding worker thread failed",
                             )),
                         ));
@@ -1077,7 +1088,7 @@ fn lock_stats_mut(stats: &Arc<Mutex<IndexStats>>) -> std::sync::MutexGuard<'_, I
 }
 
 fn report_download_progress(
-    callback: &ProgressCallback,
+    callback: &IndexProgressSink,
     scheduler: &EmbeddingScheduler,
     stats: &IndexStats,
     progress: &EmbeddingModelProgress,
@@ -1125,7 +1136,7 @@ fn embed_unit(
     scheduler: &Arc<EmbeddingScheduler>,
     abort: &AtomicBool,
     cancel: Option<&CancelFlag>,
-    on_progress: Option<&ProgressCallback>,
+    on_progress: Option<&IndexProgressSink>,
     stats: &Arc<Mutex<IndexStats>>,
     progress_base: Option<ProgressBase>,
     total: usize,
@@ -1218,7 +1229,7 @@ fn embed_unit(
 }
 
 fn thread_report(
-    on_progress: Option<&ProgressCallback>,
+    on_progress: Option<&IndexProgressSink>,
     scheduler: &EmbeddingScheduler,
     detail: &str,
 ) {
@@ -1235,12 +1246,12 @@ fn thread_report(
 }
 
 fn thread_progress_sink(
-    on_progress: Option<&ProgressCallback>,
+    on_progress: Option<&IndexProgressSink>,
     scheduler: &Arc<EmbeddingScheduler>,
     stats: &Arc<Mutex<IndexStats>>,
     progress_base: Option<ProgressBase>,
     total: usize,
-) -> Option<ProgressSink> {
+) -> Option<ModelLoadSink> {
     let callback = on_progress?.clone();
     let scheduler = Arc::clone(scheduler);
     let stats = Arc::clone(stats);
@@ -1261,7 +1272,7 @@ fn thread_progress_sink(
             )),
             embedding: Some(merge_progress(scheduler.snapshot(), &progress)),
         });
-    }) as ProgressSink)
+    }) as ModelLoadSink)
 }
 
 fn embed_unit_contents(
@@ -1270,7 +1281,7 @@ fn embed_unit_contents(
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
     cancel: Option<&CancelFlag>,
-    on_model_progress: Option<ProgressSink>,
+    on_model_progress: Option<ModelLoadSink>,
 ) -> EngineResult<Vec<FileOutcome>> {
     let contents: Vec<Content> = unit
         .iter()
@@ -1326,7 +1337,7 @@ fn prepare_file_inner(file: &FileInfo, ctx: &IndexContext<'_>) -> EngineResult<P
     throw_if_index_cancelled(ctx)?;
     let bytes = std::fs::read(&file.absolute_path).map_err(|err| {
         EngineError::new(
-            EngineErrorCode::new("INDEXING.READ_SOURCE_FAILED"),
+            EngineErrorCode::from_static("INDEXING.READ_SOURCE_FAILED"),
             "indexing failed to read source file",
         )
         .with_context(format!("{}\ndetail={err}", file_context(file)))
@@ -1385,7 +1396,7 @@ fn image_format_of(file: &FileInfo) -> EngineResult<ImageFormat> {
         "webp" => Ok(ImageFormat::Webp),
         "gif" => Ok(ImageFormat::Gif),
         other => Err(EngineError::new(
-            EngineErrorCode::new("INDEXING.READ_SOURCE_FAILED"),
+            EngineErrorCode::from_static("INDEXING.READ_SOURCE_FAILED"),
             "indexing found an unsupported image format",
         )
         .with_context(format!("{}\nformat={other}", file_context(file)))),
@@ -1410,7 +1421,7 @@ fn commit_file(
     throw_if_index_cancelled(ctx)?;
     if !vectors.is_empty() && prepared.fragments.len() != vectors.len() {
         let error = EngineError::new(
-            EngineErrorCode::new("STORAGE.ENTITY_VECTOR_COUNT_MISMATCH"),
+            EngineErrorCode::from_static("STORAGE.ENTITY_VECTOR_COUNT_MISMATCH"),
             "embedding returned mismatched entity/vector counts",
         )
         .with_context(format!(
@@ -1494,7 +1505,7 @@ fn record_file_failed(stats: &mut IndexStats, file: &FileInfo, reason: Option<St
 fn throw_if_index_cancelled(ctx: &IndexContext<'_>) -> EngineResult<()> {
     if ctx.cancel.as_ref().is_some_and(CancelFlag::is_cancelled) {
         return Err(EngineError::new(
-            EngineErrorCode::new("INDEXING.CANCELLED"),
+            EngineErrorCode::from_static("INDEXING.CANCELLED"),
             "indexing was cancelled",
         )
         .with_context(workspace_index_context(&ctx.workspace_index)));
@@ -1503,7 +1514,7 @@ fn throw_if_index_cancelled(ctx: &IndexContext<'_>) -> EngineResult<()> {
 }
 
 fn is_cancelled_error(error: &EngineError) -> bool {
-    error.code().as_str() == "ZVEC_GREP.ENGINE.INDEXING.CANCELLED"
+    error.code().suffix() == "INDEXING.CANCELLED"
 }
 
 fn mark_file_failed(
@@ -1531,11 +1542,11 @@ fn error_to_message(error: &EngineError) -> String {
     match error.context() {
         Some(context) => format!(
             "{}: {} ({})",
-            error.code().as_str(),
+            error.code().qualified(),
             error.message(),
             one_line(context)
         ),
-        None => format!("{}: {}", error.code().as_str(), error.message()),
+        None => format!("{}: {}", error.code().qualified(), error.message()),
     }
 }
 
@@ -1608,7 +1619,7 @@ fn embed_fragments(
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
     cancel: Option<&CancelFlag>,
-    on_model_progress: Option<ProgressSink>,
+    on_model_progress: Option<ModelLoadSink>,
 ) -> EngineResult<EmbeddingResult> {
     let max_batch = model.max_batch_size().max(1);
     let mut vectors: Vec<Vec<f32>> = vec![Vec::new(); fragments.len()];
@@ -1658,7 +1669,7 @@ fn embed_fragment_batch(
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
     cancel: Option<&CancelFlag>,
-    on_model_progress: Option<ProgressSink>,
+    on_model_progress: Option<ModelLoadSink>,
     on_terminal_failure: Option<&AtomicBool>,
 ) -> EngineResult<EmbeddingResult> {
     let contents: Vec<Content> = fragments
@@ -1701,7 +1712,7 @@ fn embed_fragment_batch_one_by_one(
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
     cancel: Option<&CancelFlag>,
-    on_model_progress: Option<ProgressSink>,
+    on_model_progress: Option<ModelLoadSink>,
     on_terminal_failure: Option<&AtomicBool>,
 ) -> EngineResult<EmbeddingResult> {
     let mut vectors = Vec::with_capacity(fragments.len());
@@ -1727,7 +1738,7 @@ fn embed_fragment_batch_one_by_one(
                     return Err(error);
                 }
                 return Err(EngineError::new(
-                    EngineErrorCode::new("INDEXING.EMBEDDING_FRAGMENT_FAILED"),
+                    EngineErrorCode::from_static("INDEXING.EMBEDDING_FRAGMENT_FAILED"),
                     "embedding entity fragment failed after one-by-one fallback",
                 )
                 .with_context(format!(
@@ -1749,7 +1760,7 @@ fn embed_contents_with_retry(
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
     cancel: Option<&CancelFlag>,
-    on_model_progress: Option<ProgressSink>,
+    on_model_progress: Option<ModelLoadSink>,
     on_terminal_failure: Option<&AtomicBool>,
 ) -> EngineResult<EmbeddingResult> {
     let _ = on_model_progress;
@@ -1806,7 +1817,7 @@ fn content_to_input(content: &Content) -> EmbeddingInput<'_> {
 fn throw_if_aborted(abort: &AtomicBool, cancel: Option<&CancelFlag>) -> EngineResult<()> {
     if abort.load(Ordering::Relaxed) || cancel.is_some_and(CancelFlag::is_cancelled) {
         return Err(EngineError::new(
-            EngineErrorCode::new("INDEXING.CANCELLED"),
+            EngineErrorCode::from_static("INDEXING.CANCELLED"),
             "embedding was cancelled",
         ));
     }
@@ -1814,7 +1825,7 @@ fn throw_if_aborted(abort: &AtomicBool, cancel: Option<&CancelFlag>) -> EngineRe
 }
 
 fn is_cancelled_or_aborted(error: &EngineError) -> bool {
-    error.code().as_str() == "ZVEC_GREP.ENGINE.INDEXING.CANCELLED"
+    error.code().suffix() == "INDEXING.CANCELLED"
 }
 
 fn abortable_sleep(ms: u64, abort: &AtomicBool, cancel: Option<&CancelFlag>) -> EngineResult<()> {
@@ -1986,7 +1997,7 @@ impl EmbeddingScheduler {
     fn acquire(&self, abort: &AtomicBool, cancel: Option<&CancelFlag>) -> EngineResult<()> {
         let mut state = self.state.lock().map_err(|_| {
             EngineError::new(
-                EngineErrorCode::new("INDEXING.SCHEDULER_FAILED"),
+                EngineErrorCode::from_static("INDEXING.SCHEDULER_FAILED"),
                 "embedding scheduler lock failed",
             )
         })?;
@@ -2001,7 +2012,7 @@ impl EmbeddingScheduler {
                 .wait_timeout(state, Duration::from_millis(50))
                 .map_err(|_| {
                     EngineError::new(
-                        EngineErrorCode::new("INDEXING.SCHEDULER_FAILED"),
+                        EngineErrorCode::from_static("INDEXING.SCHEDULER_FAILED"),
                         "embedding scheduler lock failed",
                     )
                 })?
@@ -2021,8 +2032,7 @@ fn resolve_embedding_concurrency_policy(
     requested: Option<usize>,
     model: &dyn EmbeddingModel,
 ) -> ConcurrencyPolicy {
-    if requested.is_some_and(|value| value > 0) {
-        let requested = requested.expect("checked positive above");
+    if let Some(requested) = requested.filter(|value| *value > 0) {
         return ConcurrencyPolicy {
             initial: requested,
             min: 1,
@@ -2064,7 +2074,7 @@ fn classify_embedding_retry(
     error: &EngineError,
     model: &dyn EmbeddingModel,
 ) -> RetryClassification {
-    let code = error.code().as_str().to_owned();
+    let code = error.code().qualified();
     let text = format!(
         "{} {} {}",
         code,
@@ -2316,7 +2326,7 @@ mod tests {
                 _inputs: &[EmbeddingInput<'_>],
             ) -> EngineResult<EmbeddingResult> {
                 Err(EngineError::new(
-                    EngineErrorCode::new("MODELS.QWEN_TEXT_EMBEDDING_REQUEST_FAILED"),
+                    EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_REQUEST_FAILED"),
                     "request failed",
                 )
                 .with_context("status=503"))

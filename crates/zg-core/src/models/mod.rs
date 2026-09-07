@@ -7,8 +7,11 @@ pub mod backends;
 pub mod catalog;
 pub mod download;
 pub mod embeddings;
+pub mod error;
 pub mod factory;
 pub mod resolution;
+#[cfg(feature = "test-support")]
+pub mod stub;
 
 use std::sync::Arc;
 
@@ -16,8 +19,9 @@ use crate::error::EngineResult;
 use crate::types::{ImageFormat, SearchMetric};
 
 /// What the embedding is for — some backends prefix instructions by purpose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EmbeddingPurpose {
+    #[default]
     Document,
     Query,
 }
@@ -75,7 +79,10 @@ pub enum EmbeddingStageKind {
 }
 
 /// Sink for model-load progress notifications.
-pub type ProgressSink = Arc<dyn Fn(EmbeddingModelProgress) + Send + Sync>;
+///
+/// Named per event type (M2): this is the model-load sink, distinct from
+/// the index-progress sink ([`crate::pipeline::indexing::IndexProgressSink`]).
+pub type ModelLoadSink = Arc<dyn Fn(EmbeddingModelProgress) + Send + Sync>;
 
 /// A loaded embedding model.
 ///
@@ -89,7 +96,7 @@ pub trait EmbeddingModel: Send + Sync {
 
     /// Downloads/loads the model (local backends); remote backends no-op.
     /// Mirrors the optional TS `prepare` (local models only).
-    fn prepare(&self, sink: Option<ProgressSink>) -> EngineResult<()> {
+    fn prepare(&self, sink: Option<ModelLoadSink>) -> EngineResult<()> {
         let _ = sink;
         Ok(())
     }

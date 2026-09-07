@@ -240,7 +240,7 @@ fn resolve_chunk_options(options: &ChunkOptions) -> EngineResult<(usize, usize)>
 
     if max_chunk_chars == 0 {
         return Err(EngineError::new(
-            codes::extractor("TEXT_INVALID_CHUNK_SIZE"),
+            codes::extractor_text_invalid_chunk_size(),
             "Text extractor requires a positive integer chunk size",
         )
         .with_context(format!("maxChunkChars={max_chunk_chars}")));
@@ -248,7 +248,7 @@ fn resolve_chunk_options(options: &ChunkOptions) -> EngineResult<(usize, usize)>
 
     if chunk_overlap_chars >= max_chunk_chars {
         return Err(EngineError::new(
-            codes::extractor("TEXT_INVALID_CHUNK_OVERLAP"),
+            codes::extractor_text_invalid_chunk_overlap(),
             "Text extractor requires overlap to be smaller than chunk size",
         )
         .with_context(format!(

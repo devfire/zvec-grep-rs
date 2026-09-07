@@ -72,3 +72,13 @@ strip = "symbols"
 [profile.dist]
 inherits = "release"
 lto = "fat"
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unused_qualifications = "warn"
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+todo = "deny"
+dbg_macro = "deny"
+unwrap_used = "deny"
+expect_used = "warn"

@@ -14,8 +14,9 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use super::catalog::ModelReference;
-use super::{EmbeddingModelProgress, EmbeddingStageKind, ProgressSink};
-use crate::error::{EngineError, EngineErrorCode, EngineResult};
+use super::{EmbeddingModelProgress, EmbeddingStageKind, ModelLoadSink};
+use super::error::ModelError;
+use crate::error::{EngineError, EngineResult};
 
 /// Progress update for one artifact download.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,20 +39,18 @@ struct ArtifactState {
 /// `warning` emits a warning event (returning whether anyone listened),
 /// and `finish` emits `ready`.
 pub struct ModelDownloadReporter {
-    model: String,
-    sink: Option<ProgressSink>,
+    sink: Option<ModelLoadSink>,
     artifacts: HashMap<String, ArtifactState>,
     download_started: bool,
 }
 
 impl ModelDownloadReporter {
     pub fn new(
-        model: &ModelReference,
-        sink: Option<ProgressSink>,
+        _model: &ModelReference,
+        sink: Option<ModelLoadSink>,
         expected_artifacts: &[&str],
     ) -> Self {
         Self {
-            model: model.as_str().to_owned(),
             sink,
             artifacts: expected_artifacts
                 .iter()
@@ -74,9 +73,7 @@ impl ModelDownloadReporter {
     /// Marks `artifact` as actively downloading, emitting the first
     /// aggregate `downloading` event.
     pub fn begin(&mut self, artifact: &str) {
-        self.artifacts
-            .entry(artifact.to_owned())
-            .or_insert_with(ArtifactState::default);
+        self.artifacts.entry(artifact.to_owned()).or_default();
         if !self.download_started {
             self.download_started = true;
             self.emit_download();
@@ -85,9 +82,7 @@ impl ModelDownloadReporter {
 
     /// Registers an artifact that may download later, without emitting.
     pub fn register(&mut self, artifact: &str) {
-        self.artifacts
-            .entry(artifact.to_owned())
-            .or_insert_with(ArtifactState::default);
+        self.artifacts.entry(artifact.to_owned()).or_default();
     }
 
     /// Drops an already-cached artifact from the aggregate totals.
@@ -207,11 +202,9 @@ pub fn download_file(
 ) -> EngineResult<()> {
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent).map_err(|err| {
-            EngineError::new(
-                EngineErrorCode::new("MODELS.MODEL_DOWNLOAD_FAILED"),
-                "model download failed",
-            )
-            .with_context(format!("url={url} detail=create cache dir: {err}"))
+            EngineError::from(ModelError::DownloadFailed {
+                context: format!("url={url} detail=create cache dir: {err}"),
+            })
         })?;
     }
     let temp_path = destination.with_extension(format!("part-{}", std::process::id()));
@@ -220,18 +213,14 @@ pub fn download_file(
         Ok(()) => {
             if !is_usable_file(&temp_path) {
                 let _ = fs::remove_file(&temp_path);
-                return Err(EngineError::new(
-                    EngineErrorCode::new("MODELS.MODEL_DOWNLOAD_FAILED"),
-                    "model download failed",
-                )
-                .with_context(format!("url={url} detail=downloaded file is empty")));
+                return Err(EngineError::from(ModelError::DownloadFailed {
+                    context: format!("url={url} detail=downloaded file is empty"),
+                }));
             }
             fs::rename(&temp_path, destination).map_err(|err| {
-                EngineError::new(
-                    EngineErrorCode::new("MODELS.MODEL_DOWNLOAD_FAILED"),
-                    "model download failed",
-                )
-                .with_context(format!("url={url} detail=rename into cache: {err}"))
+                EngineError::from(ModelError::DownloadFailed {
+                    context: format!("url={url} detail=rename into cache: {err}"),
+                })
             })
         }
         Err(err) => {
@@ -271,11 +260,9 @@ pub fn download_cached_file(
         }),
     );
     if let Err(err) = result {
-        return Err(EngineError::new(
-            EngineErrorCode::new("MODELS.MODEL_DOWNLOAD_FAILED"),
-            "model download failed",
-        )
-        .with_context(format!("repo={repo} revision={revision} detail={err}")));
+        return Err(EngineError::from(ModelError::DownloadFailed {
+            context: format!("repo={repo} revision={revision} detail={err}"),
+        }));
     }
     Ok(local_path.to_owned())
 }
@@ -286,11 +273,9 @@ fn download_to(
     on_progress: Option<&mut dyn FnMut(u64, Option<u64>)>,
 ) -> EngineResult<()> {
     let mut response = ureq::get(url).call().map_err(|err| {
-        EngineError::new(
-            EngineErrorCode::new("MODELS.MODEL_DOWNLOAD_FAILED"),
-            "model download failed",
-        )
-        .with_context(format!("url={url} detail={err}"))
+        EngineError::from(ModelError::DownloadFailed {
+            context: format!("url={url} detail={err}"),
+        })
     })?;
     let total_bytes: Option<u64> = response
         .headers()
@@ -304,25 +289,19 @@ fn download_to(
         on_progress,
     };
     let mut file = fs::File::create(temp_path).map_err(|err| {
-        EngineError::new(
-            EngineErrorCode::new("MODELS.MODEL_DOWNLOAD_FAILED"),
-            "model download failed",
-        )
-        .with_context(format!("url={url} detail=create temp file: {err}"))
+        EngineError::from(ModelError::DownloadFailed {
+            context: format!("url={url} detail=create temp file: {err}"),
+        })
     })?;
     std::io::copy(&mut reader, &mut file).map_err(|err| {
-        EngineError::new(
-            EngineErrorCode::new("MODELS.MODEL_DOWNLOAD_FAILED"),
-            "model download failed",
-        )
-        .with_context(format!("url={url} detail=stream body: {err}"))
+        EngineError::from(ModelError::DownloadFailed {
+            context: format!("url={url} detail=stream body: {err}"),
+        })
     })?;
     file.flush().map_err(|err| {
-        EngineError::new(
-            EngineErrorCode::new("MODELS.MODEL_DOWNLOAD_FAILED"),
-            "model download failed",
-        )
-        .with_context(format!("url={url} detail=flush file: {err}"))
+        EngineError::from(ModelError::DownloadFailed {
+            context: format!("url={url} detail=flush file: {err}"),
+        })
     })?;
     Ok(())
 }
@@ -358,7 +337,7 @@ mod tests {
     ) {
         let events = Arc::new(Mutex::new(Vec::new()));
         let sink_events = Arc::clone(&events);
-        let sink: ProgressSink = Arc::new(move |progress| {
+        let sink: ModelLoadSink = Arc::new(move |progress| {
             if let Ok(mut guard) = sink_events.lock() {
                 guard.push(progress);
             }

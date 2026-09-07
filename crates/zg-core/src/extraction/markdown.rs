@@ -433,7 +433,7 @@ fn markdown_break_score(lines: &[&str], fence_lines: &[bool], break_index: usize
 fn is_heading_line(line: &str) -> bool {
     let hashes = line.bytes().take_while(|&b| b == b'#').count();
     hashes >= 1
-        && hashes <= 6
+        && (1..=6).contains(&hashes)
         && line[hashes..]
             .chars()
             .next()
@@ -596,7 +596,7 @@ fn resolve_chunk_options(options: &ChunkOptions) -> EngineResult<(usize, usize)>
 
     if max_chunk_chars == 0 {
         return Err(EngineError::new(
-            codes::extractor("MARKDOWN_INVALID_CHUNK_SIZE"),
+            codes::extractor_markdown_invalid_chunk_size(),
             "Markdown extractor requires a positive integer chunk size",
         )
         .with_context(format!("maxChunkChars={max_chunk_chars}")));
@@ -604,7 +604,7 @@ fn resolve_chunk_options(options: &ChunkOptions) -> EngineResult<(usize, usize)>
 
     if chunk_overlap_chars >= max_chunk_chars {
         return Err(EngineError::new(
-            codes::extractor("MARKDOWN_INVALID_CHUNK_OVERLAP"),
+            codes::extractor_markdown_invalid_chunk_overlap(),
             "Markdown extractor requires overlap to be smaller than chunk size",
         )
         .with_context(format!(

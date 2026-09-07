@@ -347,13 +347,26 @@ fn hostname_impl() -> String {
     std::env::var("COMPUTERNAME").unwrap_or_else(|_| "localhost".to_owned())
 }
 
-/// `kill(pid, 0)` liveness probe; EPERM means the process exists.
+/// Process-liveness probe.
+///
+/// On Linux this is a `/proc/<pid>` existence check (safe Rust, no signal
+/// needed: EPERM-style "exists but unpermitted" processes still have a
+/// `/proc` entry). Other Unix targets use `kill(pid, 0)`; that call is the
+/// sole `unsafe` in the crate, isolated here with a SAFETY justification.
 pub fn process_is_alive(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     {
+        Path::new(&format!("/proc/{pid}")).exists()
+    }
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        // SAFETY: `kill` with signal 0 performs no action and only reports
+        // whether the pid exists / is permitted; `pid > 0` is checked above
+        // and the return value plus errno are the only effects observed.
+        #[allow(unsafe_code)]
         let result = unsafe { libc::kill(pid as i32, 0) };
         result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
@@ -368,7 +381,7 @@ mod local_codes {
     use crate::error::EngineErrorCode;
 
     pub fn lock_unavailable() -> EngineErrorCode {
-        EngineErrorCode::new("LOCK.UNAVAILABLE")
+        EngineErrorCode::from_static("LOCK.UNAVAILABLE")
     }
 }
 
@@ -389,7 +402,7 @@ mod tests {
         let second =
             acquire_read_write_lock(&lock_path, LockMode::Write, &LockOptions::new("index"));
         assert!(second.is_err(), "second writer must fail");
-        let busy = second.err().map(|e| e.code().as_str().to_owned());
+        let busy = second.err().map(|e| e.code().qualified());
         assert_eq!(busy.as_deref(), Some("ZVEC_GREP.ENGINE.LOCK.BUSY"));
         guard.release();
         let again =

@@ -234,7 +234,7 @@ mod tests {
                 last_modified_time: crate::types::UnixMillis(0),
                 content_hash: None,
                 kind: crate::types::FileKind::Text,
-                format: crate::types::FileFormat("text".to_owned()),
+                format: crate::types::FileFormat::parse("text"),
                 index_status: None,
             },
             false,

@@ -23,7 +23,7 @@ use crate::types::{
 };
 use crate::utils::file_selection::{resolve_file_types, FileTypesMatcher, OrderedGlobs};
 use crate::utils::glob::{
-    has_path_glob, is_absolute_path_pattern, normalize_path_for_match, normalize_path_pattern,
+    is_absolute_path_pattern, normalize_path_for_match, normalize_path_pattern,
     path_pattern_matches,
 };
 use crate::utils::timing::TimingCollector;
@@ -164,7 +164,7 @@ pub fn diagnose_entity_search(
 ) -> EngineResult<EntitySearchDiagnosis> {
     let Some(stored) = ctx.storage.get_entity(entity_id) else {
         return Err(EngineError::new(
-            EngineErrorCode::new("SEARCH.ENTITY_NOT_FOUND"),
+            EngineErrorCode::from_static("SEARCH.ENTITY_NOT_FOUND"),
             "entity not found",
         )
         .with_context(format!("entityId={}", entity_id.as_str())));
@@ -192,7 +192,7 @@ pub fn diagnose_entity_search(
         entity: stored.entity,
         search: serde_json::to_value(&search).map_err(|err| {
             EngineError::new(
-                EngineErrorCode::new("SEARCH.DIAGNOSIS_ENCODE_FAILED"),
+                EngineErrorCode::from_static("SEARCH.DIAGNOSIS_ENCODE_FAILED"),
                 "search diagnosis could not be encoded",
             )
             .with_context(format!("detail={err}"))
@@ -218,7 +218,7 @@ pub fn diagnose_file_search(
 fn validate_search_plan(plan: &SearchPlan) -> EngineResult<ResolvedSearchPlan> {
     if plan.routes.is_empty() {
         return Err(EngineError::new(
-            EngineErrorCode::new("SEARCH_PLAN.EMPTY_ROUTES"),
+            EngineErrorCode::from_static("SEARCH_PLAN.EMPTY_ROUTES"),
             "search plan requires at least one route",
         ));
     }
@@ -230,7 +230,7 @@ fn validate_search_plan(plan: &SearchPlan) -> EngineResult<ResolvedSearchPlan> {
         let id = make_default_route_id(route.mode, &mut counts, &used_ids);
         if query.is_empty() {
             return Err(EngineError::new(
-                EngineErrorCode::new("SEARCH_PLAN.EMPTY_ROUTE_QUERY"),
+                EngineErrorCode::from_static("SEARCH_PLAN.EMPTY_ROUTE_QUERY"),
                 "search plan route requires a non-empty query",
             )
             .with_context(format!("routeId={id}")));
@@ -247,7 +247,7 @@ fn validate_search_plan(plan: &SearchPlan) -> EngineResult<ResolvedSearchPlan> {
     if let (Some(after), Some(before)) = (modified_after, modified_before) {
         if after.0 > before.0 {
             return Err(EngineError::new(
-                EngineErrorCode::new("SEARCH_PLAN.INVALID_MODIFIED_TIME_RANGE"),
+                EngineErrorCode::from_static("SEARCH_PLAN.INVALID_MODIFIED_TIME_RANGE"),
                 "search plan modified-after filter must not be later than modified-before",
             )
             .with_context(format!("modifiedAfter={} modifiedBefore={}", after.0, before.0)));
@@ -313,7 +313,7 @@ fn require_embedding_model<'a>(
         ])
         .unwrap_or_default();
         EngineError::new(
-            EngineErrorCode::new("SEARCH.EMBEDDING_MODEL_REQUIRED"),
+            EngineErrorCode::from_static("SEARCH.EMBEDDING_MODEL_REQUIRED"),
             "search operation requires an embedding model",
         )
         .with_context(detail)
@@ -325,7 +325,7 @@ fn normalize_path_filters(values: &[String], field: &str) -> EngineResult<Vec<St
     for (index, item) in values.iter().enumerate() {
         if item.trim().is_empty() {
             return Err(EngineError::new(
-                EngineErrorCode::new("SEARCH_PLAN.INVALID_PATH_FILTER"),
+                EngineErrorCode::from_static("SEARCH_PLAN.INVALID_PATH_FILTER"),
                 "search plan path filters must contain strings",
             )
             .with_context(format!("field={field} index={index}")));
@@ -343,7 +343,7 @@ fn normalize_string_filters(values: &[String], field: &str) -> EngineResult<Vec<
     for (index, item) in values.iter().enumerate() {
         if item.trim().is_empty() {
             return Err(EngineError::new(
-                EngineErrorCode::new("SEARCH_PLAN.INVALID_FILTER"),
+                EngineErrorCode::from_static("SEARCH_PLAN.INVALID_FILTER"),
                 "search plan filters must contain strings",
             )
             .with_context(format!("field={field} index={index}")));
@@ -361,7 +361,7 @@ fn normalize_modified_time(
         None => Ok(None),
         Some(time) if time.0 >= 0 => Ok(Some(time)),
         Some(time) => Err(EngineError::new(
-            EngineErrorCode::new("SEARCH_PLAN.INVALID_MODIFIED_TIME_FILTER"),
+            EngineErrorCode::from_static("SEARCH_PLAN.INVALID_MODIFIED_TIME_FILTER"),
             "search plan modified time filters must be non-negative epoch milliseconds",
         )
         .with_context(format!("field={field} value={}", time.0))),
@@ -532,7 +532,9 @@ fn add_recall_hits(
                 Candidate::new(entity_id.clone(), stored.entity, stored.file, false),
             );
         }
-        let candidate = candidates.get_mut(&entity_id).expect("candidate just inserted");
+        let Some(candidate) = candidates.get_mut(&entity_id) else {
+            continue;
+        };
         candidate.sources.insert(path);
         candidate.evidence.push(CandidateEvidence {
             fragment: hit.fragment.clone(),
@@ -560,21 +562,21 @@ fn resolve_hit_entity(
     hit: &StorageSearchHit,
     storage: &dyn WorkspaceIndexStorage,
 ) -> Option<StoredEntity> {
-    let group = hit.fragment.group.as_deref();
-    if group.is_none_or(|group| group == hit.fragment.entity.id.as_str()) {
-        return Some(StoredEntity {
+    match hit.fragment.group.as_deref() {
+        Some(group) if group != hit.fragment.entity.id.as_str() => {
+            storage.get_entity(&EntityId::from_raw(group.to_owned()))
+        }
+        _ => Some(StoredEntity {
             entity: Entity {
-                id: crate::ids::EntityId::from_raw(public_entity_id(&hit.fragment).to_owned()),
+                id: EntityId::from_raw(public_entity_id(&hit.fragment).to_owned()),
                 file_id: hit.fragment.entity.file_id.clone(),
                 range: hit.fragment.entity.range.clone(),
                 content: hit.fragment.entity.content.clone(),
                 metadata: hit.fragment.entity.metadata.clone(),
             },
             file: hit.file.clone(),
-        });
+        }),
     }
-    let group_id = crate::ids::EntityId::from_raw(group.expect("group checked above").to_owned());
-    storage.get_entity(&group_id)
 }
 
 fn extract_symbol_names(query: &str) -> Vec<String> {
@@ -647,7 +649,9 @@ fn force_track_entity(
         if seen_routes.contains(&Some(route.id.clone())) {
             continue;
         }
-        let candidate = candidates.get_mut(&key).expect("candidate just inserted");
+        let Some(candidate) = candidates.get_mut(&key) else {
+            continue;
+        };
         if plan_filter.matches_no_files {
             candidate.recall.push(SearchRecallTrace {
                 path: route_mode_str(route.mode).to_owned(),

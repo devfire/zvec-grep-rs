@@ -12,11 +12,12 @@ use std::sync::Arc;
 
 use super::EmbeddingModel;
 use super::catalog::{
-    EmbeddingCatalogEntry, LlamaCppEntry, Model2VecEntry, QwenMultimodalEntry, QwenTextEntry,
-    TransformersJsEntry, get_embedding_model_catalog_entry,
+    EmbeddingCatalogEntry, LlamaCppEntry, Model2VecEntry, ModelReference, QwenMultimodalEntry,
+    QwenTextEntry, TransformersJsEntry, get_embedding_model_catalog_entry,
 };
 use super::embeddings::{ApiKey, CreateEmbeddingModelOptions};
-use crate::error::{EngineError, EngineErrorCode, EngineResult};
+use super::error::{ModelError, QwenBackend, QwenTextModel};
+use crate::error::{EngineError, EngineResult};
 use crate::paths::default_home;
 
 /// Environment variable overriding the local model cache directory.
@@ -81,49 +82,51 @@ impl ModelBuildPlan {
 
 /// Resolves `reference` against the catalog and validates backend-specific
 /// options (Qwen API key/endpoint, local cache directory).
+///
+/// Takes the [`ModelReference`] newtype (M2) so a bare `&str` that is not a
+/// model reference cannot flow in.
 pub fn plan_embedding_model(
-    reference: &str,
+    reference: &ModelReference,
     options: &CreateEmbeddingModelOptions,
 ) -> EngineResult<ModelBuildPlan> {
-    let entry = get_embedding_model_catalog_entry(reference).ok_or_else(|| {
-        EngineError::new(
-            EngineErrorCode::new("MODELS.EMBEDDING_CATALOG_MODEL_NOT_FOUND"),
-            "unknown embedding model reference",
-        )
-        .with_context(format!("embedding={reference}"))
+    let entry = get_embedding_model_catalog_entry(reference.as_str()).ok_or_else(|| {
+        EngineError::from(ModelError::CatalogModelNotFound {
+            reference: reference.as_str().to_owned(),
+        })
     })?;
     match entry {
         EmbeddingCatalogEntry::LlamaCpp(entry) => Ok(ModelBuildPlan::LlamaCpp {
             entry: *entry,
             cache_dir: resolve_model_cache_dir(options),
         }),
-        EmbeddingCatalogEntry::QwenText(entry) => Ok(ModelBuildPlan::QwenText {
-            entry: *entry,
-            api_key: require_api_key(
-                entry.reference,
-                "Qwen text embedding",
-                "QWEN_TEXT_EMBEDDING",
-                options.api_key.as_deref(),
-            )?,
-            endpoint: resolve_endpoint(
-                entry.reference,
-                entry.default_endpoint,
-                "QWEN_TEXT_EMBEDDING",
-                options.endpoint.as_deref(),
-            )?,
-        }),
+        EmbeddingCatalogEntry::QwenText(entry) => {
+            let model = QwenTextModel::from_model_id(entry.model);
+            Ok(ModelBuildPlan::QwenText {
+                entry: *entry,
+                api_key: require_api_key(
+                    entry.reference,
+                    QwenBackend::Text(model),
+                    options.api_key.as_deref(),
+                )?,
+                endpoint: resolve_endpoint(
+                    entry.reference,
+                    entry.default_endpoint,
+                    QwenBackend::Text(model),
+                    options.endpoint.as_deref(),
+                )?,
+            })
+        }
         EmbeddingCatalogEntry::QwenMultimodal(entry) => Ok(ModelBuildPlan::QwenMultimodal {
             entry: *entry,
             api_key: require_api_key(
                 entry.reference,
-                "Qwen3 VL embedding",
-                "QWEN3_VL_EMBEDDING",
+                QwenBackend::Vl,
                 options.api_key.as_deref(),
             )?,
             endpoint: resolve_endpoint(
                 entry.reference,
                 entry.default_endpoint,
-                "QWEN3_VL_EMBEDDING",
+                QwenBackend::Vl,
                 options.endpoint.as_deref(),
             )?,
         }),
@@ -146,41 +149,34 @@ pub fn plan_embedding_model(
 /// backends wave claims them. Unknown references report
 /// `EMBEDDING_CATALOG_MODEL_NOT_FOUND` via [`plan_embedding_model`].
 pub fn create_embedding_model(
-    reference: &str,
+    reference: &ModelReference,
     options: &CreateEmbeddingModelOptions,
 ) -> EngineResult<Arc<dyn EmbeddingModel>> {
     let plan = plan_embedding_model(reference, options)?;
-    Err(EngineError::new(
-        EngineErrorCode::new("MODELS.EMBEDDING_MODEL_NOT_IMPLEMENTED"),
-        "embedding backend not implemented",
-    )
-    .with_context(format!(
-        "reference={} backend={}",
-        plan.reference(),
-        match &plan {
+    Err(EngineError::from(ModelError::NotImplemented {
+        reference: reference.as_str().to_owned(),
+        backend: match &plan {
             ModelBuildPlan::LlamaCpp { .. } => "llama-cpp",
             ModelBuildPlan::QwenText { .. } | ModelBuildPlan::QwenMultimodal { .. } => "qwen",
             ModelBuildPlan::TransformersJs { .. } => "transformers-js",
             ModelBuildPlan::Model2Vec { .. } => "model2vec",
-        }
-    )))
+        },
+    }))
 }
 
 /// Requires a non-blank API key, mirroring the Qwen backend constructors.
+///
+/// The error code prefix follows the catalog entry (V4 / 3.7 / VL), exactly
+/// like the TS constructors — never a caller-supplied string.
 pub fn require_api_key(
     reference: &str,
-    display_name: &str,
-    error_code_prefix: &str,
+    backend: QwenBackend,
     api_key: Option<&str>,
 ) -> EngineResult<ApiKey> {
     let key = api_key.unwrap_or("").trim();
     if key.is_empty() {
-        return Err(EngineError::new(
-            EngineErrorCode::new(&format!("MODELS.{error_code_prefix}_MISSING_API_KEY")),
-            "missing API key",
-        )
-        .with_context(format!(
-            "model={reference} backend={display_name}\nhint=Pass --api-key, set ZVEC_GREP_API_KEY, or configure providers.qwen.apiKey."
+        return Err(EngineError::from(ModelError::missing_api_key(
+            reference, backend,
         )));
     }
     Ok(ApiKey::new(key))
@@ -191,16 +187,14 @@ pub fn require_api_key(
 pub fn resolve_endpoint(
     reference: &str,
     default_endpoint: &str,
-    error_code_prefix: &str,
+    backend: QwenBackend,
     endpoint: Option<&str>,
 ) -> EngineResult<String> {
     let resolved = endpoint.unwrap_or(default_endpoint).trim();
     if resolved.is_empty() {
-        return Err(EngineError::new(
-            EngineErrorCode::new(&format!("MODELS.{error_code_prefix}_MISSING_ENDPOINT")),
-            "missing endpoint",
-        )
-        .with_context(format!("model={reference}")));
+        return Err(EngineError::from(ModelError::missing_endpoint(
+            reference, backend,
+        )));
     }
     Ok(resolved.to_owned())
 }
@@ -213,9 +207,13 @@ mod tests {
         CreateEmbeddingModelOptions::default()
     }
 
+    fn reference(value: &str) -> ModelReference {
+        ModelReference::new(value)
+    }
+
     #[test]
     fn unknown_reference_reports_not_found() {
-        let err = plan_embedding_model("nope/unknown", &options()).unwrap_err();
+        let err = plan_embedding_model(&reference("nope/unknown"), &options()).unwrap_err();
         assert_eq!(
             err.code().to_string(),
             "ZVEC_GREP.ENGINE.MODELS.EMBEDDING_CATALOG_MODEL_NOT_FOUND"
@@ -224,10 +222,16 @@ mod tests {
 
     #[test]
     fn qwen_text_requires_api_key() {
-        let err = plan_embedding_model("qwen/text-embedding-v4", &options()).unwrap_err();
+        let err = plan_embedding_model(&reference("qwen/text-embedding-v4"), &options()).unwrap_err();
+        // TS-true code: the V4 subclass prefix, not the base prefix.
         assert_eq!(
             err.code().to_string(),
-            "ZVEC_GREP.ENGINE.MODELS.QWEN_TEXT_EMBEDDING_MISSING_API_KEY"
+            "ZVEC_GREP.ENGINE.MODELS.QWEN_TEXT_EMBEDDING_V4_MISSING_API_KEY"
+        );
+        let err = plan_embedding_model(&reference("qwen/qwen3.7-text-embedding"), &options()).unwrap_err();
+        assert_eq!(
+            err.code().to_string(),
+            "ZVEC_GREP.ENGINE.MODELS.QWEN37_TEXT_EMBEDDING_MISSING_API_KEY"
         );
     }
 
@@ -235,7 +239,7 @@ mod tests {
     fn qwen_text_plans_with_key() {
         let mut opts = options();
         opts.api_key = Some("  secret  ".to_owned());
-        let plan = plan_embedding_model("qwen/text-embedding-v4", &opts).unwrap();
+        let plan = plan_embedding_model(&reference("qwen/text-embedding-v4"), &opts).unwrap();
         let ModelBuildPlan::QwenText {
             api_key, endpoint, ..
         } = plan
@@ -251,10 +255,10 @@ mod tests {
         let mut opts = options();
         opts.api_key = Some("secret".to_owned());
         opts.endpoint = Some("   ".to_owned());
-        let err = plan_embedding_model("qwen/text-embedding-v4", &opts).unwrap_err();
+        let err = plan_embedding_model(&reference("qwen/text-embedding-v4"), &opts).unwrap_err();
         assert_eq!(
             err.code().to_string(),
-            "ZVEC_GREP.ENGINE.MODELS.QWEN_TEXT_EMBEDDING_MISSING_ENDPOINT"
+            "ZVEC_GREP.ENGINE.MODELS.QWEN_TEXT_EMBEDDING_V4_MISSING_ENDPOINT"
         );
     }
 }

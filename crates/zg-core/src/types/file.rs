@@ -23,10 +23,25 @@ impl FileKind {
 }
 
 /// Specific detected format identifier (e.g. `rust`, `markdown`, `text`).
+///
+/// The field is private: [`FileFormat::parse`] trims the raw identifier and
+/// falls back to `"text"` when blank, so a `FileFormat` is never empty.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct FileFormat(pub String);
+pub struct FileFormat(String);
 
 impl FileFormat {
+    /// Builds a format from a raw identifier (extension, catalog entry, or
+    /// markdown fence tag). Blank input becomes `"text"`, mirroring the
+    /// unknown-extension fallback in [`crate::file_type::detect_file_type`].
+    pub fn parse(raw: impl AsRef<str>) -> Self {
+        let trimmed = raw.as_ref().trim();
+        if trimmed.is_empty() {
+            Self("text".to_owned())
+        } else {
+            Self(trimmed.to_owned())
+        }
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

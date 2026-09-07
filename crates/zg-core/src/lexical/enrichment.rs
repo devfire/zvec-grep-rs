@@ -242,7 +242,7 @@ fn file_info_for_structure(
 fn is_structurally_enrichable(file: &crate::file_type::FileType) -> bool {
     use crate::types::FileKind;
 
-    file.kind == FileKind::Code || (file.kind == FileKind::Text && file.format.0 == "markdown")
+    file.kind == FileKind::Code || (file.kind == FileKind::Text && file.format.as_str() == "markdown")
 }
 
 /// The match's own range, preferring the pre-expansion excerpt range
@@ -306,11 +306,9 @@ fn compare_fragment_container(left: &EntityFragment, right: &EntityFragment) -> 
         } => end_line as i64 - start_line as i64,
         _ => i64::MAX,
     };
-    span(left) - span(right).max(i64::MIN + 1).min(i64::MAX - 1)
+    span(left).saturating_sub(span(right).clamp(i64::MIN + 1, i64::MAX - 1))
         + i64::from(
-            (fragment_specificity_score(right) - fragment_specificity_score(left))
-                .max(-1)
-                .min(1),
+            (fragment_specificity_score(right) - fragment_specificity_score(left)).clamp(-1, 1),
         )
         .saturating_mul(0)
         + specificity_then_id(left, right)
@@ -350,20 +348,8 @@ fn specificity_then_id(left: &EntityFragment, right: &EntityFragment) -> i64 {
 /// headings outrank plain chunks (mirrors `fragmentSpecificityScore`).
 fn fragment_specificity_score(fragment: &EntityFragment) -> i32 {
     match &fragment.entity.metadata {
-        Some(crate::types::EntityMetadata::Code(meta)) => {
-            if meta.symbol_name.is_some() {
-                2
-            } else {
-                1
-            }
-        }
-        Some(crate::types::EntityMetadata::Markdown(meta)) => {
-            if meta.heading.is_some() {
-                1
-            } else {
-                0
-            }
-        }
+        Some(crate::types::EntityMetadata::Code(meta)) => i32::from(meta.symbol_name.is_none()) + 1,
+        Some(crate::types::EntityMetadata::Markdown(meta)) => i32::from(meta.heading.is_some()),
         None => 0,
     }
 }

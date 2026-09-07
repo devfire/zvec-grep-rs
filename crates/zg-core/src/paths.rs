@@ -15,6 +15,15 @@ pub fn default_home() -> PathBuf {
     home_dir.join(".zvec-grep")
 }
 
+/// Global config file: `~/.zvec-grep/config.json` (mirrors TS
+/// `globalConfigPath`; uses the real home directory, not `$ZVEC_GREP_HOME`).
+pub fn global_config_path() -> PathBuf {
+    let home_dir = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    home_dir.join(".zvec-grep").join("config.json")
+}
+
 /// Lexically absolute form of `path` (no symlink resolution, like `resolve`).
 pub fn normalize_path(path: &Path) -> PathBuf {
     let mut result = PathBuf::new();

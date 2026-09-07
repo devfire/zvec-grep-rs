@@ -187,14 +187,14 @@ fn resolve_code_chunk_options(options: &ChunkOptions) -> EngineResult<(usize, us
     let chunk_overlap_chars = options.overlap_chars();
     if max_chunk_chars == 0 {
         return Err(EngineError::new(
-            codes::extractor("CODE_INVALID_CHUNK_SIZE"),
+            codes::extractor_code_invalid_chunk_size(),
             "code extractor requires a positive integer chunk size",
         )
         .with_context(format!("maxChunkChars={max_chunk_chars}")));
     }
     if chunk_overlap_chars >= max_chunk_chars {
         return Err(EngineError::new(
-            codes::extractor("CODE_INVALID_CHUNK_OVERLAP"),
+            codes::extractor_code_invalid_chunk_overlap(),
             "code extractor requires overlap to be smaller than chunk size",
         )
         .with_context(format!(
@@ -975,7 +975,7 @@ fn extract_script_blocks(
     let mut fragments = Vec::new();
     for block in find_script_blocks(text) {
         let block_file = FileInfo {
-            format: crate::types::FileFormat(block.format.clone()),
+            format: crate::types::FileFormat::parse(&block.format),
             ..file.clone()
         };
         let options = ChunkOptions {
@@ -1216,7 +1216,7 @@ mod tests {
             last_modified_time: crate::types::UnixMillis(0),
             content_hash: None,
             kind: FileKind::Code,
-            format: FileFormat("rust".to_owned()),
+            format: FileFormat::parse("rust"),
             index_status: None,
         }
     }

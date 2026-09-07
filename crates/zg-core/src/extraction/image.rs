@@ -18,7 +18,7 @@ pub fn extract_fragment(
 
     if data.is_empty() {
         return Err(EngineError::new(
-            codes::extractor("IMAGE_EMPTY_DATA"),
+            codes::extractor_image_empty_data(),
             "Image extractor requires non-empty image data",
         )
         .with_context(format!("fileId={} format={}", file.id, format_name(format))));

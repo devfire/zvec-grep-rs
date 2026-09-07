@@ -328,7 +328,7 @@ fn pattern_prefix_might_match_descendant(pattern: &str, directory_path: &str) ->
         let literal_prefix = literal_prefix_before_first_glob(variant);
         if !literal_prefix.is_empty()
             && (literal_prefix.starts_with(&directory_prefix)
-                || directory_prefix.starts_with(&literal_prefix))
+                || directory_prefix.starts_with(literal_prefix))
         {
             return true;
         }

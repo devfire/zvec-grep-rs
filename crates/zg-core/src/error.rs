@@ -7,32 +7,37 @@ use std::fmt;
 pub const ENGINE_ERROR_CODE_PREFIX: &str = "ZVEC_GREP.ENGINE";
 
 /// Fully-qualified engine error code, e.g. `ZVEC_GREP.ENGINE.CONFIG.INVALID`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct EngineErrorCode(String);
+///
+/// The wire string is the contract and never changes; the representation is
+/// a `&'static str` suffix so codes are `Copy`, allocation-free, and
+/// exhaustiveness-checkable at the call site. Assembling a code from a
+/// runtime string (`EngineErrorCode::new(&format!(..))`) is impossible by
+/// construction — every code in the tree is a literal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+pub struct EngineErrorCode(&'static str);
 
 impl EngineErrorCode {
     /// Builds a code from a dotted suffix (e.g. `CONFIG.INVALID`).
-    pub fn new(suffix: &str) -> Self {
-        Self(format!("{ENGINE_ERROR_CODE_PREFIX}.{suffix}"))
+    ///
+    /// `const` so domain error enums can map variants to codes in `const fn`.
+    pub const fn from_static(suffix: &'static str) -> Self {
+        Self(suffix)
     }
 
-    /// Parses a full code string; accepts only strings with the engine prefix.
-    pub fn parse(value: &str) -> Option<Self> {
-        value
-            .strip_prefix(ENGINE_ERROR_CODE_PREFIX)
-            .and_then(|rest| rest.strip_prefix('.'))
-            .filter(|suffix| !suffix.is_empty())
-            .map(|suffix| Self(format!("{ENGINE_ERROR_CODE_PREFIX}.{suffix}")))
+    /// The dotted suffix without the `ZVEC_GREP.ENGINE.` prefix.
+    pub const fn suffix(self) -> &'static str {
+        self.0
     }
 
-    pub fn as_str(&self) -> &str {
-        &self.0
+    /// The fully-qualified wire string, e.g. `ZVEC_GREP.ENGINE.CONFIG.INVALID`.
+    pub fn qualified(self) -> String {
+        format!("{ENGINE_ERROR_CODE_PREFIX}.{}", self.0)
     }
 }
 
 impl fmt::Display for EngineErrorCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        write!(f, "{ENGINE_ERROR_CODE_PREFIX}.{}", self.0)
     }
 }
 
@@ -87,31 +92,72 @@ impl std::error::Error for EngineError {}
 pub type EngineResult<T> = Result<T, EngineError>;
 
 /// Well-known engine error codes.
+///
+/// Every constructor is `const` and takes no runtime input: codes are
+/// literals, never assembled. The `extractor` escape hatch that once took a
+/// runtime `suffix: &str` is gone; each extractor code is its own literal
+/// below (M1). See `tests/golden/error-codes.txt` for the full registry.
 pub mod codes {
     use super::EngineErrorCode;
 
-    pub fn config_invalid() -> EngineErrorCode {
-        EngineErrorCode::new("CONFIG.INVALID")
+    pub const fn config_invalid() -> EngineErrorCode {
+        EngineErrorCode::from_static("CONFIG.INVALID")
     }
 
-    pub fn extractor(suffix: &str) -> EngineErrorCode {
-        EngineErrorCode::new(&format!("EXTRACTORS.{suffix}"))
+    pub const fn config_invalid_embedding_runtime() -> EngineErrorCode {
+        EngineErrorCode::from_static("CONFIG.INVALID_EMBEDDING_RUNTIME")
     }
 
-    pub fn config_invalid_embedding_runtime() -> EngineErrorCode {
-        EngineErrorCode::new("CONFIG.INVALID_EMBEDDING_RUNTIME")
+    pub const fn manifest_invalid() -> EngineErrorCode {
+        EngineErrorCode::from_static("MANIFEST.INVALID")
     }
 
-    pub fn manifest_invalid() -> EngineErrorCode {
-        EngineErrorCode::new("MANIFEST.INVALID")
+    pub const fn lock_busy() -> EngineErrorCode {
+        EngineErrorCode::from_static("LOCK.BUSY")
     }
 
-    pub fn lock_busy() -> EngineErrorCode {
-        EngineErrorCode::new("LOCK.BUSY")
+    pub const fn daemon_lease_active() -> EngineErrorCode {
+        EngineErrorCode::from_static("DAEMON_LEASE_ACTIVE")
     }
 
-    pub fn daemon_lease_active() -> EngineErrorCode {
-        EngineErrorCode::new("DAEMON_LEASE_ACTIVE")
+    pub const fn extractor_code_invalid_chunk_size() -> EngineErrorCode {
+        EngineErrorCode::from_static("EXTRACTORS.CODE_INVALID_CHUNK_SIZE")
+    }
+
+    pub const fn extractor_code_invalid_chunk_overlap() -> EngineErrorCode {
+        EngineErrorCode::from_static("EXTRACTORS.CODE_INVALID_CHUNK_OVERLAP")
+    }
+
+    pub const fn extractor_markdown_invalid_chunk_size() -> EngineErrorCode {
+        EngineErrorCode::from_static("EXTRACTORS.MARKDOWN_INVALID_CHUNK_SIZE")
+    }
+
+    pub const fn extractor_markdown_invalid_chunk_overlap() -> EngineErrorCode {
+        EngineErrorCode::from_static("EXTRACTORS.MARKDOWN_INVALID_CHUNK_OVERLAP")
+    }
+
+    pub const fn extractor_text_invalid_chunk_size() -> EngineErrorCode {
+        EngineErrorCode::from_static("EXTRACTORS.TEXT_INVALID_CHUNK_SIZE")
+    }
+
+    pub const fn extractor_text_invalid_chunk_overlap() -> EngineErrorCode {
+        EngineErrorCode::from_static("EXTRACTORS.TEXT_INVALID_CHUNK_OVERLAP")
+    }
+
+    pub const fn extractor_empty_file_id() -> EngineErrorCode {
+        EngineErrorCode::from_static("EXTRACTORS.EMPTY_FILE_ID")
+    }
+
+    pub const fn extractor_empty_absolute_path() -> EngineErrorCode {
+        EngineErrorCode::from_static("EXTRACTORS.EMPTY_ABSOLUTE_PATH")
+    }
+
+    pub const fn extractor_empty_relative_path() -> EngineErrorCode {
+        EngineErrorCode::from_static("EXTRACTORS.EMPTY_RELATIVE_PATH")
+    }
+
+    pub const fn extractor_image_empty_data() -> EngineErrorCode {
+        EngineErrorCode::from_static("EXTRACTORS.IMAGE_EMPTY_DATA")
     }
 }
 
@@ -276,11 +322,19 @@ mod tests {
 
     #[test]
     fn code_roundtrip() {
-        let code = EngineErrorCode::new("CONFIG.INVALID");
-        assert_eq!(code.as_str(), "ZVEC_GREP.ENGINE.CONFIG.INVALID");
-        let parsed = EngineErrorCode::parse(code.as_str());
-        assert_eq!(parsed.as_ref(), Some(&code));
-        assert!(EngineErrorCode::parse("OTHER.X").is_none());
+        let code = EngineErrorCode::from_static("CONFIG.INVALID");
+        assert_eq!(code.suffix(), "CONFIG.INVALID");
+        assert_eq!(
+            code.qualified(),
+            "ZVEC_GREP.ENGINE.CONFIG.INVALID"
+        );
+        assert_eq!(
+            code.to_string(),
+            "ZVEC_GREP.ENGINE.CONFIG.INVALID"
+        );
+        // `Copy`, not just `Clone`: codes move freely into error values.
+        let copied = code;
+        assert_eq!(copied, code);
     }
 
     #[test]

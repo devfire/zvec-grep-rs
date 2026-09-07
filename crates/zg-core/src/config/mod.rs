@@ -240,7 +240,7 @@ pub fn update_global_config(path: &Path, update: GlobalConfigUpdate) -> EngineRe
     let display = path.display().to_string();
     let value = serde_json::to_value(&merged).map_err(|error| {
         crate::error::EngineError::new(
-            crate::error::EngineErrorCode::new("JSON.WRITE_FAILED"),
+            crate::error::EngineErrorCode::from_static("JSON.WRITE_FAILED"),
             "failed to serialize global config",
         )
         .with_context(format!("error={error}"))

@@ -125,7 +125,7 @@ impl CancelFlag {
 fn throw_if_cancelled(cancel: Option<&CancelFlag>) -> EngineResult<()> {
     if cancel.is_some_and(CancelFlag::is_cancelled) {
         return Err(EngineError::new(
-            EngineErrorCode::new("INDEXING.CANCELLED"),
+            EngineErrorCode::from_static("INDEXING.CANCELLED"),
             "indexing was cancelled",
         ));
     }
@@ -798,7 +798,7 @@ fn read_configured_ignore_rules(root: &RootPath) -> EngineResult<Vec<IgnoreRule>
         };
         let content = std::fs::read_to_string(&absolute).map_err(|err| {
             EngineError::new(
-                EngineErrorCode::new("SCANNER.CONFIGURED_IGNORE_READ_FAILED"),
+                EngineErrorCode::from_static("SCANNER.CONFIGURED_IGNORE_READ_FAILED"),
                 "workspace index ignore file could not be read",
             )
             .with_context(format!("path={} detail={err}", absolute.display()))

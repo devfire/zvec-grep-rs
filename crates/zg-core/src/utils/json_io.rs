@@ -34,14 +34,14 @@ pub fn read_json_file<T: DeserializeOwned>(path: &Path, fallback: T) -> EngineRe
     match fs::read_to_string(path) {
         Ok(text) => serde_json::from_str(&text).map_err(|error| {
             crate::error::EngineError::new(
-                crate::error::EngineErrorCode::new("JSON.READ_FAILED"),
+                crate::error::EngineErrorCode::from_static("JSON.READ_FAILED"),
                 format!("failed to parse {}", path.display()),
             )
             .with_context(format!("error={error}"))
         }),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(fallback),
         Err(error) => Err(crate::error::EngineError::new(
-            crate::error::EngineErrorCode::new("JSON.READ_FAILED"),
+            crate::error::EngineErrorCode::from_static("JSON.READ_FAILED"),
             format!("failed to read {}", path.display()),
         )
         .with_context(format!("error={error}"))),
@@ -58,7 +58,7 @@ pub fn write_json_file<T: Serialize>(
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).map_err(|error| {
         crate::error::EngineError::new(
-            crate::error::EngineErrorCode::new("JSON.WRITE_FAILED"),
+            crate::error::EngineErrorCode::from_static("JSON.WRITE_FAILED"),
             format!("failed to create {}", parent.display()),
         )
         .with_context(format!("error={error}"))
@@ -70,7 +70,7 @@ pub fn write_json_file<T: Serialize>(
 
     let body = serde_json::to_string_pretty(value).map_err(|error| {
         crate::error::EngineError::new(
-            crate::error::EngineErrorCode::new("JSON.WRITE_FAILED"),
+            crate::error::EngineErrorCode::from_static("JSON.WRITE_FAILED"),
             "failed to serialize JSON",
         )
         .with_context(format!("error={error}"))
@@ -96,7 +96,7 @@ pub fn write_json_file<T: Serialize>(
     if let Err(error) = write_result {
         let _ = fs::remove_file(&tmp);
         return Err(crate::error::EngineError::new(
-            crate::error::EngineErrorCode::new("JSON.WRITE_FAILED"),
+            crate::error::EngineErrorCode::from_static("JSON.WRITE_FAILED"),
             format!("failed to write {}", path.display()),
         )
         .with_context(format!("error={error}")));

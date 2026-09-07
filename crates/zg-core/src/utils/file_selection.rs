@@ -232,11 +232,11 @@ mod codes {
     use crate::error::EngineErrorCode;
 
     pub fn file_types_unavailable() -> EngineErrorCode {
-        EngineErrorCode::new("FILE_SELECTION.TYPES_UNAVAILABLE")
+        EngineErrorCode::from_static("FILE_SELECTION.TYPES_UNAVAILABLE")
     }
 
     pub fn unknown_file_type() -> EngineErrorCode {
-        EngineErrorCode::new("FILE_SELECTION.UNKNOWN_FILE_TYPE")
+        EngineErrorCode::from_static("FILE_SELECTION.UNKNOWN_FILE_TYPE")
     }
 }
 

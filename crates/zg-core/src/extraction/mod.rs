@@ -139,19 +139,19 @@ pub(crate) fn validate_source_file(file: &FileInfo) -> EngineResult<()> {
 
     if file.id.as_str().trim().is_empty() {
         return Err(EngineError::new(
-            codes::extractor("EMPTY_FILE_ID"),
+            codes::extractor_empty_file_id(),
             "source file id must not be empty",
         ));
     }
     if file.absolute_path.trim().is_empty() {
         return Err(EngineError::new(
-            codes::extractor("EMPTY_ABSOLUTE_PATH"),
+            codes::extractor_empty_absolute_path(),
             "source absolute path must not be empty",
         ));
     }
     if file.relative_path.trim().is_empty() {
         return Err(EngineError::new(
-            codes::extractor("EMPTY_RELATIVE_PATH"),
+            codes::extractor_empty_relative_path(),
             "source relative path must not be empty",
         ));
     }

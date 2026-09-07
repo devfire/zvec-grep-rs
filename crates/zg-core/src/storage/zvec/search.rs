@@ -80,7 +80,7 @@ fn clamp_topk(limit: usize) -> i32 {
 
 fn query_error(kind: &str, detail: &str) -> EngineError {
     EngineError::new(
-        EngineErrorCode::new("STORAGE.ZVEC_QUERY_FAILED"),
+        EngineErrorCode::from_static("STORAGE.ZVEC_QUERY_FAILED"),
         "zvec recall query failed",
     )
     .with_context(format!("kind={kind} error={detail}"))

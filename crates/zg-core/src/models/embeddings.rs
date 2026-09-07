@@ -12,8 +12,9 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use super::{EmbeddingInput, EmbeddingModel, EmbeddingPurpose, ProgressSink};
-use crate::error::{EngineError, EngineErrorCode, EngineResult};
+use super::{EmbeddingInput, EmbeddingModel, EmbeddingPurpose, ModelLoadSink};
+use super::error::ModelError;
+use crate::error::EngineResult;
 use crate::types::Content;
 
 /// Which device a local backend should prefer.
@@ -56,7 +57,7 @@ pub struct CreateEmbeddingModelOptions {
 #[derive(Clone, Default)]
 pub struct EmbeddingOptions {
     pub purpose: EmbeddingPurpose,
-    pub on_progress: Option<ProgressSink>,
+    pub on_progress: Option<ModelLoadSink>,
 }
 
 impl fmt::Debug for EmbeddingOptions {
@@ -68,17 +69,13 @@ impl fmt::Debug for EmbeddingOptions {
     }
 }
 
-impl Default for EmbeddingPurpose {
-    fn default() -> Self {
-        Self::Document
-    }
-}
+// `Default for EmbeddingPurpose` is derived on the enum in `super`.
 
 /// Normalized request options passed to a backend's embed core.
 #[derive(Clone, Default)]
 pub struct NormalizedEmbeddingOptions {
     pub purpose: EmbeddingPurpose,
-    pub on_progress: Option<ProgressSink>,
+    pub on_progress: Option<ModelLoadSink>,
 }
 
 impl fmt::Debug for NormalizedEmbeddingOptions {
@@ -147,51 +144,44 @@ pub fn validate_contents(
     inputs: &[EmbeddingInput<'_>],
 ) -> EngineResult<()> {
     let info = model.info();
+    let reference = info.reference.clone();
     if inputs.is_empty() {
-        return Err(EngineError::new(
-            EngineErrorCode::new("MODELS.EMBEDDING_EMPTY_INPUT"),
-            "embedding input is empty",
-        )
-        .with_context(format!("model={}", info.reference)));
+        return Err(ModelError::EmptyInput { reference }.into());
     }
     let max = model.max_batch_size();
     if inputs.len() > max {
-        return Err(EngineError::new(
-            EngineErrorCode::new("MODELS.EMBEDDING_BATCH_TOO_LARGE"),
-            "embedding batch exceeds model limit",
-        )
-        .with_context(format!(
-            "model={} batchSize={} maxBatchSize={}",
-            info.reference,
-            inputs.len(),
-            max
-        )));
+        return Err(ModelError::BatchTooLarge {
+            reference,
+            size: inputs.len(),
+            max,
+        }
+        .into());
     }
     for (index, input) in inputs.iter().enumerate() {
         match input {
             EmbeddingInput::Text { text } => {
                 if text.trim().is_empty() {
-                    return Err(EngineError::new(
-                        EngineErrorCode::new("MODELS.EMBEDDING_EMPTY_TEXT"),
-                        "embedding text input is empty",
-                    )
-                    .with_context(format!("model={} index={index}", info.reference)));
+                    return Err(ModelError::EmptyText {
+                        reference: reference.clone(),
+                        index,
+                    }
+                    .into());
                 }
             }
             EmbeddingInput::Image { data, .. } => {
                 if !info.supports_images {
-                    return Err(EngineError::new(
-                        EngineErrorCode::new("MODELS.EMBEDDING_UNSUPPORTED_CONTENT"),
-                        "model does not support image input",
-                    )
-                    .with_context(format!("model={} index={index} kind=image", info.reference)));
+                    return Err(ModelError::UnsupportedImage {
+                        reference: reference.clone(),
+                        index: Some(index),
+                    }
+                    .into());
                 }
                 if data.is_empty() {
-                    return Err(EngineError::new(
-                        EngineErrorCode::new("MODELS.EMBEDDING_EMPTY_IMAGE"),
-                        "embedding image input is empty",
-                    )
-                    .with_context(format!("model={} index={index}", info.reference)));
+                    return Err(ModelError::EmptyImage {
+                        reference: reference.clone(),
+                        index,
+                    }
+                    .into());
                 }
             }
         }
@@ -208,54 +198,45 @@ pub fn validate_result(
     result: &EmbeddingResult,
 ) -> EngineResult<()> {
     let info = model.info();
+    let reference = info.reference.clone();
     if result.vectors.len() != input_count {
-        return Err(EngineError::new(
-            EngineErrorCode::new("MODELS.EMBEDDING_VECTOR_COUNT_MISMATCH"),
-            "backend returned wrong vector count",
-        )
-        .with_context(format!(
-            "model={} contentCount={input_count} vectorCount={}",
-            info.reference,
-            result.vectors.len()
-        )));
+        return Err(ModelError::VectorCountMismatch {
+            reference,
+            expected: input_count,
+            actual: result.vectors.len(),
+        }
+        .into());
     }
     for (vector_index, vector) in result.vectors.iter().enumerate() {
         if vector.len() != info.dimension {
-            return Err(EngineError::new(
-                EngineErrorCode::new("MODELS.EMBEDDING_DIMENSION_MISMATCH"),
-                "backend returned wrong vector dimension",
-            )
-            .with_context(format!(
-                "model={} vectorIndex={vector_index} expectedDimension={} actualDimension={}",
-                info.reference,
-                info.dimension,
-                vector.len()
-            )));
+            return Err(ModelError::DimensionMismatch {
+                reference: reference.clone(),
+                vector_index,
+                expected: info.dimension,
+                actual: vector.len(),
+            }
+            .into());
         }
         for (value_index, value) in vector.iter().enumerate() {
             if !value.is_finite() {
-                return Err(EngineError::new(
-                    EngineErrorCode::new("MODELS.EMBEDDING_NON_FINITE_VECTOR_VALUE"),
-                    "backend returned non-finite vector value",
-                )
-                .with_context(format!(
-                    "model={} vectorIndex={vector_index} valueIndex={value_index}",
-                    info.reference
-                )));
+                return Err(ModelError::NonFiniteValue {
+                    reference: reference.clone(),
+                    vector_index,
+                    value_index,
+                }
+                .into());
             }
         }
     }
     let mut seen = vec![false; input_count];
     for index in &result.truncated {
         if *index >= input_count || seen[*index] {
-            return Err(EngineError::new(
-                EngineErrorCode::new("MODELS.EMBEDDING_INVALID_TRUNCATED_INPUT_INDEX"),
-                "backend returned invalid truncated index",
-            )
-            .with_context(format!(
-                "model={} index={index} inputCount={input_count}",
-                info.reference
-            )));
+            return Err(ModelError::InvalidTruncatedIndex {
+                reference: reference.clone(),
+                index: *index,
+                input_count,
+            }
+            .into());
         }
         seen[*index] = true;
     }

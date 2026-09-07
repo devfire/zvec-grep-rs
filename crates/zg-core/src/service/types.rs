@@ -4,19 +4,22 @@
 //! JSON field naming follows the TS wire format: camelCase except where the
 //! daemon status DTO explicitly uses snake_case.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
-use crate::error::EngineResult;
 use crate::ids::EntityId;
+use crate::pipeline::indexing::IndexProgressSink;
 use crate::types::{
-    CodeSymbolType, Content, EntityMetadata, FileScanDiagnostics, Range, RootPath, SearchMetric,
+    CodeSymbolType, Content, EntityMetadata, Range, RootPath, SearchMetric,
     UnixMillis, WorkspaceIndexInfo, WorkspaceIndexPolicy,
 };
 
 /// Abort probe: return `true` to cancel a long-running operation.
-pub type AbortCheck<'a> = &'a dyn Fn() -> bool;
-/// Progress sink for index runs.
-pub type ProgressSink<'a> = &'a dyn Fn(&crate::types::IndexProgress);
+///
+/// Owned and `Send + Sync` (M4) so options structs can cross the async
+/// boundary via `spawn_blocking`; borrowed `&dyn Fn` is leaf-only.
+pub type AbortCheck = Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// How the embedding model handle is owned by the service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,16 +48,16 @@ pub struct ZvecGrepIndexOptions<'a> {
     pub max_file_size_bytes: Option<u64>,
     pub follow: Option<bool>,
     pub embedding_concurrency: Option<usize>,
-    pub on_progress: Option<ProgressSink<'a>>,
+    pub on_progress: Option<IndexProgressSink>,
     pub changed_paths: Vec<std::path::PathBuf>,
-    pub signal: Option<AbortCheck<'a>>,
+    pub signal: Option<AbortCheck>,
 }
 
 /// One root path entry: either a plain directory string or a full spec.
 #[derive(Debug, Clone)]
 pub enum RootPathSpec<'a> {
     Path(&'a str),
-    Full(RootPath),
+    Full(Box<RootPath>),
 }
 
 /// Result of `info()` / `disableIndex()`.
@@ -118,7 +121,7 @@ pub struct ZvecGrepContextOptions<'a> {
     pub rg: Option<RgOptions>,
     /// Refresh a stale index before searching (default true).
     pub auto_update: bool,
-    pub signal: Option<AbortCheck<'a>>,
+    pub signal: Option<AbortCheck>,
 }
 
 impl ZvecGrepContextOptions<'_> {
@@ -303,7 +306,7 @@ pub enum GroupRole {
 /// Convenience constructor matching the TS `EMPTY_QUERY` error path.
 pub fn empty_query_error() -> crate::error::EngineError {
     crate::error::EngineError::new(
-        crate::error::EngineErrorCode::new("CONTEXT.EMPTY_QUERY"),
+        crate::error::EngineErrorCode::from_static("CONTEXT.EMPTY_QUERY"),
         "query is required",
     )
 }
@@ -311,7 +314,7 @@ pub fn empty_query_error() -> crate::error::EngineError {
 /// Error used when a requested root has no workspace index.
 pub fn workspace_index_not_found(root: &str) -> crate::error::EngineError {
     crate::error::EngineError::new(
-        crate::error::EngineErrorCode::new("CONTEXT.WORKSPACE_INDEX_NOT_FOUND"),
+        crate::error::EngineErrorCode::from_static("CONTEXT.WORKSPACE_INDEX_NOT_FOUND"),
         "workspace index not found",
     )
     .with_context(format!("root={root}"))
@@ -320,11 +323,24 @@ pub fn workspace_index_not_found(root: &str) -> crate::error::EngineError {
 /// Error used when the workspace index exists but is disabled.
 pub fn workspace_index_disabled(root: &str) -> crate::error::EngineError {
     crate::error::EngineError::new(
-        crate::error::EngineErrorCode::new("CONTEXT.WORKSPACE_INDEX_DISABLED"),
+        crate::error::EngineErrorCode::from_static("CONTEXT.WORKSPACE_INDEX_DISABLED"),
         "workspace index is disabled",
     )
     .with_context(format!("root={root}"))
 }
 
-/// Result of opening a read session.
-pub type SessionResult<T> = EngineResult<T>;
+/// Options structs must stay `Send` (M4): they cross the async boundary via
+/// `spawn_blocking`. A borrowed callback field would break this; the test
+/// below pins it.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_send<T: Send>() {}
+
+    #[test]
+    fn options_are_send() {
+        assert_send::<ZvecGrepIndexOptions<'static>>();
+        assert_send::<ZvecGrepContextOptions<'static>>();
+    }
+}

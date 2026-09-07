@@ -131,7 +131,7 @@ pub fn detect_file_type(path: &Path) -> Option<FileType> {
             if entry.patterns.contains(&basename) {
                 return Some(FileType {
                     kind: entry.kind,
-                    format: FileFormat(entry.format.to_owned()),
+                    format: FileFormat::parse(entry.format),
                 });
             }
         }
@@ -143,7 +143,7 @@ pub fn detect_file_type(path: &Path) -> Option<FileType> {
     let Some(extension) = extension else {
         return Some(FileType {
             kind: FileKind::Text,
-            format: FileFormat("text".to_owned()),
+            format: FileFormat::parse("text"),
         });
     };
     for (kind, table) in [
@@ -156,7 +156,7 @@ pub fn detect_file_type(path: &Path) -> Option<FileType> {
             if *ext == extension {
                 return Some(FileType {
                     kind,
-                    format: FileFormat((*format).to_owned()),
+                    format: FileFormat::parse(format),
                 });
             }
         }
@@ -166,7 +166,7 @@ pub fn detect_file_type(path: &Path) -> Option<FileType> {
     }
     Some(FileType {
         kind: FileKind::Text,
-        format: FileFormat(extension),
+        format: FileFormat::parse(extension),
     })
 }
 
@@ -209,7 +209,7 @@ pub fn list_recognized_file_types() -> Vec<RecognizedFileType> {
             patterns.sort();
             RecognizedFileType {
                 kind,
-                format: FileFormat(format.to_owned()),
+                format: FileFormat::parse(format),
                 patterns,
             }
         })
@@ -234,7 +234,7 @@ mod tests {
     use super::*;
 
     fn detect(path: &str) -> Option<(FileKind, String)> {
-        detect_file_type(Path::new(path)).map(|t| (t.kind, t.format.0))
+        detect_file_type(Path::new(path)).map(|t| (t.kind, t.format.as_str().to_owned()))
     }
 
     #[test]
@@ -291,7 +291,7 @@ mod tests {
         let types = list_recognized_file_types();
         let cpp = types
             .iter()
-            .find(|t| t.format.0 == "cpp")
+            .find(|t| t.format.as_str() == "cpp")
             .expect("cpp entry");
         assert!(cpp.patterns.contains(&".cc".to_owned()));
         assert!(cpp.patterns.contains(&".hpp".to_owned()));

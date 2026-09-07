@@ -50,7 +50,7 @@ pub fn resolve_embedding_reference(
     if let Some(reference) = non_empty_environment_value(environment_reference) {
         if get_embedding_model_catalog_entry(&reference).is_none() {
             return Err(EngineError::new(
-                EngineErrorCode::new("CONFIG.EMBEDDING_ENVIRONMENT_INVALID"),
+                EngineErrorCode::from_static("CONFIG.EMBEDDING_ENVIRONMENT_INVALID"),
                 "invalid embedding reference in environment",
             )
             .with_context(format!("source={EMBEDDING_ENV_VAR} value={reference}")));

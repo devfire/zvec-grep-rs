@@ -19,14 +19,14 @@ pub fn create_entities_schema(
 ) -> EngineResult<CollectionSchema> {
     let dimension: u32 = embedding.dimension.try_into().map_err(|_| {
         EngineError::new(
-            EngineErrorCode::new("STORAGE.INVALID_EMBEDDING_DIMENSION"),
+            EngineErrorCode::from_static("STORAGE.INVALID_EMBEDDING_DIMENSION"),
             "embedding dimension does not fit a u32",
         )
         .with_context(format!("dimension={}", embedding.dimension))
     })?;
     let mut schema = CollectionSchema::new("zvec_grep_entities").map_err(|error| {
         EngineError::new(
-            EngineErrorCode::new("STORAGE.SCHEMA_FAILED"),
+            EngineErrorCode::from_static("STORAGE.SCHEMA_FAILED"),
             "failed to create entity collection schema",
         )
         .with_context(format!("error={error}"))
@@ -138,7 +138,7 @@ fn vector_field(
 
 fn schema_error(field: &str, detail: &str) -> EngineError {
     EngineError::new(
-        EngineErrorCode::new("STORAGE.SCHEMA_FAILED"),
+        EngineErrorCode::from_static("STORAGE.SCHEMA_FAILED"),
         "failed to build entity collection schema",
     )
     .with_context(format!("field={field} error={detail}"))

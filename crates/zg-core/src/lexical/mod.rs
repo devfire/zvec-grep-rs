@@ -236,7 +236,7 @@ pub fn run_lexical_search(options: &LexicalSearchOptions) -> EngineResult<Lexica
     let all_patterns = load_patterns(&options.patterns, &options.pattern_files)?;
     if all_patterns.is_empty() {
         return Err(EngineError::new(
-            EngineErrorCode::new("LEXICAL.EMPTY_PATTERN"),
+            EngineErrorCode::from_static("LEXICAL.EMPTY_PATTERN"),
             "at least one search pattern is required",
         ));
     }
@@ -249,7 +249,7 @@ pub fn run_lexical_search(options: &LexicalSearchOptions) -> EngineResult<Lexica
     )
     .map_err(|error| {
         EngineError::new(
-            EngineErrorCode::new("LEXICAL.UNKNOWN_FILE_TYPE"),
+            EngineErrorCode::from_static("LEXICAL.UNKNOWN_FILE_TYPE"),
             error.message().to_owned(),
         )
     })?;
@@ -449,7 +449,7 @@ fn load_patterns(patterns: &[String], pattern_files: &[PathBuf]) -> EngineResult
     for file in pattern_files {
         let text = fs::read_to_string(file).map_err(|error| {
             EngineError::new(
-                EngineErrorCode::new("LEXICAL.PATTERN_FILE_UNREADABLE"),
+                EngineErrorCode::from_static("LEXICAL.PATTERN_FILE_UNREADABLE"),
                 format!("unable to read pattern file {}", file.display()),
             )
             .with_context(format!("error={error}"))
@@ -493,7 +493,7 @@ fn build_matcher(
         .build(&combined)
         .map_err(|error| {
             EngineError::new(
-                EngineErrorCode::new("LEXICAL.INVALID_PATTERN"),
+                EngineErrorCode::from_static("LEXICAL.INVALID_PATTERN"),
                 "invalid search pattern",
             )
             .with_context(format!("error={error}"))
@@ -620,7 +620,7 @@ fn build_ignore_matcher(
     for file in ignore_files {
         if let Some(error) = builder.add(file) {
             return Err(EngineError::new(
-                EngineErrorCode::new("LEXICAL.IGNORE_FILE_INVALID"),
+                EngineErrorCode::from_static("LEXICAL.IGNORE_FILE_INVALID"),
                 format!("unable to read ignore file {}", file.display()),
             )
             .with_context(format!("error={error}")));
@@ -628,7 +628,7 @@ fn build_ignore_matcher(
     }
     builder.build().map(Some).map_err(|error| {
         EngineError::new(
-            EngineErrorCode::new("LEXICAL.IGNORE_FILE_INVALID"),
+            EngineErrorCode::from_static("LEXICAL.IGNORE_FILE_INVALID"),
             "unable to compile ignore files",
         )
         .with_context(format!("error={error}"))
@@ -648,7 +648,7 @@ fn is_hard_ignored_path(root: &Path, path: &Path) -> bool {
         .any(|component| component.as_os_str() == ".git" || component.as_os_str() == ".zvec-grep")
 }
 
-fn is_searchable_file(file_type: Option<std::fs::FileType>, path: &Path, follow: bool) -> bool {
+fn is_searchable_file(file_type: Option<fs::FileType>, path: &Path, follow: bool) -> bool {
     if file_type.is_some_and(|kind| kind.is_file()) {
         return true;
     }
@@ -752,7 +752,7 @@ impl MatchSink<'_> {
 impl grep_searcher::SinkError for crate::error::EngineError {
     fn error_message<T: std::fmt::Display>(message: T) -> Self {
         crate::error::EngineError::new(
-            crate::error::EngineErrorCode::new("LEXICAL.SEARCH_FAILED"),
+            crate::error::EngineErrorCode::from_static("LEXICAL.SEARCH_FAILED"),
             message.to_string(),
         )
     }
