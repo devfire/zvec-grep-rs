@@ -1,7 +1,7 @@
 //! Index coordination: pending-change batching with target-revision tracking.
 //!
 //! Mirrors `../zvec-grep/src/daemon/index-coordinator.ts`. The coordinator
-//! owns the pending [`ChangeSet`](crate::change_set::ChangeSet) and the
+//! owns the pending [`ChangeSet`] and the
 //! target revision; `RootRuntime` owns the indexed/reconciled revisions.
 //! Each `enqueue` merges changes, bumps the dirty revision via
 //! [`RootRuntime::mark_dirty`](crate::root_runtime::RootRuntime::mark_dirty),

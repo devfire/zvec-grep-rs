@@ -6,9 +6,9 @@
 //!
 //! - Loads run on `spawn_blocking` (model construction is synchronous CPU
 //!   work) instead of `await createModel(...)`; concurrent acquirers of a
-//!   loading key wait on a [`Notify`](tokio::sync::Notify) instead of
+//!   loading key wait on a [`Notify`] instead of
 //!   sharing a promise. Waiters share a dehydrated error (the
-//!   allocation-free [`EngineErrorCode`](zg_core::error::EngineErrorCode) is
+//!   allocation-free [`EngineErrorCode`] is
 //!   `Copy`, so the code survives dehydration exactly) rather than
 //!   re-running the load.
 //! - TS `model.dispose()` has no Rust analogue: eviction drops the last

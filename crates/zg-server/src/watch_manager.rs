@@ -1,7 +1,7 @@
 //! Filesystem watching: notify-based recursive watch coalesced to `ChangeSet`s.
 //!
 //! Mirrors `../zvec-grep/src/daemon/watch-manager.ts` (debounced flush,
-//! max-wait backstop, `.gitignore` widening via [`ChangeSet`](crate::change_set::ChangeSet),
+//! max-wait backstop, `.gitignore` widening via [`ChangeSet`],
 //! fail-open path filtering, full-reconcile on watcher errors). Two
 //! divergences (see `docs/ts-divergence.md`):
 //!
@@ -142,7 +142,7 @@ impl WatchManager {
     }
 
     /// Starts the recursive notify watcher. Watching `.git` / `.zvec-grep`
-    /// is skipped at record time (see [`WatchManager::record_raw`]).
+    /// is skipped at record time (see `record_raw()`).
     pub fn start(&mut self) -> Result<(), DaemonError> {
         if self.watcher.is_some() || self.shared.is_closed() {
             return Ok(());

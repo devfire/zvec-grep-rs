@@ -3,7 +3,7 @@
 //! `src/engine/models/backends/model2vec.ts`.
 //!
 //! [`ModelDownloadReporter`] folds per-artifact byte counts into the single
-//! [`EmbeddingModelProgress`](super::EmbeddingModelProgress) stream the
+//! [`EmbeddingModelProgress`] stream the
 //! engine reports. [`download_cached_file`] adds the cache-check /
 //! temp-file / atomic-rename dance around [`download_file`], which streams
 //! over HTTP via `ureq` without ever holding a whole artifact in memory.

@@ -114,7 +114,7 @@ pub struct ScanOptions {
 
 /// Shared cancellation flag (replaces `AbortSignal` in sync code).
 ///
-/// The inner [`Arc`] is private: construct with [`CancelFlag::new`], trip it
+/// The inner [`std::sync::Arc`] is private: construct with [`CancelFlag::new`], trip it
 /// with [`CancelFlag::cancel`], probe it with [`CancelFlag::is_cancelled`]
 /// (M2). Clones share one flag, so one `cancel()` trips every holder.
 #[derive(Debug, Clone, Default)]

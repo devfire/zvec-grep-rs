@@ -1,7 +1,7 @@
 //! Shared signature/doc/modifier helpers for code adapters.
 //!
 //! Mirrors `engine/extraction/code/families/metadata.ts`: best-effort,
-//! language-agnostic readers over [`SyntaxNode`](crate::extraction::code::adapter::SyntaxNode)
+//! language-agnostic readers over [`SyntaxNode`]
 //! used by every language adapter.
 
 use crate::extraction::code::adapter::SyntaxNode;

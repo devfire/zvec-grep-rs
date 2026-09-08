@@ -11,7 +11,7 @@
 //!   plain `&mut` state. `DaemonBackend` holds only the
 //!   [`RuntimeManager`] (key → sender + join handle).
 //! - Promise-chain generation indexing becomes sequential message
-//!   processing; [`Generation`](crate::root_runtime::Generation) survives
+//!   processing; [`Generation`] survives
 //!   as a staleness newtype, not a concurrency mechanism.
 //! - `droppingRoots` / `shuttingDown` are control-flow states, and
 //!   `closePromise` is [`RuntimeManager::close`] awaiting actor joins plus

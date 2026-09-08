@@ -196,7 +196,7 @@ pub struct LexicalSearchResult {
 
 /// Runs an exhaustive in-process lexical search.
 ///
-/// Never spawns a subprocess. Returns an [`EngineError`] only for invalid
+/// Never spawns a subprocess. Returns an [`crate::error::EngineError`] only for invalid
 /// search setup (no pattern, unreadable pattern/ignore file, unknown file
 /// type, unusable matcher); per-file IO failures during the walk skip that
 /// file, mirroring ripgrep's tolerance.

@@ -2,13 +2,13 @@
 //!
 //! Mirrors `../zvec-grep/src/engine/service/zvec-grep.ts` (`createZvecGrep`,
 //! `ZvecGrepService`, `openWorkspaceReadSession`). Every method delegates to
-//! the existing [`WorkspaceIndex`](super::workspace_index::WorkspaceIndex),
+//! the existing [`WorkspaceIndex`],
 //! [`pipeline::indexing`](crate::pipeline::indexing), and
 //! [`pipeline::search`](crate::pipeline::search) pieces; the facade owns no
 //! timers and no caches.
 //!
 //! Divergence notes (see `docs/ts-divergence.md`): the facade is sync —
-//! [`EmbeddingModel::embed`](crate::models::EmbeddingModel::embed) is sync,
+//! [`EmbeddingModel::embed`] is sync,
 //! so no tokio dependency is needed here and the async wrapping happens in
 //! the daemon (phase G) via `spawn_blocking`. Read sessions are explicit
 //! RAII guards ([`ReadSession`]); idle-TTL eviction belongs to the daemon,

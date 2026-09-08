@@ -5,7 +5,7 @@
 //! `.gitignore` widening, and the path-budget backstop). Collapse and
 //! budget semantics are verbatim; only the error shape changes (TS throws a
 //! plain `Error` for relative paths, Rust returns
-//! [`DaemonError::RootNotAbsolute`](crate::errors::DaemonError::RootNotAbsolute)).
+//! [`DaemonError::RootNotAbsolute`]).
 
 use std::collections::BTreeSet;
 use std::path::Path;

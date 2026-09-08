@@ -21,7 +21,7 @@ use crate::types::{
 /// boundary via `spawn_blocking`; borrowed `&dyn Fn` is leaf-only.
 pub type AbortCheck = Arc<dyn Fn() -> bool + Send + Sync>;
 
-/// Options accepted by [`crate::service::ZvecGrepService::index`].
+/// Options accepted by [`crate::service::facade::ZvecGrepService::ensure_index`].
 #[derive(Default)]
 pub struct ZvecGrepIndexOptions<'a> {
     pub root: Option<&'a std::path::Path>,
@@ -81,7 +81,7 @@ pub struct EmbeddingInfo {
     pub metric: SearchMetric,
 }
 
-/// Options accepted by [`crate::service::ZvecGrepService::context`].
+/// Options accepted by [`crate::service::facade::ZvecGrepService::context`].
 #[derive(Default)]
 pub struct ZvecGrepContextOptions<'a> {
     pub root: Option<&'a std::path::Path>,

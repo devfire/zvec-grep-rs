@@ -2,7 +2,7 @@
 //!
 //! Ports `engine/config.ts`. JSON field names stay camelCase for
 //! byte-compatibility with configs written by the TypeScript implementation.
-//! Validation lives in [`parse`]; this module owns the schema types, file IO
+//! Validation lives in `parse`; this module owns the schema types, file IO
 //! (via [`crate::utils::json_io`]), and embedding-runtime resolution.
 
 mod parse;

@@ -10,7 +10,7 @@ use std::cell::RefCell;
 
 /// Validated W3C `traceparent` header value.
 ///
-/// Private field: only [`parse_traceparent`] builds one.
+/// Private field: only `parse_traceparent()` builds one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TraceParent(String);
 

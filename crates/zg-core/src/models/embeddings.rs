@@ -2,7 +2,7 @@
 //! must run, mirroring `src/engine/models/embeddings.ts` (`BaseEmbeddingModel`)
 //! and `src/engine/models/ranking.ts`.
 //!
-//! The [`EmbeddingModel`](super::EmbeddingModel) trait itself lives in
+//! The [`EmbeddingModel`] trait itself lives in
 //! [`super`]; this module supplies its inputs (`CreateEmbeddingModelOptions`,
 //! `EmbeddingResult`), the validation helpers backends call at the top of
 //! `embed`, and the ranking surface.

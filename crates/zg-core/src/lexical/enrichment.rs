@@ -55,7 +55,7 @@ pub struct StructureEnrichmentResult {
 /// caps how many distinct files are parsed (pass
 /// [`STRUCTURE_ENRICH_FILE_LIMIT`] for TS parity), and
 /// `max_file_size_bytes` overrides the per-kind size cap for the re-read
-/// files. Only [`ContextItemKind::RgMatch`] items are considered; everything
+/// files. Only [`crate::service::types::ContextItemKind::RgMatch`] items are considered; everything
 /// else passes through untouched.
 pub fn enrich_lexical_items_with_structure(
     root: &Path,
