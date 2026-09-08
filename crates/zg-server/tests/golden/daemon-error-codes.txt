@@ -1,0 +1,31 @@
+# Wire-code registry for the zg-server daemon (M1).
+#
+# Every line is a bare daemon code produced by `DaemonError::code()`.
+# `tests/daemon_error_codes_golden.rs` renders the same set from live
+# values and fails on any drift: adding an error variant without updating
+# this file fails the build.
+#
+# Scope note: daemon codes are bare (`INDEX_MISSING`, not
+# `ZVEC_GREP.ENGINE.*`-prefixed) because the TS wire carries them raw in
+# job snapshots and MCP payloads. `ADDRESS_IN_USE`, `UNKNOWN_JOB`,
+# `ALREADY_RUNNING`, and `SHUTDOWN_FAILED` are Rust additions (TS throws
+# plain `Error`s there); the rest mirror `daemon/errors.ts` call sites.
+ADDRESS_IN_USE
+ALREADY_RUNNING
+DAEMON_SHUTTING_DOWN
+EMBEDDING_MODEL_MISMATCH
+INDEX_BUSY
+INDEX_CANCELLED
+INDEX_DROP_IN_PROGRESS
+INDEX_FAILED
+INDEX_MISSING
+INVALID_LISTEN_ADDRESS
+INVALID_TOKEN
+LOOPBACK_REQUIRED
+MODEL_LOAD_FAILED
+REMOTE_EMBEDDING_AUTH_REQUIRED
+ROOT_NOT_ABSOLUTE
+ROOT_NOT_FOUND
+ROOT_PERMISSION_DENIED
+SHUTDOWN_FAILED
+UNKNOWN_JOB

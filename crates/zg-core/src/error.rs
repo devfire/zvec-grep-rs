@@ -120,6 +120,11 @@ pub mod codes {
         EngineErrorCode::from_static("DAEMON_LEASE_ACTIVE")
     }
 
+    /// A `spawn_blocking` body panicked or was aborted (daemon join failure).
+    pub const fn daemon_blocking_join_failed() -> EngineErrorCode {
+        EngineErrorCode::from_static("DAEMON.BLOCKING_JOIN_FAILED")
+    }
+
     pub const fn service_read_session_closed() -> EngineErrorCode {
         EngineErrorCode::from_static("SERVICE.READ_SESSION_CLOSED")
     }

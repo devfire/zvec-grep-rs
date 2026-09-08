@@ -265,6 +265,7 @@ fn all_codes() -> Vec<String> {
     push(codes::manifest_invalid());
     push(codes::lock_busy());
     push(codes::daemon_lease_active());
+    push(codes::daemon_blocking_join_failed());
     push(codes::service_read_session_closed());
     push(codes::extractor_code_invalid_chunk_size());
     push(codes::extractor_code_invalid_chunk_overlap());

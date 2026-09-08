@@ -8,5 +8,18 @@
     allow(clippy::unwrap_used, clippy::expect_used, clippy::unwrap_in_result)
 )]
 
+pub mod backend;
+pub mod change_set;
+pub mod config;
+pub mod errors;
+pub mod http_server;
+pub mod index_coordinator;
+pub mod job_scheduler;
 pub mod logger;
+pub mod model_pool;
+pub mod read_session_cache;
+pub mod root_runtime;
+pub mod runtime_manager;
+pub mod server_controller;
 pub mod trace;
+pub mod watch_manager;

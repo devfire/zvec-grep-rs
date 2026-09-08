@@ -96,3 +96,42 @@ strings, auth prompt text) never diverge; only internal structure does.
 - `StorageError` / `IndexingError` enums stay until their refactors; until
   then those layers construct `from_static` literals only (grep-gated), and
   the golden registry pins the typed `ModelError` + `codes` set.
+
+## Daemon (phase G)
+
+- `backend.ts` thirteen `Map`/`Set`/flag fields shared across `await`;
+  one actor task per root owning `RootRuntime` + coordinator + watcher +
+  session cache as plain `&mut` state, `DaemonBackend` holding only
+  key → sender + join handles. Reason: replicating TS's maps is lock soup
+  (M6); per-root actors keep the same observable command surface with no
+  cross-root shared mutable state.
+- `AbortController`/`AbortSignal` in scheduler runs;
+  `tokio_util::sync::CancellationToken` at the async edge,
+  `CancelFlag` inside blocking bodies, adapted once in
+  `job_scheduler::bridge_cancellation` (index runs cross as an owned
+  `AbortCheck` probe instead). Reason: `spawn_blocking` cannot be aborted;
+  shutdown awaits in-flight work (M6).
+- `closePromise` chains; `RuntimeManager::close` awaiting actor joins +
+  `JobScheduler::close` awaiting running jobs. Reason: no Rust analogue
+  for a deferred promise field; explicit joins are deterministic.
+- `model.dispose()`; dropping the last `Arc`. Reason: no dispose hook on
+  the `EmbeddingModel` trait; eviction drops and destructors run.
+- `watch-manager.ts` per-directory Linux watchers + resume timers; one
+  native recursive `notify` watch with exclusion filtering. Reason: `notify`
+  registers inotify watches natively per directory already; the quota
+  problem TS works around does not apply.
+- `server-controller.ts process.kill` signals; `/bin/kill` (`SIGTERM` then
+  `SIGKILL`, Unix-only). Reason: `libc::kill` is `unsafe` and the
+  workspace forbids `unsafe`; refusal/timeout surfaces as typed
+  `ShutdownFailed` instead.
+- `os.hostname()`; `$HOSTNAME` with `/proc/sys/kernel/hostname`
+  fallback. Reason: no hostname dependency; same stability contract for
+  lock comparison.
+- Plain `Error`s for address-in-use / unknown-job / already-running /
+  shutdown refusal; `DaemonError::{AddressInUse, UnknownJob,
+  AlreadyRunning, ShutdownFailed}`. Reason: M1 bans stringly errors; the
+  codes are Rust additions (recorded in the daemon golden registry).
+- `root-runtime.ts` writer-context search routing; searches during an
+  index read the last committed session (possibly stale). Reason: writer
+  handoff would couple the scheduler task to actor state; staleness beats
+  deadlock here and `index_status` still reports the live job.

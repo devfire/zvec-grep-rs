@@ -36,6 +36,8 @@ half = "2"
 ureq = { version = "3", features = ["json"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking", "stream"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util", "process", "fs"] }
+tokio-util = "0.7"
+notify = "8"
 axum = { version = "0.8", features = ["json"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors"] }
