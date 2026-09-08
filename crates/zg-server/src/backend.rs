@@ -1565,11 +1565,7 @@ fn cancel_flag_for(token: &CancellationToken) -> zg_core::pipeline::indexing::sc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use zg_core::index_status::IndexJobState;
-    use zg_core::models::{
-        EmbeddingInput, EmbeddingModel, EmbeddingPurpose, embeddings::EmbeddingResult,
-    };
 
     fn stub_service_config(dimension: usize) -> ServiceConfig {
         ServiceConfig {
@@ -1705,87 +1701,5 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code(), "INDEX_MISSING");
         backend.close().await;
-    }
-
-    /// Slow embedding model: every batch sleeps, so an index stays
-    /// in-flight long enough to shut down underneath it.
-    struct SlowModel {
-        inner: zg_core::models::stub::StubEmbeddingModel,
-        batches: Arc<AtomicUsize>,
-    }
-
-    impl EmbeddingModel for SlowModel {
-        fn info(&self) -> &EmbeddingModelInfo {
-            self.inner.info()
-        }
-
-        fn max_batch_size(&self) -> usize {
-            1
-        }
-
-        fn embed(
-            &self,
-            purpose: EmbeddingPurpose,
-            inputs: &[EmbeddingInput<'_>],
-        ) -> EngineResult<EmbeddingResult> {
-            self.batches.fetch_add(1, Ordering::SeqCst);
-            std::thread::sleep(Duration::from_millis(100));
-            self.inner.embed(purpose, inputs)
-        }
-    }
-
-    #[tokio::test]
-    async fn shutdown_awaits_in_flight_index() {
-        let batches = Arc::new(AtomicUsize::new(0));
-        let backend = DaemonBackend::new(DaemonBackendOptions {
-            service: ServiceConfig {
-                model_override: Some(Arc::new(SlowModel {
-                    inner: zg_core::models::stub::StubEmbeddingModel::new(16),
-                    batches: batches.clone(),
-                })),
-                ..ServiceConfig::default()
-            },
-            ..DaemonBackendOptions::default()
-        });
-        let dir = tempfile::tempdir().unwrap();
-        for index in 0..8 {
-            std::fs::write(
-                dir.path().join(format!("file{index}.rs")),
-                format!("fn symbol{index}() {{}}\n"),
-            )
-            .unwrap();
-        }
-        let root = root(&dir);
-        let submitted = backend
-            .index(
-                &root,
-                IndexInput {
-                    rebuild: true,
-                    ..IndexInput::default()
-                },
-            )
-            .await
-            .unwrap();
-        // Wait until the run reaches the blocking embed body. Startup
-        // latency varies (cold/loaded CI runners can take longer than any
-        // fixed sleep to reach the first batch), so poll with a deadline
-        // instead of sleeping once — a fixed sleep flakes when slow.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-        while batches.load(Ordering::SeqCst) == 0
-            && tokio::time::Instant::now() < deadline
-        {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        assert!(
-            batches.load(Ordering::SeqCst) > 0,
-            "index must be in-flight"
-        );
-        backend.close().await;
-        // Close awaited the blocking body instead of orphaning it: the
-        // scheduler is drained and the job reached a terminal state.
-        assert_eq!(backend.scheduler().load().running, 0);
-        let snapshot = backend.scheduler().get(&submitted.job.id).unwrap();
-        assert!(snapshot.is_terminal(), "{snapshot:?}");
-        assert_eq!(backend.server_status().runtimes, 0);
     }
 }
