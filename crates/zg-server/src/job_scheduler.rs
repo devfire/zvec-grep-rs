@@ -1304,7 +1304,15 @@ mod tests {
             }) as BoxFuture<'static, JobOutcome>
         });
         let submitted = submit(&scheduler, "/repo", JobReason::Manual, blocking);
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // Wait until the body is actually running. A fixed sleep flakes on
+        // loaded runners, where milliseconds of wall-clock buy little CPU
+        // time for the spawned job to be polled.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+        while !entered.load(std::sync::atomic::Ordering::SeqCst)
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
         assert!(entered.load(std::sync::atomic::Ordering::SeqCst));
         scheduler.close().await;
         // Close awaited the in-flight body instead of orphaning it.
