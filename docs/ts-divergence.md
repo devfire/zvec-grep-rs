@@ -186,3 +186,70 @@ strings, auth prompt text) never diverge; only internal structure does.
   receiver exists — a job finishing before `wait()` subscribed left the
   slot stale and the waiter hung forever. `publish` uses `send_replace`
   now; `late_waiter_observes_terminal_state` pins it.
+
+## CLI (phase I)
+
+- Hand-rolled `parseArgs` over `process.argv`; clap-derive tree in
+  `crates/zg/src/cli.rs`. Reason: idiomatic CLI parsing with `--help`
+  and shell completions for free. Frozen surface kept: subcommand names,
+  flag spellings, and every `validateCliShape`/`parseCommand` message.
+  Generic unknown-flag errors follow clap wording; exit code is 1 for all
+  failures (clap's 2 is remapped) and 0 for help/version, matching
+  `process.exitCode`.
+- CLI plain `Error`s; `CliError` enum with `ZVEC_GREP.ENGINE.CLI.*`
+  Rust-addition codes + golden registry. Reason: M1 bans stringly errors;
+  user-facing messages stay byte-identical where frozen.
+- `@modelcontextprotocol/client` StreamableHTTP + elicitation +
+  progress-heartbeat `DaemonClient`; raw JSON-RPC 2.0 over reqwest with
+  the same framing the endpoint tests pin. Reason: no rmcp client-HTTP
+  feature in the workspace (avoids a second TLS stack); the server fails
+  closed with a `zg auth grant` directive instead of eliciting, so there
+  is no interactive round trip to forward and `--allow-remote` only mints
+  direct-mode one-shot permits. Long calls use a 30-minute bound instead
+  of open-ended heartbeats.
+- `zvec_grep_search` structured groups over MCP; CLI prints the text
+  content our daemon returns, using structured `groupResults` only when a
+  server provides them. Reason: the phase-H search tool returns text only;
+  the `INCOMPATIBLE_SERVER_SEARCH_MESSAGE` guard stays for genuinely old
+  servers.
+- Server-mode `zvec_grep_index` with per-request embedding/credentials/
+  file-scope knobs; CLI sends only `{root, rebuild, wait, debug}` and
+  fails fast when those flags meet server mode. Reason: phase H rejects
+  those overrides server-side; forwarding them would only surface the
+  rejection later.
+- `--line-regexp` forwarded to the rg subprocess; mapped to `^(?:pat)$`
+  wrapping. Reason: no subprocess exists; the wrapped regex is what rg
+  would match.
+- `--max-count` forwarded to the rg subprocess; mapped onto the native
+  per-file cap. Reason: same — the engine honors it directly.
+- `--case-sensitive` forwarded; accepted as an explicit no-op (the engine
+  default). Reason: behavior-preserving without a flag to forward to.
+- Exotic short-flag groups (`-in`, …); clap shorts for the common set
+  (`-i -w -F -S -x -C -A -B -m -g -t -T -L`) only. Reason: clap cannot
+  parse combined short groups with values; the common cases work, the rest
+  error instead of misparsing.
+- Short output-changing flags (`-c`, `-l`, …); clap generic error instead
+  of the tailored managed-rg text (long forms keep the exact TS message).
+  Reason: enumerating every short alias as a hidden flag is weight without
+  behavior gain; the invocation still fails.
+- `query`/`index`/`install` interactive TTY prompts via stdin readline;
+  install target prompting replaced by detect-or-require-`--target`.
+  Reason: no interactive multi-select UI in scope; `--yes`/`--force`
+  cover non-interactive use.
+- `AGENTS.md`/`QWEN.md` guidance markdown blocks; not written. Reason:
+  plan scopes install to MCP config read-modify-write.
+- JSONC target files rewritten via serde (comments lost); refused without
+  `--force` when comments are detected. Reason: no JSONC-preserving
+  editor dependency; refusing by default protects user files.
+- Per-invocation `--device` in direct/`server run` mode; honored via
+  `config model set --device` and `$ZVEC_GREP_DEVICE`, not per call.
+  Reason: neither `CreateZvecGrepOptions` nor daemon `ServiceConfig`
+  carries a device override, and threading one through both crates is
+  out of phase scope.
+- `zg` keeps its `zg-server` dependency (the plan suggested dropping
+  it). Reason: `server run`/`--stdio` serve the router in-process from
+  the CLI binary; spawning a separate binary would add a process hop for
+  no behavior gain, and direct mode never touches the server stack.
+- `--max-filesize` free-form sizes; plain bytes plus `K`/`M`/`G`
+  suffixed values. Reason: `parseByteSize` scales without a stated spec
+  to mirror; common spellings parse, anything else errors.

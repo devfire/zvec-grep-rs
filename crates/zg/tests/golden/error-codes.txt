@@ -1,0 +1,21 @@
+# Wire-code registry for the zg CLI (M1).
+#
+# Every line is a `ZVEC_GREP.ENGINE.CLI.*` code produced by
+# `CliError::own_code()`. `src/error.rs` renders the same set from live
+# values and fails on any drift: adding a CLI error variant without
+# updating this file fails the build.
+#
+# Scope note: the TypeScript CLI throws plain `Error`s with no codes, so
+# every entry here is a Rust addition; the user-facing *messages* stay
+# byte-identical to TS where frozen. Wrapped engine/daemon failures keep
+# their own codes and are covered by the zg-core/zg-server registries.
+ZVEC_GREP.ENGINE.CLI.AUTHORIZATION_DECLINED
+ZVEC_GREP.ENGINE.CLI.AUTHORIZATION_REQUIRED
+ZVEC_GREP.ENGINE.CLI.CONFIG_INVALID
+ZVEC_GREP.ENGINE.CLI.DAEMON_UNAVAILABLE
+ZVEC_GREP.ENGINE.CLI.INSTALL_REFUSED
+ZVEC_GREP.ENGINE.CLI.IO_FAILED
+ZVEC_GREP.ENGINE.CLI.NOT_READY
+ZVEC_GREP.ENGINE.CLI.RG_INCOMPATIBLE
+ZVEC_GREP.ENGINE.CLI.SERVER_INCOMPATIBLE
+ZVEC_GREP.ENGINE.CLI.USAGE
