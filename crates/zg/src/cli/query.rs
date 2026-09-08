@@ -1,7 +1,7 @@
 //! `zg query` flags, mirroring the `query` branch of `parseArgs`.
 //!
 //! Includes the hidden rg output/compat flag groups (rejected verbatim by
-//! [`validate`](super::validate)) and the `QueryArgs` placement helpers the
+//! [`validate()`](super::validate()) and the `QueryArgs` placement helpers the
 //! validator inspects.
 
 use std::path::PathBuf;

@@ -1,6 +1,6 @@
 //! Range labels (`format/range.ts`).
 //!
-//! Every [`Range`](zg_core::types::Range) variant and every skipped field
+//! Every [`Range`] variant and every skipped field
 //! is spelled out explicitly, so a new variant or field fails compilation
 //! here instead of falling into a catch-all.
 

@@ -9,9 +9,9 @@
 //!
 //! Layout: pure builders and their `print_*` wrappers live beside each
 //! other per domain (`context_*`, `workspace`, `index`, `progress`,
-//! `error`, `control`); shared paint lives in [`color`](color) and the
-//! private `fields` helper, shared text shaping in [`text`](text) and
-//! [`range`](range). The facade re-exports the command surface the binary
+//! `error`, `control`); shared paint lives in [`color`] and the
+//! private `fields` helper, shared text shaping in [`text`] and
+//! [`range`]. The facade re-exports the command surface the binary
 //! uses, so existing call sites are untouched; pure builders stay in their
 //! submodules and are imported from there (notably by the goldens).
 

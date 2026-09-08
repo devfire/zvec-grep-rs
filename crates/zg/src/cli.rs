@@ -10,7 +10,7 @@
 //! Layout: [`Cli`] and [`Command`] live here. Per-command args live in
 //! sibling modules (`query`, `index`, `status`, `integrate`, `config`,
 //! `auth`, `server`, `help`); shared value enums in [`values`]; cross-flag
-//! checks in [`validate`]; value parsers in [`parse`]. The facade re-exports
+//! checks in [`mod@validate`]; value parsers in [`parse`]. The facade re-exports
 //! every name the binary uses, so existing `crate::cli::X` paths work.
 
 mod auth;
