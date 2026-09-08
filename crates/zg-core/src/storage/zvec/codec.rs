@@ -5,9 +5,9 @@
 //! `publicEntityId(s)`, and `validateFragmentGroups` from
 //! `engine/storage/zvec.ts`.
 //!
-//! Divergences: range JSON round-trips through the Rust [`Range`] serde
-//! shape (snake_case); image payloads use a strict built-in base64 codec
-//! instead of `Buffer`.
+//! Divergences: `range_json` uses the TypeScript wire shape verbatim
+//! (snake_case `kind` tags, camelCase fields — see [`Range`]); image
+//! payloads use a strict built-in base64 codec instead of `Buffer`.
 
 use std::collections::{HashMap, HashSet};
 

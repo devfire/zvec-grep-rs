@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::config::EmbeddingRuntimeConfig;
-use crate::error::{EngineError, EngineErrorCode, EngineResult, codes};
+use crate::error::{EngineError, EngineResult, codes};
 use crate::lexical::{LexicalSearchOptions, LexicalSearchResult, run_lexical_search};
 use crate::manifest::{
     CURRENT_MANIFEST_VERSION, WorkspaceManifest, read_workspace_manifest, write_workspace_manifest,

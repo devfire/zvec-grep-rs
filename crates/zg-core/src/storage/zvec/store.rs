@@ -57,6 +57,23 @@ impl FileMetaStore {
         })
     }
 
+    /// Builds a store from already-loaded records without touching disk.
+    /// Used by the TS-generation importer ([`super::legacy_import`]),
+    /// which sources records from `files.zvec` rather than `files.json`;
+    /// the caller persists explicitly via [`persist`](Self::persist) only
+    /// for verified imports, so a partial import never cements itself as
+    /// `files.json`.
+    pub fn from_records(path: &Path, read_only: bool, records: Vec<FileRecord>) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            read_only,
+            records: records
+                .into_iter()
+                .map(|record| (record.info.id.as_str().to_owned(), record))
+                .collect(),
+        }
+    }
+
     pub fn get(&self, file_id: &str) -> Option<&FileRecord> {
         self.records.get(file_id)
     }
@@ -81,7 +98,9 @@ impl FileMetaStore {
         self.persist()
     }
 
-    fn persist(&self) -> EngineResult<()> {
+    /// Persists the whole record map atomically. Called by mutation paths
+    /// and, once, by the storage opener after a verified legacy import.
+    pub(crate) fn persist(&self) -> EngineResult<()> {
         json_io::write_json_file(&self.path, &self.records, DEFAULT_MODES)
     }
 

@@ -1,0 +1,10 @@
+# Cargo local configuration.
+#
+# `ZVEC_JIEBA_DICT_DIR` points at the vendored jieba dictionary so tests and
+# dev binaries can open TS-generation `index.zvec` collections, whose FTS
+# index uses the jieba tokenizer (see `docs/ts-divergence.md`, Phase E).
+# Production installs set this variable to the packaged dictionary location
+# instead; the path below is repo-relative (`relative = true` resolves it
+# against this file's directory).
+[env]
+ZVEC_JIEBA_DICT_DIR = { value = "crates/zg-core/vendor/jieba_dict", relative = true }
