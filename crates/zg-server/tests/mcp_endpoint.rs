@@ -166,6 +166,24 @@ async fn index_fixture(backend: &DaemonBackend, root: &str) {
         terminal.state,
         zg_core::index_status::IndexJobState::Succeeded
     );
+    // The scheduler marks the job terminal before the root actor applies
+    // the finished payload; poll the actor-side status so a search issued
+    // right after this helper cannot observe a missing index (the same
+    // actor-apply race `wait_for_index` bridges in production). Without
+    // this, slow runners fail the follow-up search with an error envelope
+    // instead of tool content.
+    for _ in 0..100 {
+        let status = backend.index_status(root).await.unwrap();
+        let settled = status
+            .job
+            .as_ref()
+            .is_some_and(|live| live.id == submitted.job.id && live.is_terminal());
+        if settled {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("index job {} never settled actor-side", submitted.job.id);
 }
 
 #[tokio::test]
@@ -232,7 +250,9 @@ async fn modern_lifecycle_lists_and_calls_tools() {
     )
     .await;
     assert_eq!(status, reqwest::StatusCode::OK);
-    let text = called["result"]["content"][0]["text"].as_str().unwrap();
+    let text = called["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_else(|| panic!("search failed: {called}"));
     assert!(text.starts_with("freshness: fresh\n"), "{text}");
 
     // DELETE terminates the session: the next call is an unknown session.
