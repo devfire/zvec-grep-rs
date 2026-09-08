@@ -40,6 +40,7 @@ impl StubEmbeddingModel {
                 supports_images: false,
                 max_input_tokens: None,
                 input_kinds: vec![EmbeddingInputKind::Text],
+                endpoint: None,
                 default_concurrency: None,
             },
             max_batch_size: 1024,

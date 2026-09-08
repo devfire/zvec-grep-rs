@@ -48,6 +48,35 @@ strings, auth prompt text) never diverge; only internal structure does.
   skip `None`, and reading an absent field errors — without this every
   recall hit fails to decode and search returns nothing (bug fix).
 
+## Authorization (phase F)
+
+- `authorization/*` throwing plain `Error`s (target/planner/store sites);
+  `AuthError::{InvalidTarget, StoreFailed}` with new `AUTH.INVALID_TARGET` /
+  `AUTH.STORE_FAILED` codes. Reason: M1 bans stringly errors; TS defines no
+  wire code on these paths, so the codes are Rust additions and the
+  `AUTH.REMOTE_EMBEDDING_REQUIRED` string is unchanged.
+- `operation.ts` `AsyncLocalStorage` permit scope; thread-local
+  `CURRENT_PERMIT` set by `with_remote_embedding_operation_permit`.
+  Reason: the engine is sync — no async task context exists; the daemon
+  (phase G) sets the permit around each `spawn_blocking` embed call.
+- `target.ts` async `realpath` canonicalization; sync
+  `std::fs::canonicalize` with lexical-absolute fallback. Reason: planning
+  must work before the workspace directory exists; no tokio in `zg-core`.
+- `store.ts` async fs; sync methods over `utils::lock` +
+  `utils::json_io`. Reason: same — `zg-core` stays sync.
+- Planner takes pre-normalized flags (`uses_vector`, `auto_update`,
+  `freshness_wait`) instead of MCP `NormalizedSearchInput`. Reason: `zg-core`
+  must not depend on the phase-H MCP layer; the MCP crate adapts.
+- `prompt.ts` `value.length`/`slice` (UTF-16 units); Rust `chars()` counts.
+  Reason: identical output for all realistic inputs; only non-BMP text
+  without ASCII could differ by a clip boundary.
+- Qwen `embed` checks the permit guard before input validation. Reason:
+  fail-closed stance — a missing grant surfaces as `AUTH` even for
+  otherwise-invalid inputs (TS order there is unobservable).
+- `trace-context.ts` `AsyncLocalStorage`; thread-local set around each
+  server request handler. Reason: same sync/async-boundary argument as the
+  permit scope.
+
 ## Service
 
 - `zvec-grep.ts` lives in `service/service.rs`; here it is

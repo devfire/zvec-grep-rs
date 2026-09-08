@@ -20,6 +20,7 @@
     allow(clippy::unwrap_used, clippy::expect_used, clippy::unwrap_in_result)
 )]
 
+pub mod authorization;
 pub mod code_formats;
 pub mod config;
 pub mod error;

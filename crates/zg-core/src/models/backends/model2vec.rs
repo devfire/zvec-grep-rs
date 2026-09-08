@@ -99,6 +99,7 @@ impl Model2VecEmbeddingModel {
             supports_images: false,
             max_input_tokens: Some(entry.max_input_tokens),
             input_kinds: vec![EmbeddingInputKind::Text],
+            endpoint: None,
             default_concurrency: Some(entry.default_concurrency),
         };
         Self {

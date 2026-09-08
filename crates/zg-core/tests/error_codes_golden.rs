@@ -10,6 +10,7 @@
 //! list and the golden file fails the build. The `code()` matches themselves
 //! are compiler-exhaustive, so a new variant also forces a mapping update.
 
+use zg_core::authorization::{AuthError, RemoteEmbeddingPurpose};
 use zg_core::error::codes;
 use zg_core::models::catalog::BackendKind;
 use zg_core::models::error::{
@@ -232,6 +233,31 @@ fn all_codes() -> Vec<String> {
         push(ModelError::missing_api_key("r", backend).code());
         push(ModelError::missing_endpoint("r", backend).code());
     }
+
+    // Every `AuthError` variant.
+    push(
+        AuthError::AuthorizationRequired {
+            provider: "qwen".to_owned(),
+            model: "text-embedding-v4".to_owned(),
+            endpoint: "https://example.invalid/e".to_owned(),
+            purpose: RemoteEmbeddingPurpose::Query,
+            detail: None,
+        }
+        .code(),
+    );
+    push(
+        AuthError::InvalidTarget {
+            detail: "bad target".to_owned(),
+        }
+        .code(),
+    );
+    push(
+        AuthError::StoreFailed {
+            operation: "read".to_owned(),
+            detail: "boom".to_owned(),
+        }
+        .code(),
+    );
 
     // Every `codes::*` constructor.
     push(codes::config_invalid());

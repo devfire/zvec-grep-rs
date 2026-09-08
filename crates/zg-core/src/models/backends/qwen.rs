@@ -18,6 +18,9 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use crate::authorization::error::RemoteEmbeddingPurpose;
+use crate::authorization::operation::RemoteEmbeddingGuard;
+use crate::authorization::types::{ContentKind, RemoteEmbeddingRequest};
 use crate::error::{EngineError, EngineErrorCode, EngineResult};
 use crate::models::catalog::{QwenMultimodalEntry, QwenTextEntry};
 use crate::models::embeddings::{ApiKey, EmbeddingResult, embed_validated};
@@ -279,6 +282,7 @@ impl QwenTextEmbeddingModel {
             supports_images: false,
             max_input_tokens: Some(entry.max_input_tokens),
             input_kinds: vec![EmbeddingInputKind::Text],
+            endpoint: Some(endpoint.clone()),
             default_concurrency: None,
         };
         Self {
@@ -416,9 +420,10 @@ impl EmbeddingModel for QwenTextEmbeddingModel {
 
     fn embed(
         &self,
-        _purpose: EmbeddingPurpose,
+        purpose: EmbeddingPurpose,
         inputs: &[EmbeddingInput<'_>],
     ) -> EngineResult<EmbeddingResult> {
+        check_remote_embedding_permit(&self.info, purpose, inputs)?;
         embed_validated(self, inputs, || self.embed_core(inputs))
     }
 }
@@ -449,6 +454,7 @@ impl Qwen3VlEmbeddingModel {
             supports_images: true,
             max_input_tokens: Some(entry.max_input_tokens),
             input_kinds: vec![EmbeddingInputKind::Text, EmbeddingInputKind::Image],
+            endpoint: Some(endpoint.clone()),
             default_concurrency: None,
         };
         let agent = remote_agent();
@@ -610,6 +616,40 @@ impl Qwen3VlEmbeddingModel {
     }
 }
 
+/// Fails closed without an ambient operation permit, before any validation
+/// or network traffic. Runs first so revoked or missing grants surface as
+/// `AUTH.REMOTE_EMBEDDING_REQUIRED` even for otherwise-invalid inputs.
+fn check_remote_embedding_permit(
+    info: &EmbeddingModelInfo,
+    purpose: EmbeddingPurpose,
+    inputs: &[EmbeddingInput<'_>],
+) -> EngineResult<()> {
+    let mut content_kinds = Vec::with_capacity(2);
+    if inputs
+        .iter()
+        .any(|input| matches!(input, EmbeddingInput::Text { .. }))
+    {
+        content_kinds.push(ContentKind::Text);
+    }
+    if inputs
+        .iter()
+        .any(|input| matches!(input, EmbeddingInput::Image { .. }))
+    {
+        content_kinds.push(ContentKind::Image);
+    }
+    RemoteEmbeddingGuard::new().check(&RemoteEmbeddingRequest {
+        provider: info.provider.clone(),
+        model: info.model.clone(),
+        endpoint: info.endpoint.clone().unwrap_or_default(),
+        purpose: match purpose {
+            EmbeddingPurpose::Query => RemoteEmbeddingPurpose::Query,
+            EmbeddingPurpose::Document => RemoteEmbeddingPurpose::Document,
+        },
+        content_kinds,
+        content_count: inputs.len(),
+    })
+}
+
 /// Reads the VL embedding index: `index`, else `text_index`, else the
 /// item's position, mirroring `readEmbeddingIndex`. Integers (including
 /// negatives) are returned as-is so the caller range-checks them.
@@ -633,9 +673,10 @@ impl EmbeddingModel for Qwen3VlEmbeddingModel {
 
     fn embed(
         &self,
-        _purpose: EmbeddingPurpose,
+        purpose: EmbeddingPurpose,
         inputs: &[EmbeddingInput<'_>],
     ) -> EngineResult<EmbeddingResult> {
+        check_remote_embedding_permit(&self.info, purpose, inputs)?;
         embed_validated(self, inputs, || self.embed_core(inputs))
     }
 }

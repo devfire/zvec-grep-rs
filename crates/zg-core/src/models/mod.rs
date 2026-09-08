@@ -56,6 +56,10 @@ pub struct EmbeddingModelInfo {
     pub max_input_tokens: Option<usize>,
     /// Content kinds accepted by [`EmbeddingModel::embed`].
     pub input_kinds: Vec<EmbeddingInputKind>,
+    /// Remote endpoint, when the backend sends data off-host (`qwen`).
+    /// `None` for local backends; the authorization planner reads this
+    /// exactly like TS (`model.endpoint`).
+    pub endpoint: Option<String>,
     /// Suggested embedding concurrency, when the catalog defines one.
     pub default_concurrency: Option<usize>,
 }
