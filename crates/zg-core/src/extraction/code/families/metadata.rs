@@ -53,9 +53,7 @@ pub fn extract_generic_signature(node: &SyntaxNode<'_>) -> Option<String> {
         }
         normalized.push_str(word);
     }
-    let trimmed = normalized
-        .trim_end_matches(['{', ';', ' '])
-        .trim();
+    let trimmed = normalized.trim_end_matches(['{', ';', ' ']).trim();
     if trimmed.is_empty() {
         None
     } else {

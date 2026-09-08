@@ -257,7 +257,11 @@ impl JobRecord {
     }
 
     fn publish(&self) {
-        let _ = self.completed.send(self.snapshot());
+        // `send_replace`, not `send`: since tokio 1.53 `send` drops the
+        // value when no receiver exists, which would leave late waiters
+        // staring at a stale slot forever. The slot must always hold the
+        // latest snapshot.
+        self.completed.send_replace(self.snapshot());
     }
 }
 

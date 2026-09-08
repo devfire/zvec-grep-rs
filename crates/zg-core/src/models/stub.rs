@@ -149,7 +149,10 @@ mod tests {
     fn rejects_empty_text() {
         let model = StubEmbeddingModel::new(8);
         let err = model
-            .embed(EmbeddingPurpose::Document, &[EmbeddingInput::Text { text: "  " }])
+            .embed(
+                EmbeddingPurpose::Document,
+                &[EmbeddingInput::Text { text: "  " }],
+            )
             .unwrap_err();
         assert_eq!(
             err.code().to_string(),
@@ -161,7 +164,9 @@ mod tests {
     fn rejects_oversized_batches() {
         let model = StubEmbeddingModel::new(8);
         let inputs = vec![EmbeddingInput::Text { text: "x" }; 1025];
-        let err = model.embed(EmbeddingPurpose::Document, &inputs).unwrap_err();
+        let err = model
+            .embed(EmbeddingPurpose::Document, &inputs)
+            .unwrap_err();
         assert_eq!(
             err.code().to_string(),
             "ZVEC_GREP.ENGINE.MODELS.EMBEDDING_BATCH_TOO_LARGE"

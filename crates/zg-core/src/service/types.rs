@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use crate::ids::EntityId;
 use crate::pipeline::indexing::IndexProgressSink;
 use crate::types::{
-    CodeSymbolType, Content, EntityMetadata, Range, RootPath, SearchMetric,
-    UnixMillis, WorkspaceIndexInfo, WorkspaceIndexPolicy,
+    CodeSymbolType, Content, EntityMetadata, Range, RootPath, SearchMetric, UnixMillis,
+    WorkspaceIndexInfo, WorkspaceIndexPolicy,
 };
 
 /// Abort probe: return `true` to cancel a long-running operation.
@@ -145,6 +145,7 @@ pub enum ContextSource {
 
 /// Coverage guarantee of a context result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ContextCoverage {
     RankedSample,
     RgExhaustive,
@@ -190,6 +191,8 @@ pub struct ContextItem {
 #[serde(rename_all = "snake_case")]
 pub enum ContextItemKind {
     IndexedEntity,
+    /// Serializes as `lexical_match` per the TS wire contract.
+    #[serde(rename = "lexical_match")]
     RgMatch,
 }
 

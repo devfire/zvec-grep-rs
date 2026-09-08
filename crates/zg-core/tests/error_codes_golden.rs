@@ -56,7 +56,12 @@ fn all_codes() -> Vec<String> {
             .code(),
         );
     }
-    push(ModelError::EmptyInput { reference: reference() }.code());
+    push(
+        ModelError::EmptyInput {
+            reference: reference(),
+        }
+        .code(),
+    );
     push(
         ModelError::BatchTooLarge {
             reference: reference(),

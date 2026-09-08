@@ -39,7 +39,7 @@ use zg_core::authorization::planner::{
 use zg_core::authorization::types::RemoteEmbeddingPermit;
 use zg_core::error::{EngineError, EngineResult};
 use zg_core::index_status::{
-    IndexCompletion, index_completion_for_job, index_completion_from_status,
+    IndexCompletion, IndexJobState, index_completion_for_job, index_completion_from_status,
 };
 use zg_core::lexical::{LexicalSearchOptions, LexicalSearchResult, run_lexical_search};
 use zg_core::models::catalog::{EMBEDDING_MODEL_CATALOG, EmbeddingCatalogEntry, ModelReference};
@@ -51,14 +51,17 @@ use zg_core::service::types::{
     ZvecGrepContextOptions, ZvecGrepContextResult, ZvecGrepIndexOptions, ZvecGrepInfoResult,
     workspace_index_not_found,
 };
-use zg_core::types::{FileScanDiagnostics, IndexResult, WorkspaceIndexStatus};
+use zg_core::types::{
+    CodeSymbolType, FileScanDiagnostics, IndexResult, SearchPlanRoute, SearchPlanRouteMode,
+    UnixMillis, WorkspaceIndexStatus,
+};
 
 use crate::change_set::ChangeSetSnapshot;
 use crate::errors::DaemonError;
 use crate::index_coordinator::{CoordinatorReason, IndexCoordinator, TakePending};
 use crate::job_scheduler::{
-    IndexJobSnapshot, JobFailure, JobOutcome, JobRun, JobScheduler, JobSchedulerOptions,
-    bridge_cancellation,
+    IndexJobSnapshot, JobFailure, JobOutcome, JobReason, JobRun, JobScheduler, JobSchedulerOptions,
+    SubmitIndexJobResult, bridge_cancellation,
 };
 use crate::logger::{DaemonLogger, LogField};
 use crate::model_pool::{
@@ -193,15 +196,148 @@ impl From<SessionError> for BackendError {
     }
 }
 
-/// Owned search request (no borrows: crosses the actor boundary).
-#[derive(Debug, Clone)]
-pub struct SearchQuery {
-    /// Natural-language query.
+/// Requested freshness: search the committed index now, or settle pending
+/// index work first. Mirrors TS `"eventual" | "wait_for_fresh"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SearchFreshness {
+    /// Search immediately; a background refresh may follow.
+    #[default]
+    Eventual,
+    /// Wait for the active index to become fresh before searching.
+    WaitForFresh,
+}
+
+/// Result freshness, mirroring TS `"fresh" | "possibly_stale"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultFreshness {
+    /// Index covers all known changes.
+    Fresh,
+    /// Known changes, watcher backlog, or an active job may postdate the index.
+    #[default]
+    PossiblyStale,
+}
+
+/// One supplemental retrieval route (mode + query), mirroring the TS
+/// `{ mode: "fts" | "vector", query }` route shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchRoute {
+    /// Retrieval mode for this group.
+    pub mode: SearchRouteMode,
+    /// Route query text.
     pub query: String,
+}
+
+/// Retrieval mode for one [`SearchRoute`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchRouteMode {
+    /// Lexical route.
+    Fts,
+    /// Semantic/vector route.
+    Vector,
+}
+
+impl SearchRouteMode {
+    const fn plan_mode(self) -> SearchPlanRouteMode {
+        match self {
+            Self::Fts => SearchPlanRouteMode::Fts,
+            Self::Vector => SearchPlanRouteMode::Vector,
+        }
+    }
+}
+
+/// Owned search request (no borrows: crosses the actor boundary). Carries
+/// the full normalized MCP search input; index-scoped knobs
+/// (`hidden`, `no_ignore`, `ignore_files`, `max_depth`,
+/// `max_file_size_bytes`, `follow`, `embedding_concurrency`) are accepted
+/// at the MCP boundary but refreshes reuse the index-time file scope
+/// (see `docs/ts-divergence.md`).
+#[derive(Debug, Clone, Default)]
+pub struct SearchQuery {
+    /// Primary natural-language query.
+    pub query: Option<String>,
+    /// Additional primary query groups.
+    pub queries: Vec<String>,
+    /// Fully-specified supplemental routes.
+    pub routes: Vec<SearchRoute>,
+    /// Collapse all groups into one ranked plan.
+    pub fuse: bool,
     /// Result limit.
     pub limit: Option<usize>,
     /// Include per-hit trace payloads.
     pub trace: bool,
+    /// Prefer exact indexed symbols when the query names a symbol.
+    pub prefer_symbol: bool,
+    /// Restrict indexed results to symbol types.
+    pub symbol_types: Vec<CodeSymbolType>,
+    /// Ordered case-sensitive glob rules.
+    pub globs: Vec<String>,
+    /// Ordered case-insensitive glob rules.
+    pub insensitive_globs: Vec<String>,
+    /// Ripgrep file type names to include.
+    pub file_types: Vec<String>,
+    /// Ripgrep file type names to exclude.
+    pub excluded_file_types: Vec<String>,
+    /// Only query files modified after this time.
+    pub modified_after: Option<UnixMillis>,
+    /// Only query files modified before this time.
+    pub modified_before: Option<UnixMillis>,
+    /// Requested freshness.
+    pub freshness: SearchFreshness,
+    /// A stale index may schedule a background refresh.
+    pub auto_update: bool,
+}
+
+/// Compact background-indexing snapshot attached to possibly-stale
+/// results, mirroring TS `ZvecGrepSearchIndexing`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SearchIndexing {
+    /// Current background indexing state.
+    pub state: BackgroundIndexState,
+    /// Up-to-date indexed files in scope, when known.
+    pub completed: Option<usize>,
+    /// Total files in scope, when known.
+    pub total: Option<usize>,
+}
+
+/// Background indexing state, mirroring TS
+/// `"idle" | "queued" | "running" | "failed" | "cancelled"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundIndexState {
+    /// No live job (or the latest job succeeded).
+    Idle,
+    /// A job is queued.
+    Queued,
+    /// A job is running.
+    Running,
+    /// The latest job failed.
+    Failed,
+    /// The latest job was cancelled.
+    Cancelled,
+}
+
+impl BackgroundIndexState {
+    fn of(job: Option<&IndexJobSnapshot>) -> Self {
+        match job.map(|job| job.state) {
+            None | Some(IndexJobState::Succeeded) => Self::Idle,
+            Some(IndexJobState::Queued) => Self::Queued,
+            Some(IndexJobState::Running) => Self::Running,
+            Some(IndexJobState::Failed) => Self::Failed,
+            Some(IndexJobState::Cancelled) => Self::Cancelled,
+        }
+    }
+}
+
+/// Search response: the context result plus daemon-computed freshness.
+#[derive(Debug, Clone)]
+pub struct DaemonSearchResult {
+    /// Hybrid search result over the committed index.
+    pub result: ZvecGrepContextResult,
+    /// Whether the index covers all known changes.
+    pub freshness: ResultFreshness,
+    /// Background refresh snapshot, present when possibly stale.
+    pub indexing: Option<SearchIndexing>,
 }
 
 /// Owned lexical request (no borrows: crosses the actor boundary).
@@ -217,8 +353,36 @@ pub struct RgQuery {
     pub fixed_strings: bool,
     /// Case-insensitive matching.
     pub ignore_case: bool,
+    /// Case-insensitive when every pattern is lowercase.
+    pub smart_case: bool,
+    /// Wrap patterns with word boundaries.
+    pub word_regexp: bool,
     /// Maximum matches per file.
     pub max_count: Option<usize>,
+    /// Pattern files: every non-empty line is one more pattern.
+    pub pattern_files: Vec<String>,
+    /// Case-sensitive glob filters.
+    pub globs: Vec<String>,
+    /// Case-insensitive glob filters.
+    pub insensitive_globs: Vec<String>,
+    /// Ripgrep file-type names to include.
+    pub file_types: Vec<String>,
+    /// Ripgrep file-type names to exclude.
+    pub excluded_file_types: Vec<String>,
+    /// Search hidden files.
+    pub hidden: bool,
+    /// Ignore ignore-files.
+    pub no_ignore: bool,
+    /// Extra ignore files.
+    pub ignore_files: Vec<String>,
+    /// Maximum directory depth.
+    pub max_depth: Option<usize>,
+    /// Skip files larger than this.
+    pub max_file_size_bytes: Option<u64>,
+    /// Context lines before each match.
+    pub before_context: usize,
+    /// Context lines after each match.
+    pub after_context: usize,
 }
 
 /// Owned index request.
@@ -239,6 +403,17 @@ pub struct DaemonIndexStatus {
     pub job: Option<IndexJobSnapshot>,
     /// Completion counters with live progress overlaid while running.
     pub completion: Option<IndexCompletion>,
+    /// Skipped-file diagnostics from the latest finished run, if any.
+    pub scan_diagnostics: Option<FileScanDiagnostics>,
+    /// Workspace info (policy, embedding, manifest); `None` when the info
+    /// read fails (e.g. a disabled index) while status stays available.
+    pub info: Option<ZvecGrepInfoResult>,
+    /// Dirty revision counter at read time.
+    pub dirty_revision: Generation,
+    /// Newest indexed revision counter at read time.
+    pub indexed_revision: Generation,
+    /// Whether the root's filesystem watcher is active.
+    pub watcher_active: bool,
 }
 
 /// Daemon liveness snapshot.
@@ -275,15 +450,15 @@ pub(crate) enum RootCommand {
     Search {
         /// Owned query.
         query: SearchQuery,
-        /// Search result.
-        reply: oneshot::Sender<Result<ZvecGrepContextResult, BackendError>>,
+        /// Search result with daemon-computed freshness.
+        reply: oneshot::Sender<Result<DaemonSearchResult, BackendError>>,
     },
     /// Index (or reindex) through the scheduler.
     Index {
         /// Owned index input.
         input: IndexInput,
-        /// Submitted job snapshot.
-        reply: oneshot::Sender<Result<IndexJobSnapshot, BackendError>>,
+        /// Submitted job snapshot plus whether a live job was reused.
+        reply: oneshot::Sender<Result<SubmitIndexJobResult, BackendError>>,
     },
     /// Cached-or-read status with live job overlay.
     Status {
@@ -442,7 +617,7 @@ impl DaemonBackend {
         &self,
         root: &str,
         query: SearchQuery,
-    ) -> Result<ZvecGrepContextResult, BackendError> {
+    ) -> Result<DaemonSearchResult, BackendError> {
         let handle = self.manager.activate_for_search(root).await?;
         send_recv(&handle, |reply| RootCommand::Search { query, reply }).await?
     }
@@ -452,7 +627,7 @@ impl DaemonBackend {
         &self,
         root: &str,
         input: IndexInput,
-    ) -> Result<IndexJobSnapshot, BackendError> {
+    ) -> Result<SubmitIndexJobResult, BackendError> {
         let handle = self.manager.activate_for_index(root)?;
         send_recv(&handle, |reply| RootCommand::Index { input, reply }).await?
     }
@@ -777,7 +952,7 @@ impl RootActor {
     async fn handle_search(
         &mut self,
         query: SearchQuery,
-    ) -> Result<ZvecGrepContextResult, BackendError> {
+    ) -> Result<DaemonSearchResult, BackendError> {
         self.runtime.begin_operation();
         let result = self.search_inner(query).await;
         self.runtime.end_operation();
@@ -787,12 +962,48 @@ impl RootActor {
     async fn search_inner(
         &mut self,
         query: SearchQuery,
+    ) -> Result<DaemonSearchResult, BackendError> {
+        if query.freshness == SearchFreshness::WaitForFresh {
+            self.wait_for_fresh().await?;
+        }
+        let result = self.execute_search(&query).await?;
+        if query.auto_update {
+            // Best effort: a failed background submit never fails a search.
+            let _ = self.background_job();
+        }
+        Ok(self.finish_search(result))
+    }
+
+    async fn execute_search(
+        &mut self,
+        query: &SearchQuery,
     ) -> Result<ZvecGrepContextResult, BackendError> {
         let info = self.temp_service().workspace_info(None)?;
         let options = ZvecGrepContextOptions {
-            query: Some(query.query),
+            query: query.query.clone(),
+            queries: query.queries.clone(),
+            routes: query
+                .routes
+                .iter()
+                .map(|route| SearchPlanRoute {
+                    mode: route.mode.plan_mode(),
+                    query: route.query.clone(),
+                })
+                .collect(),
+            fuse: query.fuse,
             limit: query.limit,
             trace: query.trace,
+            prefer_symbol: query.prefer_symbol,
+            symbol_types: query.symbol_types.clone(),
+            globs: query.globs.clone(),
+            insensitive_globs: query.insensitive_globs.clone(),
+            file_types: query.file_types.clone(),
+            excluded_file_types: query.excluded_file_types.clone(),
+            modified_after: query.modified_after,
+            modified_before: query.modified_before,
+            // The daemon owns refresh through the scheduler; the facade
+            // must not reindex inline inside a read session (its
+            // read-session guard forces this off as well).
             auto_update: false,
             ..ZvecGrepContextOptions::default()
         };
@@ -809,11 +1020,138 @@ impl RootActor {
             .await?
     }
 
-    fn handle_index(&mut self, input: IndexInput) -> Result<IndexJobSnapshot, BackendError> {
+    /// Waits for the active index to become fresh: settles the live job,
+    /// triggers a reconcile when stale work is waiting, and re-checks.
+    /// Bounded so watcher churn during the wait cannot loop forever.
+    async fn wait_for_fresh(&mut self) -> Result<(), BackendError> {
+        for _ in 0..3 {
+            if !self.runtime.needs_reconciliation() {
+                return Ok(());
+            }
+            let Some(job) = self.background_job() else {
+                return Ok(());
+            };
+            if job.is_terminal() {
+                return Self::check_terminal_job(&job, self.runtime.needs_reconciliation());
+            }
+            let snapshot = self.shared.scheduler.wait(&job.id, None).await?;
+            Self::check_terminal_job(&snapshot, self.runtime.needs_reconciliation())?;
+        }
+        Ok(())
+    }
+
+    fn check_terminal_job(job: &IndexJobSnapshot, still_dirty: bool) -> Result<(), BackendError> {
+        if !still_dirty {
+            return Ok(());
+        }
+        match job.state {
+            IndexJobState::Failed | IndexJobState::Cancelled => {
+                let message = job
+                    .error
+                    .as_ref()
+                    .map(|error| error.message.clone())
+                    .unwrap_or_else(|| "index job did not complete".to_owned());
+                Err(DaemonError::IndexFailed { message }.into())
+            }
+            IndexJobState::Queued | IndexJobState::Running | IndexJobState::Succeeded => Ok(()),
+        }
+    }
+
+    /// Submits a background reconcile when stale work is waiting and no
+    /// job is active, mirroring TS `background_reconcile`. Returns the
+    /// live job to wait on, if any. Never enqueues when nothing is
+    /// pending: the take would be empty and the dirty-revision bump
+    /// would buy nothing.
+    fn background_job(&mut self) -> Option<IndexJobSnapshot> {
+        if self.runtime.needs_reconciliation()
+            && !self.shared.scheduler.has_active_root(self.key.as_str())
+        {
+            let full = self.runtime.requires_full_reconciliation();
+            if full || self.coordinator.has_pending() {
+                let changes = ChangeSetSnapshot {
+                    force_full_reconcile: full,
+                    ..ChangeSetSnapshot::default()
+                };
+                let tx = self.tx.clone();
+                let key = self.key.clone();
+                let shared = self.shared.clone();
+                if let Ok(submitted) = self.coordinator.enqueue(
+                    &changes,
+                    CoordinatorReason::BackgroundReconcile,
+                    &mut self.runtime,
+                    &self.shared.scheduler,
+                    |take| build_index_run(tx, key, shared, take),
+                ) {
+                    self.runtime.set_writer_pending(true);
+                    return Some(submitted.job);
+                }
+            }
+        }
+        self.shared.scheduler.get_by_root(self.key.as_str())
+    }
+
+    /// Attaches daemon-computed freshness to a search result, mirroring
+    /// the TS `fresh` / `possibly_stale` derivation.
+    fn finish_search(&mut self, result: ZvecGrepContextResult) -> DaemonSearchResult {
+        let snapshot = self.runtime.snapshot();
+        let job = self.shared.scheduler.get_by_root(self.key.as_str());
+        let active_known_change = matches!(&job,
+            Some(job) if job.reason != JobReason::BackgroundReconcile && !job.is_terminal());
+        let freshness = if self.runtime.needs_reconciliation()
+            || snapshot.watcher_pending
+            || active_known_change
+        {
+            ResultFreshness::PossiblyStale
+        } else {
+            ResultFreshness::Fresh
+        };
+        let indexing = if freshness == ResultFreshness::PossiblyStale {
+            Some(self.search_indexing(job.as_ref()))
+        } else {
+            None
+        };
+        DaemonSearchResult {
+            result,
+            freshness,
+            indexing,
+        }
+    }
+
+    /// Compact background-indexing snapshot for possibly-stale results.
+    fn search_indexing(&self, job: Option<&IndexJobSnapshot>) -> SearchIndexing {
+        let overlaid = index_completion_for_job(
+            index_completion_from_status(self.status.as_ref()),
+            job.map(|job| job.state),
+            job.and_then(|job| job.progress.as_ref()),
+        );
+        SearchIndexing {
+            state: BackgroundIndexState::of(job),
+            completed: overlaid.as_ref().map(|completion| completion.completed),
+            total: overlaid.as_ref().map(|completion| completion.total),
+        }
+    }
+
+    fn handle_index(&mut self, input: IndexInput) -> Result<SubmitIndexJobResult, BackendError> {
         self.runtime.set_writer_pending(true);
-        let changes = if input.rebuild || input.changed_paths.is_empty() {
+        // Explicit rebuilds reconcile fully. An incremental request with no
+        // paths reconciles whatever is pending: the run takes the pending
+        // snapshot lazily, and an empty take completes as a fresh no-op
+        // (see `apply_finished`) instead of rescanning the workspace —
+        // except on a root with no index yet, where the first build must
+        // scan everything (mirrors the engine's create-on-missing path).
+        let changes = if input.rebuild {
             ChangeSetSnapshot {
                 force_full_reconcile: true,
+                ..ChangeSetSnapshot::default()
+            }
+        } else if input.changed_paths.is_empty() {
+            let indexed = self
+                .temp_service()
+                .workspace_info(None)
+                .map(|info| info.indexed)
+                .unwrap_or(false);
+            ChangeSetSnapshot {
+                force_full_reconcile: !indexed,
                 ..ChangeSetSnapshot::default()
             }
         } else {
@@ -836,7 +1174,7 @@ impl RootActor {
             &self.shared.scheduler,
             |take| build_index_run(tx, key, shared, take),
         ) {
-            Ok(snapshot) => Ok(snapshot),
+            Ok(submitted) => Ok(submitted),
             Err(error) => {
                 self.runtime.set_writer_pending(false);
                 Err(error.into())
@@ -880,10 +1218,17 @@ impl RootActor {
             job.as_ref().map(|job| job.state),
             job.as_ref().and_then(|job| job.progress.as_ref()),
         );
+        let snapshot = self.runtime.snapshot();
+        let info = self.temp_service().workspace_info(None).ok();
         Ok(DaemonIndexStatus {
             status,
             job,
             completion,
+            scan_diagnostics: self.scan.clone(),
+            info,
+            dirty_revision: snapshot.dirty_revision,
+            indexed_revision: snapshot.indexed_revision,
+            watcher_active: self.runtime.watcher_active(),
         })
     }
 
@@ -891,10 +1236,24 @@ impl RootActor {
         let options = LexicalSearchOptions {
             root: PathBuf::from(self.key.as_str()),
             patterns: query.patterns,
+            pattern_files: query.pattern_files.iter().map(PathBuf::from).collect(),
             paths: query.paths,
             limit: query.limit,
+            globs: query.globs,
+            insensitive_globs: query.insensitive_globs,
+            file_types: query.file_types,
+            excluded_file_types: query.excluded_file_types,
+            hidden: query.hidden,
+            no_ignore: query.no_ignore,
+            ignore_files: query.ignore_files.iter().map(PathBuf::from).collect(),
+            max_depth: query.max_depth,
+            max_file_size_bytes: query.max_file_size_bytes,
             fixed_strings: query.fixed_strings,
             ignore_case: query.ignore_case,
+            smart_case: query.smart_case,
+            word_regexp: query.word_regexp,
+            before_context: query.before_context,
+            after_context: query.after_context,
             max_count: query.max_count,
             ..LexicalSearchOptions::default()
         };
@@ -927,6 +1286,12 @@ impl RootActor {
             }
             self.scan = ok.index_result.scan_diagnostics.clone();
             self.status = Some(ok.status);
+        } else if !finished.force_full {
+            // Empty take: nothing was pending when the run took its
+            // snapshot, so the stamped target revision is already fresh.
+            // Without this, background reconciles that find no work would
+            // leave the dirty revision they bumped at enqueue time.
+            self.runtime.mark_indexed(finished.revision);
         }
     }
 }
@@ -1201,6 +1566,7 @@ fn cancel_flag_for(token: &CancellationToken) -> zg_core::pipeline::indexing::sc
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use zg_core::index_status::IndexJobState;
     use zg_core::models::{
         EmbeddingInput, EmbeddingModel, EmbeddingPurpose, embeddings::EmbeddingResult,
     };
@@ -1247,11 +1613,12 @@ mod tests {
             )
             .await
             .unwrap();
-        let terminal = backend.scheduler().wait(&submitted.id, None).await.unwrap();
-        assert_eq!(
-            terminal.state,
-            zg_core::index_status::IndexJobState::Succeeded
-        );
+        let terminal = backend
+            .scheduler()
+            .wait(&submitted.job.id, None)
+            .await
+            .unwrap();
+        assert_eq!(terminal.state, IndexJobState::Succeeded);
         let status = backend.index_status(&root).await.unwrap();
         assert!(status.status.files_scanned >= 2, "{status:?}");
         assert!(status.completion.is_some());
@@ -1273,14 +1640,52 @@ mod tests {
             .search(
                 &root,
                 SearchQuery {
-                    query: "alpha function".to_owned(),
+                    query: Some("alpha function".to_owned()),
                     limit: Some(5),
-                    trace: false,
+                    ..SearchQuery::default()
                 },
             )
             .await
             .unwrap();
-        assert_eq!(searched.root, root);
+        assert_eq!(searched.result.root, root);
+        assert_eq!(searched.freshness, ResultFreshness::Fresh);
+        assert!(searched.indexing.is_none());
+        backend.close().await;
+    }
+
+    #[tokio::test]
+    async fn late_waiter_observes_terminal_state() {
+        // Regression: tokio 1.53+ `watch::send` drops values without
+        // receivers, so the scheduler must store snapshots
+        // unconditionally. An empty reconcile finishes before `wait`
+        // subscribes; the late waiter must still see terminal state
+        // instead of hanging on a stale slot.
+        let backend = backend();
+        let dir = fixture();
+        let root = root(&dir);
+        let submitted = backend.index(&root, IndexInput::default()).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if backend
+                    .scheduler()
+                    .get(&submitted.job.id)
+                    .is_some_and(|snapshot| snapshot.is_terminal())
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let terminal = tokio::time::timeout(
+            Duration::from_secs(10),
+            backend.scheduler().wait(&submitted.job.id, None),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(terminal.state, IndexJobState::Succeeded);
         backend.close().await;
     }
 
@@ -1292,9 +1697,8 @@ mod tests {
             .search(
                 dir.path().to_str().unwrap(),
                 SearchQuery {
-                    query: "x".to_owned(),
-                    limit: None,
-                    trace: false,
+                    query: Some("x".to_owned()),
+                    ..SearchQuery::default()
                 },
             )
             .await
@@ -1372,7 +1776,7 @@ mod tests {
         // Close awaited the blocking body instead of orphaning it: the
         // scheduler is drained and the job reached a terminal state.
         assert_eq!(backend.scheduler().load().running, 0);
-        let snapshot = backend.scheduler().get(&submitted.id).unwrap();
+        let snapshot = backend.scheduler().get(&submitted.job.id).unwrap();
         assert!(snapshot.is_terminal(), "{snapshot:?}");
         assert_eq!(backend.server_status().runtimes, 0);
     }

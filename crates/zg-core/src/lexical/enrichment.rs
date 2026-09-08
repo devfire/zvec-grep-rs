@@ -242,7 +242,8 @@ fn file_info_for_structure(
 fn is_structurally_enrichable(file: &crate::file_type::FileType) -> bool {
     use crate::types::FileKind;
 
-    file.kind == FileKind::Code || (file.kind == FileKind::Text && file.format.as_str() == "markdown")
+    file.kind == FileKind::Code
+        || (file.kind == FileKind::Text && file.format.as_str() == "markdown")
 }
 
 /// The match's own range, preferring the pre-expansion excerpt range

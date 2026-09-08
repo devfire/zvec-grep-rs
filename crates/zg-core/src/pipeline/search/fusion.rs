@@ -104,7 +104,10 @@ const RRF_K: f64 = 60.0;
 pub fn fuse_candidates(candidates: &mut [Candidate]) {
     for candidate in candidates.iter_mut() {
         candidate.score = 0.0;
-        candidate.forced = candidate.recall.iter().any(|trace| trace.forced.unwrap_or(false));
+        candidate.forced = candidate
+            .recall
+            .iter()
+            .any(|trace| trace.forced.unwrap_or(false));
         for recall in &candidate.recall {
             if recall.found {
                 if let Some(rank) = recall.rank {
@@ -162,7 +165,10 @@ fn evidence_to_hit_evidence(evidence: &CandidateEvidence) -> SearchHitEvidence {
 
 /// Public identity used for group collapse (mirrors `publicEntityId`).
 pub fn public_entity_id(fragment: &EntityFragment) -> &str {
-    fragment.group.as_deref().unwrap_or_else(|| fragment.entity.id.as_str())
+    fragment
+        .group
+        .as_deref()
+        .unwrap_or_else(|| fragment.entity.id.as_str())
 }
 
 fn sorted_evidence(evidence: &[CandidateEvidence]) -> Vec<CandidateEvidence> {
@@ -222,7 +228,9 @@ mod tests {
                 id: crate::ids::EntityId::from_raw(id.to_owned()),
                 file_id: crate::ids::FileId::from_raw("f".to_owned()),
                 range: crate::types::Range::File,
-                content: Content::Text { text: String::new() },
+                content: Content::Text {
+                    text: String::new(),
+                },
                 metadata: None as Option<EntityMetadata>,
             },
             FileInfo {

@@ -118,6 +118,5 @@ pub fn has_workspace_manifest(location: &WorkspaceIndexLocation) -> bool {
 
 /// True when manifest and storage both exist (mirrors `hasWorkspaceIndex`).
 pub fn has_workspace_index(location: &WorkspaceIndexLocation) -> bool {
-    has_workspace_manifest(location)
-        && has_workspace_index_storage(Path::new(&location.home))
+    has_workspace_manifest(location) && has_workspace_index_storage(Path::new(&location.home))
 }

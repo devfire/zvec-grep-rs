@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::change_set::{ChangeSet, ChangeSetOptions, ChangeSetSnapshot, MaxChangedPaths};
 use crate::errors::DaemonError;
-use crate::job_scheduler::{IndexJobSnapshot, JobReason, JobRun, JobScheduler, SubmitIndexJob};
+use crate::job_scheduler::{JobReason, JobRun, JobScheduler, SubmitIndexJob, SubmitIndexJobResult};
 use crate::root_runtime::{Generation, RootRuntime};
 
 /// Proof returned by an index run: whether a full reconciliation happened
@@ -36,6 +36,8 @@ pub enum CoordinatorReason {
     Watch,
     /// Periodic, resume, or manual reconciliation.
     Reconcile,
+    /// Low-priority background reconciliation (search auto-update).
+    BackgroundReconcile,
 }
 
 impl CoordinatorReason {
@@ -43,6 +45,7 @@ impl CoordinatorReason {
         match self {
             Self::Watch => JobReason::Watch,
             Self::Reconcile => JobReason::Reconcile,
+            Self::BackgroundReconcile => JobReason::BackgroundReconcile,
         }
     }
 }
@@ -84,6 +87,13 @@ impl IndexCoordinator {
         }
     }
 
+    /// True when unflushed changes are waiting for a run (merged but not
+    /// yet taken). Search auto-update consults this so it never enqueues
+    /// an empty run that would bump the dirty revision for nothing.
+    pub fn has_pending(&self) -> bool {
+        !lock(&self.pending).set.is_empty()
+    }
+
     /// Merges `changes`, bumps the runtime dirty revision, and submits
     /// one job built by `build_run` (which receives the take handle).
     /// Followup chaining is always on, mirroring TS
@@ -95,7 +105,7 @@ impl IndexCoordinator {
         runtime: &mut RootRuntime,
         scheduler: &JobScheduler,
         build_run: impl FnOnce(TakePending) -> JobRun,
-    ) -> Result<IndexJobSnapshot, DaemonError> {
+    ) -> Result<SubmitIndexJobResult, DaemonError> {
         if changes.force_full_reconcile {
             runtime.require_full_reconciliation(false);
         }
@@ -125,14 +135,12 @@ impl IndexCoordinator {
             pair
         });
         let run = build_run(take);
-        Ok(scheduler
-            .submit(SubmitIndexJob {
-                canonical_root: self.root.clone(),
-                reason: reason.scheduler_reason(),
-                run,
-                followup_if_running: true,
-            })?
-            .job)
+        scheduler.submit(SubmitIndexJob {
+            canonical_root: self.root.clone(),
+            reason: reason.scheduler_reason(),
+            run,
+            followup_if_running: true,
+        })
     }
 }
 
@@ -199,8 +207,8 @@ mod tests {
                 },
             )
             .unwrap();
-        assert!(!submitted.is_terminal());
-        scheduler.wait(&submitted.id, None).await.unwrap();
+        assert!(!submitted.job.is_terminal());
+        scheduler.wait(&submitted.job.id, None).await.unwrap();
         let taken = taken.lock().unwrap();
         assert_eq!(taken.len(), 1);
         assert_eq!(taken[0].0.touched_files, vec!["/repo/a.rs"]);
@@ -243,7 +251,7 @@ mod tests {
         // `enqueue` demanded the full reconciliation itself; the proof
         // below applies that same epoch.
         let epoch = runtime.reconciliation_epoch();
-        let snapshot = scheduler.wait(&submitted.id, None).await.unwrap();
+        let snapshot = scheduler.wait(&submitted.job.id, None).await.unwrap();
         assert_eq!(snapshot.state, IndexJobState::Succeeded);
         assert!(runtime.requires_full_reconciliation());
         let revision = runtime.mark_dirty();

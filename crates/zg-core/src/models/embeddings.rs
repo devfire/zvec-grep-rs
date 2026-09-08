@@ -12,8 +12,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use super::{EmbeddingInput, EmbeddingModel, EmbeddingPurpose, ModelLoadSink};
 use super::error::ModelError;
+use super::{EmbeddingInput, EmbeddingModel, EmbeddingPurpose, ModelLoadSink};
 use crate::error::EngineResult;
 use crate::types::Content;
 

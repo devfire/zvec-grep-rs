@@ -66,13 +66,15 @@ fn open_index_status_search_round_trip() {
     let service = stub_service(&dir);
 
     let location = service.open_workspace(None).expect("open");
-    assert!(location.root.ends_with(
-        dir.path()
-            .file_name()
-            .expect("name")
-            .to_string_lossy()
-            .as_ref()
-    ));
+    assert!(
+        location.root.ends_with(
+            dir.path()
+                .file_name()
+                .expect("name")
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
 
     let result = service.ensure_index(&index_options(&dir)).expect("index");
     assert!(result.files_scanned >= 2, "{result:?}");
@@ -116,7 +118,9 @@ fn read_session_searches_then_fails_closed() {
     service.ensure_index(&index_options(&dir)).expect("index");
 
     let session = service.open_read_session(None).expect("session");
-    let found = session.context(&search_options(&dir)).expect("session context");
+    let found = session
+        .context(&search_options(&dir))
+        .expect("session context");
     assert!(!found.items.is_empty());
     session.close();
 }

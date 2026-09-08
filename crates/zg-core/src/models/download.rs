@@ -14,8 +14,8 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use super::catalog::ModelReference;
-use super::{EmbeddingModelProgress, EmbeddingStageKind, ModelLoadSink};
 use super::error::ModelError;
+use super::{EmbeddingModelProgress, EmbeddingStageKind, ModelLoadSink};
 use crate::error::{EngineError, EngineResult};
 
 /// Progress update for one artifact download.

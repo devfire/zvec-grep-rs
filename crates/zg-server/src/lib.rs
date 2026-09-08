@@ -16,6 +16,7 @@ pub mod http_server;
 pub mod index_coordinator;
 pub mod job_scheduler;
 pub mod logger;
+pub mod mcp;
 pub mod model_pool;
 pub mod read_session_cache;
 pub mod root_runtime;

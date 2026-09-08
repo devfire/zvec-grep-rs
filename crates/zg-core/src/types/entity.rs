@@ -5,16 +5,23 @@ use serde::{Deserialize, Serialize};
 use crate::ids::{EntityId, FileId};
 
 /// Source location of an entity within its file.
+///
+/// Wire shape follows the TS contract exactly: `kind` is snake_case
+/// (`page_text`) while struct fields are camelCase (`startLine`). The
+/// enum-level rule covers variants; each struct variant re-declares the
+/// field rule.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Range {
     File,
+    #[serde(rename_all = "camelCase")]
     Text {
         start_line: usize,
         end_line: usize,
         start_offset: usize,
         end_offset: usize,
     },
+    #[serde(rename_all = "camelCase")]
     Byte {
         start_offset: usize,
         end_offset: usize,
@@ -22,6 +29,7 @@ pub enum Range {
     Page {
         page: usize,
     },
+    #[serde(rename_all = "camelCase")]
     PageText {
         page: usize,
         start_offset: usize,

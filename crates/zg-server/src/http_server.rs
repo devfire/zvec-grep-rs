@@ -8,9 +8,8 @@
 //! (401 otherwise); MCP routes additionally demand a loopback Origin
 //! (403) and answer 401 with `WWW-Authenticate: Bearer`.
 //!
-//! Divergence (see `docs/ts-divergence.md`): `/mcp` and `/mcp/admin`
-//! answer `501 mcp_not_implemented` until phase H lands the rmcp
-//! endpoint — the guards in front of them are real and tested here.
+//! `/mcp` and `/mcp/admin` serve the rmcp StreamableHTTP endpoint (plus
+//! the TS legacy-session guards) behind the same loopback/auth guards.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -27,6 +26,8 @@ use tokio_util::sync::CancellationToken;
 use crate::backend::DaemonBackend;
 use crate::config::is_loopback_host;
 use crate::errors::DaemonError;
+use crate::mcp::http_transport::{McpHttpEndpoint, McpHttpEndpointOptions};
+use crate::mcp::toolset::McpToolset;
 
 /// Maximum MCP request body: 1 MiB, mirroring TS `MAX_REQUEST_BYTES`.
 pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
@@ -42,11 +43,32 @@ pub struct DaemonHttpServerOptions {
     pub token: Option<String>,
     /// Backend serving index/search/status.
     pub backend: DaemonBackend,
+    /// MCP toolset; defaults to the `agent` set.
+    pub mcp_toolset: McpToolset,
+    /// MCP HTTP endpoint tuning.
+    pub mcp_endpoint: McpHttpEndpointOptions,
+    /// Server version reported over MCP.
+    pub version: String,
+}
+
+impl Default for DaemonHttpServerOptions {
+    fn default() -> Self {
+        Self {
+            host: String::new(),
+            port: 0,
+            token: None,
+            backend: DaemonBackend::new(crate::backend::DaemonBackendOptions::default()),
+            mcp_toolset: McpToolset::Agent,
+            mcp_endpoint: McpHttpEndpointOptions::default(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+        }
+    }
 }
 
 struct AppState {
     token: Option<String>,
     backend: DaemonBackend,
+    mcp: McpHttpEndpoint,
     shutdown: CancellationToken,
 }
 
@@ -69,10 +91,20 @@ impl DaemonHttpServer {
         if !is_loopback_host(&options.host) {
             return Err(DaemonError::LoopbackRequired { host: options.host });
         }
+        let mcp = McpHttpEndpoint::new(
+            options.backend.clone(),
+            options.version.clone(),
+            options.mcp_toolset,
+            options.mcp_endpoint,
+        )
+        .map_err(|error| DaemonError::IndexFailed {
+            message: format!("invalid MCP endpoint options: {error}"),
+        })?;
         Ok(Self {
             state: Arc::new(AppState {
                 token: options.token,
                 backend: options.backend,
+                mcp,
                 shutdown: CancellationToken::new(),
             }),
             host: options.host,
@@ -144,14 +176,14 @@ fn router(state: Arc<AppState>) -> axum::Router {
         .route(
             "/mcp",
             post(mcp_post)
-                .get(mcp_session_stub)
-                .delete(mcp_session_stub),
+                .get(mcp_session_request)
+                .delete(mcp_session_request),
         )
         .route(
             "/mcp/admin",
             post(mcp_post)
-                .get(mcp_session_stub)
-                .delete(mcp_session_stub),
+                .get(mcp_session_request)
+                .delete(mcp_session_request),
         )
         .fallback(not_found)
         .with_state(state)
@@ -199,11 +231,27 @@ async fn shutdown(State(state): State<Arc<AppState>>, headers: HeaderMap) -> imp
         .into_response()
 }
 
-async fn mcp_session_stub() -> impl IntoResponse {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        axum::Json(json!({ "error": "mcp_not_implemented" })),
-    )
+async fn mcp_session_request(
+    State(state): State<Arc<AppState>>,
+    method: axum::http::Method,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if !valid_host(headers.get("host")) || !valid_origin(headers.get("origin")) {
+        return (
+            StatusCode::FORBIDDEN,
+            axum::Json(json!({ "error": "forbidden_origin" })),
+        )
+            .into_response();
+    }
+    if !valid_token(headers.get("authorization"), state.token.as_deref()) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
+            axum::Json(json!({ "error": "unauthorized" })),
+        )
+            .into_response();
+    }
+    state.mcp.handle_session_request(&method, &headers).await
 }
 
 async fn mcp_post(
@@ -243,17 +291,10 @@ async fn mcp_post(
             "Request body too large.",
         );
     }
-    let parsed: Result<Value, _> = serde_json::from_slice(&bytes);
-    if parsed.is_err() {
+    if serde_json::from_slice::<Value>(&bytes).is_err() {
         return rpc_error(StatusCode::BAD_REQUEST, -32700, "Invalid JSON.");
     }
-    // Phase H replaces this with the rmcp StreamableHTTP endpoint; the
-    // guards above are the phase-G contract under test.
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        axum::Json(json!({ "error": "mcp_not_implemented" })),
-    )
-        .into_response()
+    state.mcp.handle_post(&headers, &bytes).await
 }
 
 fn rpc_error(status: StatusCode, code: i32, message: &str) -> axum::response::Response {
@@ -334,6 +375,7 @@ mod tests {
             port: 0,
             token: token.map(str::to_owned),
             backend: DaemonBackend::new(DaemonBackendOptions::default()),
+            ..DaemonHttpServerOptions::default()
         })
         .unwrap()
     }
@@ -350,6 +392,7 @@ mod tests {
                 port: 0,
                 token: None,
                 backend: DaemonBackend::new(DaemonBackendOptions::default()),
+                ..DaemonHttpServerOptions::default()
             }),
             Err(DaemonError::LoopbackRequired { .. })
         ));

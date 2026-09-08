@@ -10,7 +10,10 @@ use crate::types::{RootPath, UnixMillis};
 /// and TS never reads its own. The value matches the TS constant by
 /// coincidence of a shared origin, not by compatibility (see
 /// `docs/ts-divergence.md`).
-pub const CURRENT_INDEX_VERSION: i64 = 1;
+/// Bumped for the `Range` wire-shape alignment (`startLine` camelCase
+/// fields): v1 indexes persist snake_case ranges and are rejected with
+/// `WORKSPACE_INDEX.VERSION_MISMATCH`, directing a rebuild.
+pub const CURRENT_INDEX_VERSION: i64 = 2;
 
 /// Distance metric used by the embedding vector index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

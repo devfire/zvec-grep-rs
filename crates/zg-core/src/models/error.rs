@@ -510,9 +510,7 @@ impl ModelError {
             Self::BackendUnavailable { .. } => {
                 EngineErrorCode::from_static("MODELS.EMBEDDING_BACKEND_UNAVAILABLE")
             }
-            Self::QwenText {
-                model, failure, ..
-            } => model.code(*failure),
+            Self::QwenText { model, failure, .. } => model.code(*failure),
             Self::QwenVl { failure, .. } => qwen_vl_code(*failure),
             Self::MissingApiKey { backend, .. } => match backend {
                 QwenBackend::Text(model) => model.code(QwenTextFailure::MissingApiKey),
@@ -522,21 +520,15 @@ impl ModelError {
                 QwenBackend::Text(model) => model.code(QwenTextFailure::MissingEndpoint),
                 QwenBackend::Vl => qwen_vl_code(QwenVlFailure::MissingEndpoint),
             },
-            Self::EmptyInput { .. } => {
-                EngineErrorCode::from_static("MODELS.EMBEDDING_EMPTY_INPUT")
-            }
+            Self::EmptyInput { .. } => EngineErrorCode::from_static("MODELS.EMBEDDING_EMPTY_INPUT"),
             Self::BatchTooLarge { .. } => {
                 EngineErrorCode::from_static("MODELS.EMBEDDING_BATCH_TOO_LARGE")
             }
-            Self::EmptyText { .. } => {
-                EngineErrorCode::from_static("MODELS.EMBEDDING_EMPTY_TEXT")
-            }
+            Self::EmptyText { .. } => EngineErrorCode::from_static("MODELS.EMBEDDING_EMPTY_TEXT"),
             Self::UnsupportedImage { .. } => {
                 EngineErrorCode::from_static("MODELS.EMBEDDING_UNSUPPORTED_CONTENT")
             }
-            Self::EmptyImage { .. } => {
-                EngineErrorCode::from_static("MODELS.EMBEDDING_EMPTY_IMAGE")
-            }
+            Self::EmptyImage { .. } => EngineErrorCode::from_static("MODELS.EMBEDDING_EMPTY_IMAGE"),
             Self::ImageTooLarge { .. } => {
                 EngineErrorCode::from_static("MODELS.EMBEDDING_IMAGE_TOO_LARGE")
             }
@@ -584,8 +576,7 @@ impl ModelError {
             backend,
             message: format!("{display} model requires an API key"),
             context: format!(
-                "model={reference}\nhint=Pass --api-key, set ZVEC_GREP_API_KEY, or configure providers.qwen.apiKey in {}."
-            ,
+                "model={reference}\nhint=Pass --api-key, set ZVEC_GREP_API_KEY, or configure providers.qwen.apiKey in {}.",
                 global_config_path().display()
             ),
         }
@@ -614,9 +605,10 @@ impl From<ModelError> for EngineError {
             ModelError::NotImplemented { reference, backend } => {
                 Some(format!("reference={reference} backend={backend}"))
             }
-            ModelError::BackendUnavailable { reference, backend } => {
-                Some(format!("reference={reference} backend={}", backend.as_str()))
-            }
+            ModelError::BackendUnavailable { reference, backend } => Some(format!(
+                "reference={reference} backend={}",
+                backend.as_str()
+            )),
             ModelError::QwenText { context, .. } | ModelError::QwenVl { context, .. } => {
                 Some(context)
             }
@@ -701,9 +693,11 @@ impl From<ModelError> for EngineError {
             ModelError::Model2VecTokenize { reference, detail } => {
                 Some(format!("model={reference} detail={detail}"))
             }
-            ModelError::TokenOutOfRange { reference, id, rows } => {
-                Some(format!("model={reference} id={id} rows={rows}"))
-            }
+            ModelError::TokenOutOfRange {
+                reference,
+                id,
+                rows,
+            } => Some(format!("model={reference} id={id} rows={rows}")),
             ModelError::WorkerFailed { reference } => Some(format!("model={reference}")),
             ModelError::DownloadFailed { context } => Some(context),
         };

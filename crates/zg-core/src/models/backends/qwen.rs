@@ -89,16 +89,15 @@ fn post_embedding_json(
     })?;
     if !(200..300).contains(&status) {
         let error = read_provider_error(&parsed);
-        return Err(EngineError::new(
-            api_error,
-            format!("{display} request returned an error"),
-        )
-        .with_context(provider_error_context(
-            reference,
-            status,
-            retry_after,
-            &error,
-        )));
+        return Err(
+            EngineError::new(api_error, format!("{display} request returned an error"))
+                .with_context(provider_error_context(
+                    reference,
+                    status,
+                    retry_after,
+                    &error,
+                )),
+        );
     }
     Ok(parsed)
 }

@@ -8,8 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::error::{
-    error_details, workspace_index_detail, DetailEntry, DetailValue, EngineError, EngineErrorCode,
-    EngineResult,
+    DetailEntry, DetailValue, EngineError, EngineErrorCode, EngineResult, error_details,
+    workspace_index_detail,
 };
 use crate::ids::EntityId;
 use crate::models::{EmbeddingInput, EmbeddingModel, EmbeddingPurpose};
@@ -21,7 +21,7 @@ use crate::types::{
     SearchHit, SearchPlan, SearchPlanResult, SearchPlanRoute, SearchPlanRouteMode,
     SearchRecallTrace, UnixMillis, WorkspaceIndexInfo,
 };
-use crate::utils::file_selection::{resolve_file_types, FileTypesMatcher, OrderedGlobs};
+use crate::utils::file_selection::{FileTypesMatcher, OrderedGlobs, resolve_file_types};
 use crate::utils::glob::{
     is_absolute_path_pattern, normalize_path_for_match, normalize_path_pattern,
     path_pattern_matches,
@@ -29,7 +29,7 @@ use crate::utils::glob::{
 use crate::utils::timing::TimingCollector;
 
 use self::fusion::{
-    candidate_to_hit, fuse_candidates, public_entity_id, Candidate, CandidateEvidence, RecallPath,
+    Candidate, CandidateEvidence, RecallPath, candidate_to_hit, fuse_candidates, public_entity_id,
 };
 
 pub mod fusion;
@@ -49,8 +49,20 @@ const RECALL_TARGET_FACTOR: usize = 5;
 const RECALL_MIN_TARGET_CANDIDATES: usize = 50;
 
 const SYMBOL_QUERY_KEYWORDS: &[&str] = &[
-    "class", "struct", "enum", "interface", "function", "method", "type", "const", "let",
-    "var", "namespace", "where", "find", "explain",
+    "class",
+    "struct",
+    "enum",
+    "interface",
+    "function",
+    "method",
+    "type",
+    "const",
+    "let",
+    "var",
+    "namespace",
+    "where",
+    "find",
+    "explain",
 ];
 
 /// Storage filter plus whether the file-id dimension resolved to an empty
@@ -72,7 +84,10 @@ pub fn search_workspace_index(
     let limit = normalized.plan.limit.unwrap_or(DEFAULT_LIMIT);
     let trace = normalized.plan.trace == Some(true) || normalized.plan.track_entity_id.is_some();
     let file_type_matcher = timings.time("search_file_types", || {
-        resolve_file_types(&normalized.plan.file_types, &normalized.plan.excluded_file_types)
+        resolve_file_types(
+            &normalized.plan.file_types,
+            &normalized.plan.excluded_file_types,
+        )
     })?;
     let plan_filter = timings.time("search_filter", || {
         Ok::<_, EngineError>(search_plan_to_storage_filter(
@@ -85,7 +100,10 @@ pub fn search_workspace_index(
     let mut vector_by_route: HashMap<String, Vec<f32>> = HashMap::new();
     if !plan_filter.matches_no_files && plan_uses_vector(&normalized) {
         let embedded = timings.time("query_embedding", || {
-            embed_vector_routes(&normalized.routes, require_embedding_model(ctx, "searchPlan")?)
+            embed_vector_routes(
+                &normalized.routes,
+                require_embedding_model(ctx, "searchPlan")?,
+            )
         })?;
         vector_by_route = embedded;
     }
@@ -123,11 +141,12 @@ pub fn search_workspace_index(
         Ok::<_, EngineError>(fused)
     })?;
     let mut visible: Vec<Candidate> = fused.drain(..limit.min(fused.len())).collect();
-    let tracked = normalized
-        .plan
-        .track_entity_id
-        .as_ref()
-        .and_then(|id| fused.iter().find(|candidate| candidate.id.as_str() == id.as_str()).cloned());
+    let tracked = normalized.plan.track_entity_id.as_ref().and_then(|id| {
+        fused
+            .iter()
+            .find(|candidate| candidate.id.as_str() == id.as_str())
+            .cloned()
+    });
     if let Some(tracked) = tracked {
         if !visible.iter().any(|candidate| candidate.id == tracked.id) {
             visible.push(tracked);
@@ -135,7 +154,10 @@ pub fn search_workspace_index(
     }
     let hits: Vec<SearchHit> = timings.time("materialize", || {
         Ok::<_, EngineError>(
-            visible.iter().map(|candidate| candidate_to_hit(candidate, limit, trace)).collect(),
+            visible
+                .iter()
+                .map(|candidate| candidate_to_hit(candidate, limit, trace))
+                .collect(),
         )
     })?;
     let tracked_hit = normalized
@@ -268,9 +290,15 @@ fn validate_search_plan(plan: &SearchPlan) -> EngineResult<ResolvedSearchPlan> {
             include_paths: normalize_path_filters(&plan.include_paths, "includePaths")?,
             exclude_paths: normalize_path_filters(&plan.exclude_paths, "excludePaths")?,
             globs: normalize_string_filters(&plan.globs, "globs")?,
-            insensitive_globs: normalize_string_filters(&plan.insensitive_globs, "insensitiveGlobs")?,
+            insensitive_globs: normalize_string_filters(
+                &plan.insensitive_globs,
+                "insensitiveGlobs",
+            )?,
             file_types: normalize_string_filters(&plan.file_types, "fileTypes")?,
-            excluded_file_types: normalize_string_filters(&plan.excluded_file_types, "excludedFileTypes")?,
+            excluded_file_types: normalize_string_filters(
+                &plan.excluded_file_types,
+                "excludedFileTypes",
+            )?,
             modified_after,
             modified_before,
         },
@@ -303,7 +331,9 @@ fn make_default_route_id(
 }
 
 fn plan_uses_vector(plan: &ResolvedSearchPlan) -> bool {
-    plan.routes.iter().any(|route| route.mode == SearchPlanRouteMode::Vector)
+    plan.routes
+        .iter()
+        .any(|route| route.mode == SearchPlanRouteMode::Vector)
 }
 
 fn require_embedding_model<'a>(
@@ -417,8 +447,14 @@ fn collect_adaptive_recall(
     let mut previous_depth = 0usize;
     let mut depth = RECALL_INITIAL_DEPTH;
     loop {
-        let saturated =
-            collect_recall_pass(&recall_routes, vector_by_route, depth, previous_depth, storage, candidates);
+        let saturated = collect_recall_pass(
+            &recall_routes,
+            vector_by_route,
+            depth,
+            previous_depth,
+            storage,
+            candidates,
+        );
         if candidates.len() >= target || !saturated || depth >= RECALL_MAX_DEPTH {
             return depth;
         }
@@ -500,7 +536,10 @@ fn recall_route_hits(
             .search_fts(&route.route.query, depth, route.filter.as_ref())
             .unwrap_or_default();
     }
-    let id = route.vector_route_id.as_deref().unwrap_or(route.route.id.as_str());
+    let id = route
+        .vector_route_id
+        .as_deref()
+        .unwrap_or(route.route.id.as_str());
     match vector_by_route.get(id) {
         Some(vector) => storage
             .search_vector(vector, depth, route.filter.as_ref())
@@ -643,11 +682,22 @@ fn force_track_entity(
     };
     let key = entity_id.as_str().to_owned();
     candidates.entry(key.clone()).or_insert_with(|| {
-        Candidate::new(key.clone(), tracked.entity.clone(), tracked.file.clone(), true)
+        Candidate::new(
+            key.clone(),
+            tracked.entity.clone(),
+            tracked.file.clone(),
+            true,
+        )
     });
     let seen_routes: HashSet<Option<String>> = candidates
         .get(&key)
-        .map(|candidate| candidate.recall.iter().map(|trace| trace.route_id.clone()).collect())
+        .map(|candidate| {
+            candidate
+                .recall
+                .iter()
+                .map(|trace| trace.route_id.clone())
+                .collect()
+        })
         .unwrap_or_default();
     for route in routes {
         if seen_routes.contains(&Some(route.id.clone())) {
@@ -713,7 +763,10 @@ fn route_mode_str(mode: SearchPlanRouteMode) -> &'static str {
     }
 }
 
-fn filter_excludes_file(filter: Option<&StorageSearchFilter>, file_id: &crate::ids::FileId) -> bool {
+fn filter_excludes_file(
+    filter: Option<&StorageSearchFilter>,
+    file_id: &crate::ids::FileId,
+) -> bool {
     match filter {
         Some(filter) if !filter.file_ids.is_empty() => !filter.file_ids.contains(file_id),
         _ => false,
@@ -945,10 +998,18 @@ fn resolve_filtered_file_ids(
     files: &[FileInfo],
     file_type_matcher: &FileTypesMatcher,
 ) -> Option<Vec<crate::ids::FileId>> {
-    let include_matchers: Vec<_> =
-        plan.plan.include_paths.iter().map(|pattern| compile_path_filter(pattern)).collect();
-    let exclude_matchers: Vec<_> =
-        plan.plan.exclude_paths.iter().map(|pattern| compile_path_filter(pattern)).collect();
+    let include_matchers: Vec<_> = plan
+        .plan
+        .include_paths
+        .iter()
+        .map(|pattern| compile_path_filter(pattern))
+        .collect();
+    let exclude_matchers: Vec<_> = plan
+        .plan
+        .exclude_paths
+        .iter()
+        .map(|pattern| compile_path_filter(pattern))
+        .collect();
     let has_modified = plan.plan.modified_after.is_some() || plan.plan.modified_before.is_some();
     let has_shared = !plan.plan.globs.is_empty()
         || !plan.plan.insensitive_globs.is_empty()
@@ -1097,13 +1158,20 @@ mod tests {
             ..SearchPlan::default()
         };
         let resolved = validate_search_plan(&plan).expect("valid plan");
-        let ids: Vec<&str> = resolved.routes.iter().map(|route| route.id.as_str()).collect();
+        let ids: Vec<&str> = resolved
+            .routes
+            .iter()
+            .map(|route| route.id.as_str())
+            .collect();
         assert_eq!(ids, vec!["fts", "vector", "fts-2"]);
     }
 
     #[test]
     fn symbol_names_skip_keywords() {
-        assert_eq!(extract_symbol_names("find class Foo"), vec!["Foo".to_owned()]);
+        assert_eq!(
+            extract_symbol_names("find class Foo"),
+            vec!["Foo".to_owned()]
+        );
         assert_eq!(
             extract_symbol_names("Owner::method"),
             vec!["Owner::method".to_owned()]

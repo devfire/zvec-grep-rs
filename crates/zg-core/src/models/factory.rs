@@ -120,11 +120,7 @@ pub fn plan_embedding_model(
         }
         EmbeddingCatalogEntry::QwenMultimodal(entry) => Ok(ModelBuildPlan::QwenMultimodal {
             entry: *entry,
-            api_key: require_api_key(
-                entry.reference,
-                QwenBackend::Vl,
-                options.api_key.as_deref(),
-            )?,
+            api_key: require_api_key(entry.reference, QwenBackend::Vl, options.api_key.as_deref())?,
             endpoint: resolve_endpoint(
                 entry.reference,
                 entry.default_endpoint,
@@ -241,13 +237,15 @@ mod tests {
 
     #[test]
     fn qwen_text_requires_api_key() {
-        let err = plan_embedding_model(&reference("qwen/text-embedding-v4"), &options()).unwrap_err();
+        let err =
+            plan_embedding_model(&reference("qwen/text-embedding-v4"), &options()).unwrap_err();
         // TS-true code: the V4 subclass prefix, not the base prefix.
         assert_eq!(
             err.code().to_string(),
             "ZVEC_GREP.ENGINE.MODELS.QWEN_TEXT_EMBEDDING_V4_MISSING_API_KEY"
         );
-        let err = plan_embedding_model(&reference("qwen/qwen3.7-text-embedding"), &options()).unwrap_err();
+        let err = plan_embedding_model(&reference("qwen/qwen3.7-text-embedding"), &options())
+            .unwrap_err();
         assert_eq!(
             err.code().to_string(),
             "ZVEC_GREP.ENGINE.MODELS.QWEN37_TEXT_EMBEDDING_MISSING_API_KEY"
@@ -322,7 +320,10 @@ mod tests {
             let Err(err) = create_embedding_model(&reference(name), &options()) else {
                 panic!("expected BackendUnavailable for {name}");
             };
-            assert!(matches!(err, ModelError::BackendUnavailable { .. }), "{name}");
+            assert!(
+                matches!(err, ModelError::BackendUnavailable { .. }),
+                "{name}"
+            );
             assert_eq!(
                 err.code().to_string(),
                 "ZVEC_GREP.ENGINE.MODELS.EMBEDDING_BACKEND_UNAVAILABLE"

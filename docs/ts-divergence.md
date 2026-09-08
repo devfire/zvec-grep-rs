@@ -135,3 +135,54 @@ strings, auth prompt text) never diverge; only internal structure does.
   index read the last committed session (possibly stale). Reason: writer
   handoff would couple the scheduler task to actor state; staleness beats
   deadlock here and `index_status` still reports the live job.
+
+## MCP (phase H)
+
+- `tools.ts` interactive elicitation for remote-embedding authorization
+  (`elicit` + signed `requestState` round trip); the handlers fail closed
+  with an `AUTH.REMOTE_EMBEDDING_REQUIRED` error directing the caller to
+  `zg auth grant`. Reason: no elicitation channel is wired through rmcp
+  here; the codec + in-memory replay guard (`request_state.rs`) are
+  complete and tested for the interactive flow to adopt later.
+- Managed-rg `extraArgs` forwarded to the real rg binary (invert,
+  multiline, engines, threads, encodings, `--threads`, …); rejected with
+  `rg command option "--x" is not supported by the MCP tool.` Reason:
+  the port searches in-process (`lexical/`) and cannot forward raw
+  ripgrep flags; everything mappable onto `LexicalSearchOptions` is
+  accepted.
+- Per-request `apiKey`/`device`/`endpoint`/`embedding` and index-scoping
+  fields (`globs`, `hidden`, `maxDepth`, …) on `zvec_grep_index`;
+  rejected when present. Reason: index configuration is daemon-owned;
+  accepting-and-ignoring them would silently build the wrong index.
+  Search-time index knobs are accepted and refreshes reuse the
+  index-time file scope.
+- `http-transport.ts` dual modern/legacy servers; one stateful rmcp
+  `StreamableHttpService` plus axum pre-checks reproducing the legacy
+  observable behavior (unknown session → 404, session-less
+  non-initialize POST → 400, session-less GET → 405, cap → 503 with the
+  TS `-32000` bodies). Reason: rmcp answers all of these with 401;
+  behavior parity lives in the adapter, never in renamed tools.
+- `stdio-bridge.ts` daemon-subprocess supervision + elicitation
+  forwarding; `run_stdio_server` serves the router in-process.
+  Reason: the daemon links the router directly, so there is no child to
+  supervise and `shouldStopStdioBridge` has no subject.
+- MCP `_meta` trace context (`trace.rs` extracts it); no ambient
+  propagation across the async tool handlers. Reason: the context rides
+  a thread-local and tokio work-stealing does not preserve it; log
+  events from MCP calls carry no trace rather than a wrong one.
+- `Range` JSON (`start_line` snake_case), `RgMatch` (`rg_match`) and
+  `ContextCoverage` (`RankedSample`) wire shapes; aligned to the TS
+  contract (`startLine`, `lexical_match`, `ranked_sample`) with
+  `CURRENT_INDEX_VERSION` bumped 1 → 2. Reason: frozen wire formats must
+  match TS; v1 indexes are rejected with `VERSION_MISMATCH` directing a
+  rebuild instead of misreading persisted ranges.
+- `Date.parse` generality for `modifiedAfter`/`modifiedBefore` strings;
+  epoch millis, `YYYY-MM-DD` (local midnight), RFC 3339 and
+  `YYYY-MM-DD HH:MM:SS` parse, anything else errors with the TS message.
+  Reason: chrono cannot cover `Date.parse`'s free-form tail; the
+  failure message is identical.
+- Fixed while proving H (phase-G latent bug): `JobScheduler::publish`
+  used `watch::send`, which since tokio 1.53 drops the value when no
+  receiver exists — a job finishing before `wait()` subscribed left the
+  slot stale and the waiter hung forever. `publish` uses `send_replace`
+  now; `late_waiter_observes_terminal_state` pins it.

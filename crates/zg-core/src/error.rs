@@ -333,14 +333,8 @@ mod tests {
     fn code_roundtrip() {
         let code = EngineErrorCode::from_static("CONFIG.INVALID");
         assert_eq!(code.suffix(), "CONFIG.INVALID");
-        assert_eq!(
-            code.qualified(),
-            "ZVEC_GREP.ENGINE.CONFIG.INVALID"
-        );
-        assert_eq!(
-            code.to_string(),
-            "ZVEC_GREP.ENGINE.CONFIG.INVALID"
-        );
+        assert_eq!(code.qualified(), "ZVEC_GREP.ENGINE.CONFIG.INVALID");
+        assert_eq!(code.to_string(), "ZVEC_GREP.ENGINE.CONFIG.INVALID");
         // `Copy`, not just `Clone`: codes move freely into error values.
         let copied = code;
         assert_eq!(copied, code);

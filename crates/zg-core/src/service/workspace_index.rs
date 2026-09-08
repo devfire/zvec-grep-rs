@@ -7,17 +7,17 @@
 use std::sync::Arc;
 
 use crate::error::{
-    error_details, workspace_index_detail, DetailEntry, DetailValue, EngineError, EngineErrorCode,
-    EngineResult,
+    DetailEntry, DetailValue, EngineError, EngineErrorCode, EngineResult, error_details,
+    workspace_index_detail,
 };
 use crate::models::EmbeddingModel;
-use crate::pipeline::indexing::{
-    get_workspace_index_status, index_workspace, index_workspace_paths, IndexContext,
-    IndexProgressSink,
-};
 use crate::pipeline::indexing::scanner::CancelFlag;
-use crate::pipeline::search::{search_workspace_index, SearchContext};
-use crate::storage::{create_workspace_index_storage, StorageOptions, WorkspaceIndexStorage};
+use crate::pipeline::indexing::{
+    IndexContext, IndexProgressSink, get_workspace_index_status, index_workspace,
+    index_workspace_paths,
+};
+use crate::pipeline::search::{SearchContext, search_workspace_index};
+use crate::storage::{StorageOptions, WorkspaceIndexStorage, create_workspace_index_storage};
 use crate::types::{
     CURRENT_INDEX_VERSION, IndexResult, SearchPlan, SearchPlanResult,
     WorkspaceIndexEmbeddingSchema, WorkspaceIndexInfo, WorkspaceIndexStatus,
@@ -153,7 +153,10 @@ impl WorkspaceIndex {
                 EngineErrorCode::from_static("WORKSPACE_INDEX.EMBEDDING_MODEL_REQUIRED"),
                 "workspace index operation requires an embedding model",
             )
-            .with_context(workspace_index_operation_details(&self.info.name, operation))
+            .with_context(workspace_index_operation_details(
+                &self.info.name,
+                operation,
+            ))
         })
     }
 }
@@ -162,7 +165,10 @@ fn validate_index_version(info: &WorkspaceIndexInfo) -> EngineResult<()> {
     if info.index_version == Some(CURRENT_INDEX_VERSION) {
         return Ok(());
     }
-    let actual = info.index_version.map(|version| version.to_string()).unwrap_or_else(|| "null".to_owned());
+    let actual = info
+        .index_version
+        .map(|version| version.to_string())
+        .unwrap_or_else(|| "null".to_owned());
     let detail = error_details(vec![
         DetailEntry::Line(&workspace_index_detail(&info.name)),
         DetailEntry::Pair("expected", DetailValue::Int(CURRENT_INDEX_VERSION)),
@@ -275,7 +281,10 @@ fn require_workspace_index_embedding(
     let detail = error_details(vec![
         DetailEntry::Line(&workspace_index_detail(&info.name)),
         DetailEntry::Pair("operation", DetailValue::Str(operation)),
-        DetailEntry::Pair("hint", DetailValue::Str("Run zg index to build this index.")),
+        DetailEntry::Pair(
+            "hint",
+            DetailValue::Str("Run zg index to build this index."),
+        ),
     ])
     .unwrap_or_default();
     Err(EngineError::new(
@@ -284,4 +293,3 @@ fn require_workspace_index_embedding(
     )
     .with_context(detail))
 }
-

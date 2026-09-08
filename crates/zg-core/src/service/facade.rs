@@ -101,12 +101,11 @@ impl ZvecGrepService {
     /// Binds the facade to `options.root` (or the working directory).
     pub fn new(options: CreateZvecGrepOptions) -> Self {
         let root = options.root.as_deref().map(Path::to_string_lossy);
-        let root = root.as_deref().and_then(|root| {
-            resolve_zvec_grep_root(Some(root)).ok()
-        });
-        let root = root.unwrap_or_else(|| {
-            resolve_zvec_grep_root(None).unwrap_or_else(|_| ".".to_owned())
-        });
+        let root = root
+            .as_deref()
+            .and_then(|root| resolve_zvec_grep_root(Some(root)).ok());
+        let root =
+            root.unwrap_or_else(|| resolve_zvec_grep_root(None).unwrap_or_else(|_| ".".to_owned()));
         Self {
             root,
             embedding: options.embedding,
@@ -133,7 +132,10 @@ impl ZvecGrepService {
     /// Progress flows through the owned [`IndexProgressSink`](crate::pipeline::indexing::IndexProgressSink);
     /// cancellation through `options.signal`, polled on a helper thread that
     /// trips a [`CancelFlag`] shared with the blocking index run.
-    pub fn ensure_index(&self, options: &ZvecGrepIndexOptions<'_>) -> EngineResult<crate::types::IndexResult> {
+    pub fn ensure_index(
+        &self,
+        options: &ZvecGrepIndexOptions<'_>,
+    ) -> EngineResult<crate::types::IndexResult> {
         let root = self.root_string(options.root);
         let location = workspace_index_location(&root)?;
         let home = PathBuf::from(&location.home);
@@ -149,8 +151,13 @@ impl ZvecGrepService {
         let now = UnixMillis::now();
         let manifest = WorkspaceManifest {
             info: WorkspaceIndexInfo {
-                id: existing.as_ref().map_or_else(new_workspace_id, |manifest| manifest.info.id.clone()),
-                name: existing.as_ref().map_or_else(|| workspace_name(&location), |manifest| manifest.info.name.clone()),
+                id: existing
+                    .as_ref()
+                    .map_or_else(new_workspace_id, |manifest| manifest.info.id.clone()),
+                name: existing.as_ref().map_or_else(
+                    || workspace_name(&location),
+                    |manifest| manifest.info.name.clone(),
+                ),
                 // Storage resolves against `info.path`, so it must be the
                 // `.zvec-grep` home, not the workspace root (mirrors
                 // `prepareWorkspaceManifest`: `path: location.home`).
@@ -159,11 +166,17 @@ impl ZvecGrepService {
                 index_policy: Some(crate::types::WorkspaceIndexPolicy::Enabled),
                 embedding: Some(Some(embedding_schema(model.as_ref()))),
                 index_version: Some(CURRENT_INDEX_VERSION),
-                created_time: existing.as_ref().map_or(now, |manifest| manifest.info.created_time),
+                created_time: existing
+                    .as_ref()
+                    .map_or(now, |manifest| manifest.info.created_time),
                 updated_time: now,
             },
             manifest_version: CURRENT_MANIFEST_VERSION,
-            embedding_runtime: existing.as_ref().map_or_else(EmbeddingRuntimeConfig::default, |manifest| manifest.embedding_runtime.clone()),
+            embedding_runtime: existing
+                .as_ref()
+                .map_or_else(EmbeddingRuntimeConfig::default, |manifest| {
+                    manifest.embedding_runtime.clone()
+                }),
         };
         write_workspace_manifest(&home, &manifest)?;
 
@@ -179,7 +192,13 @@ impl ZvecGrepService {
         let changed_paths = if options.changed_paths.is_empty() {
             None
         } else {
-            Some(options.changed_paths.iter().map(|path| to_display_path(path)).collect())
+            Some(
+                options
+                    .changed_paths
+                    .iter()
+                    .map(|path| to_display_path(path))
+                    .collect(),
+            )
         };
         let result = index.index(&IndexOptions {
             embedding_concurrency: options.embedding_concurrency,
@@ -218,7 +237,10 @@ impl ZvecGrepService {
     /// With `auto_update` set, a stale index is refreshed first via
     /// [`ensure_index`](Self::ensure_index); read sessions (phase G) always
     /// pass it cleared.
-    pub fn context(&self, options: &ZvecGrepContextOptions<'_>) -> EngineResult<ZvecGrepContextResult> {
+    pub fn context(
+        &self,
+        options: &ZvecGrepContextOptions<'_>,
+    ) -> EngineResult<ZvecGrepContextResult> {
         let (query, plan) = build_search_plan(options)?;
         let location = self.require_indexed_location(options.root)?;
         let manifest = self.require_manifest(&location)?;
@@ -236,7 +258,13 @@ impl ZvecGrepService {
             },
         )?;
         let result = index.search_plan(&plan)?;
-        Ok(assemble_context(&location.root, &query, &info, result, options.trace))
+        Ok(assemble_context(
+            &location.root,
+            &query,
+            &info,
+            result,
+            options.trace,
+        ))
     }
 
     /// Exhaustive in-process lexical search — never a subprocess, mirroring
@@ -270,12 +298,17 @@ impl ZvecGrepService {
             return Err(workspace_index_disabled(&location.root));
         }
         let indexed = is_workspace_indexed(&manifest.info);
-        let embedding = manifest.info.embedding.clone().flatten().map(|schema| EmbeddingInfo {
-            provider: schema.provider,
-            model: schema.model,
-            dimension: schema.dimension,
-            metric: schema.metric,
-        });
+        let embedding = manifest
+            .info
+            .embedding
+            .clone()
+            .flatten()
+            .map(|schema| EmbeddingInfo {
+                provider: schema.provider,
+                model: schema.model,
+                dimension: schema.dimension,
+                metric: schema.metric,
+            });
         let (status, suggestion) = if indexed {
             let status = WorkspaceIndex::open(
                 manifest.info.clone(),
@@ -288,7 +321,10 @@ impl ZvecGrepService {
             .ok();
             (status, None)
         } else {
-            (None, Some("workspace is not indexed; run zg index first".to_owned()))
+            (
+                None,
+                Some("workspace is not indexed; run zg index first".to_owned()),
+            )
         };
         Ok(ZvecGrepInfoResult {
             root: location.root,
@@ -353,20 +389,31 @@ impl ZvecGrepService {
             },
         )?;
         let result = index.search_plan(&plan)?;
-        Ok(assemble_context(&location.root, &query, &info, result, options.trace))
+        Ok(assemble_context(
+            &location.root,
+            &query,
+            &info,
+            result,
+            options.trace,
+        ))
     }
 
     fn root_string(&self, root: Option<&Path>) -> String {
         root.map_or_else(|| self.root.clone(), to_display_path)
     }
 
-    fn require_indexed_location(&self, root: Option<&Path>) -> EngineResult<WorkspaceIndexLocation> {
+    fn require_indexed_location(
+        &self,
+        root: Option<&Path>,
+    ) -> EngineResult<WorkspaceIndexLocation> {
         let start = self.root_string(root);
-        find_nearest_workspace_index(&start)
-            .ok_or_else(|| workspace_index_not_found(&start))
+        find_nearest_workspace_index(&start).ok_or_else(|| workspace_index_not_found(&start))
     }
 
-    fn require_manifest(&self, location: &WorkspaceIndexLocation) -> EngineResult<WorkspaceManifest> {
+    fn require_manifest(
+        &self,
+        location: &WorkspaceIndexLocation,
+    ) -> EngineResult<WorkspaceManifest> {
         read_workspace_manifest(Path::new(&location.home))?
             .ok_or_else(|| workspace_index_not_found(&location.root))
     }
@@ -502,7 +549,10 @@ impl ReadSession {
     }
 
     /// Searches through the open read handle; errors once closed.
-    pub fn context(&self, options: &ZvecGrepContextOptions<'_>) -> EngineResult<ZvecGrepContextResult> {
+    pub fn context(
+        &self,
+        options: &ZvecGrepContextOptions<'_>,
+    ) -> EngineResult<ZvecGrepContextResult> {
         let Some(index) = self.index.as_ref() else {
             return Err(EngineError::new(
                 codes::service_read_session_closed(),
@@ -511,7 +561,13 @@ impl ReadSession {
         };
         let (query, plan) = build_search_plan(options)?;
         let result = index.search_plan(&plan)?;
-        Ok(assemble_context(&self.root, &query, &self.info, result, options.trace))
+        Ok(assemble_context(
+            &self.root,
+            &query,
+            &self.info,
+            result,
+            options.trace,
+        ))
     }
 
     /// Consumes the guard and closes the storage handle.
@@ -532,7 +588,9 @@ impl Drop for ReadSession {
 }
 
 fn is_indexed(manifest: Option<&WorkspaceManifest>) -> bool {
-    manifest.as_ref().is_some_and(|manifest| is_workspace_indexed(&manifest.info))
+    manifest
+        .as_ref()
+        .is_some_and(|manifest| is_workspace_indexed(&manifest.info))
 }
 
 fn not_indexed_result(root: &str) -> ZvecGrepInfoResult {
@@ -573,16 +631,29 @@ fn schema_reference(manifest: &WorkspaceManifest) -> Option<ModelReference> {
     Some(ModelReference::new(entry))
 }
 
-fn get_embedding_model_catalog_entry_for_schema(provider: &str, model: &str) -> Option<&'static str> {
+fn get_embedding_model_catalog_entry_for_schema(
+    provider: &str,
+    model: &str,
+) -> Option<&'static str> {
     crate::models::catalog::EMBEDDING_MODEL_CATALOG
         .iter()
         .find_map(|entry| {
             let (entry_provider, entry_model, reference) = match entry {
-                EmbeddingCatalogEntry::LlamaCpp(entry) => (entry.provider, entry.model, entry.reference),
-                EmbeddingCatalogEntry::QwenText(entry) => (entry.provider, entry.model, entry.reference),
-                EmbeddingCatalogEntry::QwenMultimodal(entry) => (entry.provider, entry.model, entry.reference),
-                EmbeddingCatalogEntry::TransformersJs(entry) => (entry.provider, entry.model, entry.reference),
-                EmbeddingCatalogEntry::Model2Vec(entry) => (entry.provider, entry.model, entry.reference),
+                EmbeddingCatalogEntry::LlamaCpp(entry) => {
+                    (entry.provider, entry.model, entry.reference)
+                }
+                EmbeddingCatalogEntry::QwenText(entry) => {
+                    (entry.provider, entry.model, entry.reference)
+                }
+                EmbeddingCatalogEntry::QwenMultimodal(entry) => {
+                    (entry.provider, entry.model, entry.reference)
+                }
+                EmbeddingCatalogEntry::TransformersJs(entry) => {
+                    (entry.provider, entry.model, entry.reference)
+                }
+                EmbeddingCatalogEntry::Model2Vec(entry) => {
+                    (entry.provider, entry.model, entry.reference)
+                }
             };
             (entry_provider == provider && entry_model == model).then_some(reference)
         })
@@ -655,7 +726,12 @@ fn assemble_context(
     result: SearchPlanResult,
     trace: bool,
 ) -> ZvecGrepContextResult {
-    let SearchPlanResult { plan, hits, timings, .. } = result;
+    let SearchPlanResult {
+        plan,
+        hits,
+        timings,
+        ..
+    } = result;
     let items = hits.iter().map(|hit| hit_to_item(hit, trace)).collect();
     let group_results = plan
         .routes
@@ -693,8 +769,7 @@ fn assemble_context(
         items,
         group_results: Some(group_results),
         diagnostics: ContextDiagnostics {
-            index: timings
-                .and_then(|timings| serde_json::to_value(timings).ok()),
+            index: timings.and_then(|timings| serde_json::to_value(timings).ok()),
             ..ContextDiagnostics::default()
         },
     }
