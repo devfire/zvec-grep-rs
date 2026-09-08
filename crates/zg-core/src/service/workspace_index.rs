@@ -159,9 +159,7 @@ impl WorkspaceIndex {
 }
 
 fn validate_index_version(info: &WorkspaceIndexInfo) -> EngineResult<()> {
-    if info.index_version == Some(CURRENT_INDEX_VERSION)
-        || info.index_version == Some(crate::types::LEGACY_TS_INDEX_VERSION)
-    {
+    if info.index_version == Some(CURRENT_INDEX_VERSION) {
         return Ok(());
     }
     let actual = info.index_version.map(|version| version.to_string()).unwrap_or_else(|| "null".to_owned());

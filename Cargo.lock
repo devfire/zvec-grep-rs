@@ -3802,7 +3802,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokenizers",
- "tracing",
  "tree-sitter",
  "tree-sitter-c",
  "tree-sitter-cpp",

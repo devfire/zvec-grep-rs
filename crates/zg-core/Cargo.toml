@@ -38,11 +38,9 @@ tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 libc.workspace = true
 url.workspace = true
-tracing.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-sha2.workspace = true
 
 [features]
 default = []

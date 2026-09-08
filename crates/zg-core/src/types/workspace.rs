@@ -4,19 +4,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{RootPath, UnixMillis};
 
-/// On-disk index layout version written by this port.
-/// Bumped past the TypeScript generation's `1`: file metadata lives in
-/// `files.json` here instead of a second zvec collection, so a Rust-written
-/// manifest is foreign to TS by construction — TS rejects it with its own
-/// `WORKSPACE_INDEX.VERSION_MISMATCH` and a rebuild hint instead of
-/// silently diffing stale metadata. See `docs/ts-divergence.md` (Phase E).
-pub const CURRENT_INDEX_VERSION: i64 = 2;
-/// Index layout version written by the TypeScript generation (`files.zvec`
-/// file metadata). Accepted read-only-compatibly: opening a v1 index
-/// imports `files.zvec` into `files.json` (see
-/// [`crate::storage::zvec::legacy_import`]); new manifests always stamp
-/// [`CURRENT_INDEX_VERSION`].
-pub const LEGACY_TS_INDEX_VERSION: i64 = 1;
+/// On-disk index layout version.
+///
+/// This build is standalone: it never reads TypeScript-generation indexes
+/// and TS never reads its own. The value matches the TS constant by
+/// coincidence of a shared origin, not by compatibility (see
+/// `docs/ts-divergence.md`).
+pub const CURRENT_INDEX_VERSION: i64 = 1;
 
 /// Distance metric used by the embedding vector index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

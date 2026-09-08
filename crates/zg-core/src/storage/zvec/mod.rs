@@ -6,7 +6,6 @@
 
 pub mod codec;
 pub mod filter;
-pub(crate) mod legacy_import;
 pub mod schema;
 pub mod search;
 pub mod store;
@@ -21,8 +20,7 @@ use crate::error::{EngineError, EngineErrorCode, EngineResult};
 use crate::ids::EntityId;
 use crate::ids::FileId;
 use crate::storage::layout::{
-    WorkspaceIndexStoragePaths, normalize_absolute_path, path_has_prefix,
-    resolve_workspace_index_storage_paths,
+    normalize_absolute_path, path_has_prefix, resolve_workspace_index_storage_paths,
 };
 use crate::storage::{
     FileIndexDiagnostics, IndexedFragment, ListEntitiesOptions, StorageOptions,
@@ -36,7 +34,6 @@ use codec::{
     validate_fragment_groups,
 };
 use filter::{build_filter, quote_filter_string};
-use legacy_import::{LegacyImportOutcome, legacy_files_newer_than, try_import_legacy_files};
 use schema::create_entities_schema;
 use search::{search_fts as run_fts, search_vector as run_vector};
 use store::{FileMetaStore, FileRecord};
@@ -92,7 +89,17 @@ impl ZvecWorkspaceIndexStorage {
             lock_mode,
             &LockOptions::new("storage.open"),
         )?;
-        let meta = open_file_meta_store(&paths, read_only)?;
+        if paths.files_path.exists() {
+            return Err(EngineError::new(
+                EngineErrorCode::from_static("STORAGE.FOREIGN_TS_INDEX_PRESENT"),
+                "storage directory holds a TypeScript-generation files.zvec",
+            )
+            .with_context(format!(
+                "path={} hint=this build is standalone and never migrates TS indexes; use a separate storage directory",
+                paths.files_path.display()
+            )));
+        }
+        let meta = FileMetaStore::open(&paths.files_meta_path, read_only)?;
         let mut file_ids_by_path = HashMap::new();
         for record in meta.list() {
             file_ids_by_path.insert(
@@ -545,83 +552,6 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
     }
 }
 
-/// Opens the JSON file-metadata store, importing TS-generation `files.zvec`
-/// metadata when the JSON store is missing — or when a TS reindex left a
-/// newer `files.zvec` behind a previously imported `files.json`.
-/// Read-only opens never mutate: an import stays in memory and no
-/// `files.zvec` is deleted. Read-write opens persist verified imports and
-/// delete the legacy collection (explicit one-way migration); partial or
-/// unreadable imports persist nothing and delete nothing, so the next open
-/// retries and indexing repairs the gap.
-fn open_file_meta_store(
-    paths: &WorkspaceIndexStoragePaths,
-    read_only: bool,
-) -> EngineResult<FileMetaStore> {
-    let meta_exists = paths.files_meta_path.exists();
-    let legacy_exists = paths.files_path.exists();
-    let stale_json = meta_exists
-        && legacy_exists
-        && legacy_files_newer_than(&paths.files_path, &paths.files_meta_path);
-    if meta_exists && !stale_json {
-        return FileMetaStore::open(&paths.files_meta_path, read_only);
-    }
-    if !legacy_exists {
-        return FileMetaStore::open(&paths.files_meta_path, read_only);
-    }
-    if stale_json {
-        tracing::info!(
-            storage = %paths.storage_path.display(),
-            "legacy files.zvec is newer than files.json; re-importing TS-generation metadata"
-        );
-    }
-    match try_import_legacy_files(&paths.files_path) {
-        LegacyImportOutcome::Absent => FileMetaStore::open(&paths.files_meta_path, read_only),
-        LegacyImportOutcome::Unreadable { reason } => {
-            tracing::warn!(
-                storage = %paths.storage_path.display(),
-                reason = %reason,
-                "legacy files.zvec is unreadable; falling back to full reindex without deleting anything"
-            );
-            FileMetaStore::open(&paths.files_meta_path, read_only)
-        }
-        LegacyImportOutcome::Imported { records, verified } => {
-            let count = records.len();
-            let store = FileMetaStore::from_records(&paths.files_meta_path, read_only, records);
-            if read_only {
-                tracing::info!(
-                    storage = %paths.storage_path.display(),
-                    files = count,
-                    "imported legacy files.zvec metadata in memory; read-only open mutates nothing"
-                );
-                return Ok(store);
-            }
-            if !verified {
-                tracing::warn!(
-                    storage = %paths.storage_path.display(),
-                    files = count,
-                    "legacy files.zvec partially imported; keeping it for the next open and letting indexing repair the gap"
-                );
-                return Ok(store);
-            }
-            store.persist()?;
-            if let Err(error) = std::fs::remove_dir_all(&paths.files_path) {
-                tracing::warn!(
-                    storage = %paths.storage_path.display(),
-                    error = %error,
-                    "imported legacy files.zvec metadata but could not delete the legacy collection; the next open keeps files.json"
-                );
-            } else {
-                tracing::info!(
-                    storage = %paths.storage_path.display(),
-                    files = count,
-                    "migrated legacy files.zvec metadata to files.json and deleted the legacy collection"
-                );
-            }
-            Ok(store)
-        }
-    }
-}
-
 fn zvec_error(code: EngineErrorCode, message: &str, detail: String) -> EngineError {
     EngineError::new(code, message).with_context(detail)
 }
@@ -636,7 +566,7 @@ fn zvec_error_open(detail: &str) -> EngineError {
 
 static ZVEC_INIT_MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
 
-pub(crate) fn initialize_zvec() -> EngineResult<()> {
+fn initialize_zvec() -> EngineResult<()> {
     let mutex = ZVEC_INIT_MUTEX.get_or_init(|| std::sync::Mutex::new(()));
     let _held = mutex.lock().map_err(|_| {
         EngineError::new(
@@ -678,39 +608,13 @@ fn open_zvec_collection(
             }
         }
     }
-    let mut detail = format!(
-        "path={zvec_path} action={action} readOnly={read_only} attempts={ZVEC_OPEN_RETRY_ATTEMPTS} error={last_error}"
-    );
-    if let Some(hint) = missing_jieba_dict_hint(&last_error) {
-        detail.push('\n');
-        detail.push_str(&hint);
-    }
     Err(zvec_error(
         EngineErrorCode::from_static("STORAGE.ZVEC_OPEN_FAILED"),
         "failed to open zvec collection storage",
-        detail,
+        format!(
+            "path={zvec_path} action={action} readOnly={read_only} attempts={ZVEC_OPEN_RETRY_ATTEMPTS} error={last_error}"
+        ),
     ))
-}
-
-/// Explains `open_fts_indexers` failures when the jieba dictionary is not
-/// configured. TS-generation entity collections use the jieba FTS
-/// tokenizer; the native library resolves its dictionary from
-/// `ZVEC_JIEBA_DICT_DIR` only, and `zvec-rust` 0.7 exposes no API for it
-/// (setting process environment from library code would require `unsafe`,
-/// forbidden here). Reading the variable is side-effect free.
-fn missing_jieba_dict_hint(message: &str) -> Option<String> {
-    if !message.contains("open_fts_indexers") {
-        return None;
-    }
-    let configured = std::env::var("ZVEC_JIEBA_DICT_DIR")
-        .ok()
-        .filter(|dir| Path::new(dir).is_dir());
-    if configured.is_some() {
-        return None;
-    }
-    Some(
-        "hint=set ZVEC_JIEBA_DICT_DIR to a jieba_dict directory to open TS-written indexes (see docs/ts-divergence.md, Phase E)".to_owned(),
-    )
 }
 
 fn can_touch_zvec_lock(zvec_path: &Path) -> bool {

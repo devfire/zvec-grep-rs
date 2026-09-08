@@ -5,30 +5,18 @@ use serde::{Deserialize, Serialize};
 use crate::ids::{EntityId, FileId};
 
 /// Source location of an entity within its file.
-///
-/// The wire shape is the TypeScript `Range` union byte-for-byte: a `kind`
-/// tag with snake_case variant names (`text`, `page_text`, ...) and
-/// camelCase fields (`startLine`, ...). The `alias` entries additionally
-/// accept this port's earlier snake_case field spelling, so indexes written
-/// before the Phase-E convergence still decode.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Range {
     File,
     Text {
-        #[serde(rename = "startLine", alias = "start_line")]
         start_line: usize,
-        #[serde(rename = "endLine", alias = "end_line")]
         end_line: usize,
-        #[serde(rename = "startOffset", alias = "start_offset")]
         start_offset: usize,
-        #[serde(rename = "endOffset", alias = "end_offset")]
         end_offset: usize,
     },
     Byte {
-        #[serde(rename = "startOffset", alias = "start_offset")]
         start_offset: usize,
-        #[serde(rename = "endOffset", alias = "end_offset")]
         end_offset: usize,
     },
     Page {
@@ -36,9 +24,7 @@ pub enum Range {
     },
     PageText {
         page: usize,
-        #[serde(rename = "startOffset", alias = "start_offset")]
         start_offset: usize,
-        #[serde(rename = "endOffset", alias = "end_offset")]
         end_offset: usize,
     },
     PageRegion {

@@ -1,22 +1,22 @@
 //! Workspace index storage path resolution, existence check, safe delete.
 //!
-//! Ports `engine/storage/layout.ts`. The entity vector collection keeps the
-//! TypeScript on-disk name (`index.zvec`). File metadata lived in a second
-//! zvec collection (`files.zvec`) in TypeScript; this port stores it as JSON
-//! (`files.json`) instead — see [`crate::storage::zvec::store`]. Layout
-//! helpers know both names so existence checks and deletes keep working
-//! across indexes written by either generation.
+//! This build is standalone: file metadata lives in `files.json` (see
+//! [`crate::storage::zvec::store`]) and a TypeScript-generation `files.zvec`
+//! in the same directory is foreign — storage refuses to open it (see
+//! `docs/ts-divergence.md`) and delete leaves it alone.
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
 use crate::error::{EngineError, EngineErrorCode, EngineResult};
 
-/// Legacy TypeScript file-metadata zvec collection directory name.
+/// TypeScript-generation file-metadata collection directory name. Foreign
+/// to this build: presence aborts storage open (never migrated, never
+/// adopted) and delete never touches it.
 pub const FILES_ZVEC_DIR: &str = "files.zvec";
 /// File-metadata JSON store name used by this port.
 pub const FILES_META_FILE: &str = "files.json";
-/// Entity vector collection directory name (shared with TypeScript).
+/// Entity vector collection directory name.
 pub const ENTITIES_ZVEC_DIR: &str = "index.zvec";
 
 /// Resolved on-disk locations for one workspace index storage.
@@ -28,7 +28,7 @@ pub struct WorkspaceIndexStoragePaths {
     pub index_path: PathBuf,
 }
 
-/// Resolves `storagePath`, `files.zvec`, `files.json`, and `index.zvec`.
+/// Resolves `storagePath` and its `files.zvec` / `files.json` / `index.zvec` children.
 pub fn resolve_workspace_index_storage_paths(storage_path: &Path) -> WorkspaceIndexStoragePaths {
     let resolved = PathBuf::from(normalize_absolute_path(
         storage_path.to_string_lossy().as_ref(),
@@ -41,18 +41,18 @@ pub fn resolve_workspace_index_storage_paths(storage_path: &Path) -> WorkspaceIn
     }
 }
 
-/// True when the entity collection exists together with file metadata in
-/// either the current (`files.json`) or legacy (`files.zvec`) location.
+/// True when the entity collection exists together with this build's file
+/// metadata (`files.json`). A lone `files.zvec` is not an index here.
 pub fn has_workspace_index_storage(storage_path: &Path) -> bool {
     let paths = resolve_workspace_index_storage_paths(storage_path);
-    paths.index_path.exists() && (paths.files_meta_path.exists() || paths.files_path.exists())
+    paths.index_path.exists() && paths.files_meta_path.exists()
 }
 
 /// Removes index data inside `storage_path`. Targets are fixed to direct
 /// children of the storage directory; anything else is refused.
 pub fn delete_workspace_index_storage(storage_path: &Path) -> EngineResult<()> {
     let paths = resolve_workspace_index_storage_paths(storage_path);
-    for target in [&paths.files_path, &paths.files_meta_path, &paths.index_path] {
+    for target in [&paths.files_meta_path, &paths.index_path] {
         let inside = target
             .parent()
             .is_some_and(|parent| parent == paths.storage_path);

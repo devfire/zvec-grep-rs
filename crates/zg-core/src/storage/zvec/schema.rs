@@ -108,12 +108,10 @@ fn int_field(schema: &mut CollectionSchema, name: &str, nullable: bool) -> Engin
 fn fts_text_field(schema: &mut CollectionSchema, name: &str) -> EngineResult<()> {
     let mut field = FieldSchema::new(name, DataType::String, false, 0)
         .map_err(|error| schema_error(name, &error.to_string()))?;
-    // Divergence: TS uses the `jieba` tokenizer, which the zvec server
-    // refuses without a `jieba_dict_dir` that no machine here provides (no
-    // dicts ship with either package). `standard` creates successfully
-    // everywhere and segments space-separated text identically; CJK recall
-    // may differ from TS (see docs/ts-divergence.md). Revisit when dicts
-    // are vendored (phase E).
+    // Standalone choice, not a compat shim: the TS generation uses the
+    // `jieba` tokenizer, but the two builds never share collections, so
+    // this port uses `standard` and ships no dictionary (see
+    // docs/ts-divergence.md).
     let params = IndexParams::fts(Some("standard"), Some(&["lowercase"]), None)
         .map_err(|error| schema_error(name, &error.to_string()))?;
     field

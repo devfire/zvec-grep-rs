@@ -30,8 +30,8 @@ pub use search::{
     SearchPlanRouteMode, SearchRecallTrace, SearchStageTrace,
 };
 pub use workspace::{
-    CURRENT_INDEX_VERSION, LEGACY_TS_INDEX_VERSION, SearchMetric, WorkspaceIndexEmbeddingSchema,
-    WorkspaceIndexInfo, WorkspaceIndexPolicy, double_option,
+    CURRENT_INDEX_VERSION, SearchMetric, WorkspaceIndexEmbeddingSchema, WorkspaceIndexInfo,
+    WorkspaceIndexPolicy, double_option,
 };
 
 /// Milliseconds since the Unix epoch.
