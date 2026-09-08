@@ -4,6 +4,11 @@
 //! (not adopt, not delete) when one is present, and the legacy name must
 //! not count as an index nor be removed by delete.
 
+// Test targets exercise fallible fixtures directly: `unwrap`/`expect`/`panic!`
+// refusal branches are the same class the crate roots allow under `cfg(test)`
+// (integration tests are separate crates, so they carry their own allow).
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use tempfile::TempDir;
 
 use zg_core::storage::layout::{delete_workspace_index_storage, has_workspace_index_storage};

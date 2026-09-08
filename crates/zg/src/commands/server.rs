@@ -31,6 +31,9 @@ fn daemon_home(args: &ServerArgs) -> Option<PathBuf> {
 /// Builds the daemon backend: every option is set explicitly by
 /// destructuring the defaults first, so a new `DaemonBackendOptions`
 /// field fails compilation here until its daemon value is decided.
+// `service: _` below is that exhaustiveness check, not `..`: allowed against
+// `unneeded_field_pattern` so newcomers cannot slip past this function.
+#[allow(clippy::unneeded_field_pattern)]
 fn daemon_backend(service: ServiceConfig) -> DaemonBackend {
     let DaemonBackendOptions {
         scheduler,

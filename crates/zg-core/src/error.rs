@@ -235,6 +235,17 @@ pub fn workspace_index_detail(name: &str) -> String {
 /// with an ellipsis. Mirrors the five passes of the TS implementation (the URL
 /// userinfo pass is a hand-rolled scanner because the Rust regex crate has no
 /// lookbehind).
+///
+/// # Panics
+///
+/// Panics only when a `static` redaction regex fails to compile. The patterns
+/// are literal constants that ship with the crate, so construction cannot fail
+/// at runtime; Phase 2 converts these to `LazyLock<Result<Regex>>` with a
+/// skip-pass fallback and removes this section.
+// Phase 2 debt: `panic!` in `LazyLock` init must become typed error /
+// skip-pass fallback (`LazyLock<Result<Regex>>`). Allowed here so the
+// `panic = "deny"` firewall stays green until then.
+#[allow(clippy::panic)]
 pub fn redact_error_text(value: &str, max_length: usize) -> String {
     use std::sync::LazyLock;
 

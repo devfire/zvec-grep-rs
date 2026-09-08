@@ -4,7 +4,10 @@
 //! Raw JSON-RPC over reqwest (no rmcp client): every status code and
 //! session header is asserted directly, mirroring the TS
 //! `mcp-modern-http` and `mcp-legacy-http` suites.
-#![allow(clippy::unwrap_used)]
+// Test targets exercise fallible fixtures directly: `unwrap`/`expect`/`panic!`
+// refusal branches are the same class the crate roots allow under `cfg(test)`
+// (integration tests are separate crates, so they carry their own allow).
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::sync::Arc;
 

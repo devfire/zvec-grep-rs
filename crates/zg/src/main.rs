@@ -4,10 +4,17 @@
 //! `--help`/`--version`), `1` for every failure. Clap owns `--help`
 //! rendering; usage errors keep the `args.ts` texts via [`validate`](crate::cli::validate).
 
-// Test builds exercise fallible paths with `unwrap`/`expect` per the port
-// plan (M8 permits `allow(unwrap_used)`/`allow(expect_used)` under
-// `cfg(test)` only).
-#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+// Test builds exercise fallible paths with `unwrap`/`expect`/`panic!` per the
+// port plan (M8 permits `allow(unwrap_used)`/`allow(expect_used)` under
+// `cfg(test)` only; `panic!` in `let-else` refusal branches is the same class).
+// The `zg` binary is a CLI: stdout/stderr output is its contract, so the
+// workspace `print_stdout`/`print_stderr` warnings (kept for libraries) do not
+// apply here. Phase 0 keeps them at `warn` workspace-wide for that reason.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+#![cfg_attr(
+    test,
+    allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 
 mod cli;
 mod client;

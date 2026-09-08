@@ -1,6 +1,11 @@
 //! Phase F proof: a remote-embedding call without a permit fails closed
 //! before any network traffic, with the TS-exact `AUTH` code.
 
+// Test targets exercise fallible fixtures directly: `unwrap`/`expect`/`panic!`
+// refusal branches are the same class the crate roots allow under `cfg(test)`
+// (integration tests are separate crates, so they carry their own allow).
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use zg_core::models::backends::QwenTextEmbeddingModel;
 use zg_core::models::catalog::{EmbeddingCatalogEntry, get_embedding_model_catalog_entry};
 use zg_core::models::embeddings::ApiKey;

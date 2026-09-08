@@ -13,7 +13,6 @@ rust-version = "1.85"
 zg-core = { path = "crates/zg-core" }
 zg-server = { path = "crates/zg-server" }
 
-anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -90,4 +89,37 @@ all = { level = "deny", priority = -1 }
 todo = "deny"
 dbg_macro = "deny"
 unwrap_used = "deny"
-expect_used = "warn"
+# Phase 0 lint firewall: `expect` in non-test code is a hidden panic.
+# Test builds keep targeted `cfg(test)` allows at each crate root
+# (template: `crates/zg/src/main.rs`) plus per-file allows in `tests/`.
+expect_used = "deny"
+# `panic!` in non-test code must go through typed errors (Phase 2). The
+# three `redact_error_text` statics carry one targeted `#[allow]` +
+# justification until then; test targets keep their own `cfg(test)` /
+# file-level allows. (`unreachable!` sites verify clean under this lint.)
+panic = "deny"
+# `fallible_impl_from`, `unneeded_field_pattern`, and
+# `fn_params_excessive_bools` are clean today: deny so no new violations land.
+fallible_impl_from = "deny"
+unneeded_field_pattern = "deny"
+fn_params_excessive_bools = "deny"
+# `indexing_slicing` (163 sites), `wildcard_enum_match_arm` (14 sites), and
+# `must_use_candidate` (242 sites) stay `warn` until their owning phases fix
+# the existing debt — denying them now would need 400+ scattered `#[allow]`s
+# (weightless noise that hides real issues) or smuggling Phases 4/5/7 into
+# this commit. Each promotes to `deny` in its phase:
+# `indexing_slicing` → Phase 4, `wildcard_enum_match_arm` → Phase 5,
+# `must_use_candidate` → Phase 7.
+indexing_slicing = "warn"
+wildcard_enum_match_arm = "warn"
+must_use_candidate = "warn" 
+# Docs + diagnostics: panic docs are mandatory; error docs and large-`Err`
+# diagnostics warn until Phases 2-3 clear them.
+missing_errors_doc = "warn"
+missing_panics_doc = "deny"
+result_large_err = "warn"
+# The `zg` binary is a CLI: stdout/stderr output is its contract, so the
+# binary crate allows these at its root (see `crates/zg/src/main.rs`;
+# Cargo forbids `workspace = true` plus per-lint overrides in one manifest).
+print_stdout = "warn"
+print_stderr = "warn"

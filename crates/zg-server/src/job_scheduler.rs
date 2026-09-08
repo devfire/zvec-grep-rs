@@ -471,6 +471,10 @@ impl JobScheduler {
         }
     }
 
+    // `canonical_root: _` below is intentional, not `..`: a new
+    // `SubmitIndexJob` field must fail compilation here (Phase 5 keeps this as
+    // the named-ignore template). Allowed against `unneeded_field_pattern`.
+    #[allow(clippy::unneeded_field_pattern)]
     fn absorb_or_chain(
         &self,
         state: &mut Inner,

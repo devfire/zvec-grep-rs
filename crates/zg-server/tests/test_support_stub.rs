@@ -1,7 +1,10 @@
 //! The shared `test-support` stub is reachable from this crate's test target:
 //! `zg-core` builds here as a dependency (with `cfg(test)` unset), so only a
 //! Cargo feature — not `cfg(test)` — can expose test fakes across crates.
-#![allow(clippy::unwrap_used)]
+// Test targets exercise fallible fixtures directly: `unwrap`/`expect`/`panic!`
+// refusal branches are the same class the crate roots allow under `cfg(test)`
+// (integration tests are separate crates, so they carry their own allow).
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use zg_core::models::stub::StubEmbeddingModel;
 use zg_core::models::{EmbeddingInput, EmbeddingModel, EmbeddingPurpose};

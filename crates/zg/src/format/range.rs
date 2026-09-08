@@ -8,6 +8,10 @@ use zg_core::types::Range;
 
 /// Renders a [`Range`] as `start-end`, `bytes:a-b`, `page:N`, or `file`,
 /// mirroring `rangeLabel`.
+// The `field: _` ignores below are intentional, not `..`: a new `Range` field
+// must fail compilation here (see module docs). Allowed against
+// `unneeded_field_pattern` for that exhaustiveness.
+#[allow(clippy::unneeded_field_pattern)]
 #[must_use]
 pub fn range_label(range: &Range) -> String {
     match range {
