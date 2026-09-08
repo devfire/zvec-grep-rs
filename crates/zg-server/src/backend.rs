@@ -1766,8 +1766,16 @@ mod tests {
             )
             .await
             .unwrap();
-        // Let the run reach the blocking embed body.
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        // Wait until the run reaches the blocking embed body. Startup
+        // latency varies (cold/loaded CI runners can take longer than any
+        // fixed sleep to reach the first batch), so poll with a deadline
+        // instead of sleeping once — a fixed sleep flakes when slow.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        while batches.load(Ordering::SeqCst) == 0
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
         assert!(
             batches.load(Ordering::SeqCst) > 0,
             "index must be in-flight"
