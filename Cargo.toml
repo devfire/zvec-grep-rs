@@ -79,7 +79,11 @@ inherits = "release"
 lto = "fat"
 [workspace.lints.rust]
 unsafe_code = "forbid"
-missing_docs = "warn"
+# M8 tracks `missing_docs = "warn"` restoration with `cargo doc --no-deps`
+# warning-free. Until then this stays `allow`: ~870 undocumented public
+# items flood `cargo test`/`clippy` and hide real warnings. Enforce docs via
+# `RUSTDOCFLAGS="-D missing-docs" cargo doc --workspace --no-deps` in CI.
+missing_docs = "allow"
 unused_qualifications = "warn"
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
