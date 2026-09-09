@@ -1,0 +1,9 @@
+# `$ORIGIN` rpath: `zvec-rust-sys` links `libzvec_c_api.so` as `dylib` with an
+# absolute rpath into its own `OUT_DIR` (see its build.rs), which breaks
+# whenever cargo reuses a different build hash or the binary moves. This
+# appends a relative rpath so a `zg` binary with `libzvec_c_api.so`
+# side-by-side (same directory tarball, Docker image, `cargo install`
+# staging) resolves without `LD_LIBRARY_PATH`. Upstream ships no static
+# archive, so true static linking is not an option.
+[build]
+rustflags = ["-C", "link-args=-Wl,-z,origin -Wl,-rpath,$ORIGIN"]
