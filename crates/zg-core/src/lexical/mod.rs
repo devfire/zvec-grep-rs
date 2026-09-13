@@ -351,10 +351,10 @@ pub fn run_lexical_search(options: &LexicalSearchOptions) -> EngineResult<Lexica
         if !type_matcher.matches(path) {
             continue;
         }
-        if let Some(ignore) = ignore_matcher.as_ref() {
-            if ignore.matched(path, false).is_ignore() {
-                continue;
-            }
+        if let Some(ignore) = ignore_matcher.as_ref()
+            && ignore.matched(path, false).is_ignore()
+        {
+            continue;
         }
         let mtime = owned_metadata
             .as_ref()

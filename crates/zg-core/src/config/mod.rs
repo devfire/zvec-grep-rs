@@ -308,13 +308,13 @@ pub fn resolve_embedding_runtime_options_with_env(
             .or_else(|| workspace.endpoint.clone())
             .or_else(|| model.and_then(|model| model.endpoint.clone()))
             .or_else(|| non_empty_env(env("ZVEC_GREP_ENDPOINT").as_deref()));
-        if let Some(endpoint) = &endpoint {
-            if !is_http_endpoint(endpoint) {
-                return Err(invalid_runtime(
-                    reference,
-                    "endpoint must be a valid HTTP(S) URL",
-                ));
-            }
+        if let Some(endpoint) = &endpoint
+            && !is_http_endpoint(endpoint)
+        {
+            return Err(invalid_runtime(
+                reference,
+                "endpoint must be a valid HTTP(S) URL",
+            ));
         }
         let api_key = explicit
             .api_key

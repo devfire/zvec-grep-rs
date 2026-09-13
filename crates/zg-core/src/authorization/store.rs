@@ -50,7 +50,7 @@ fn to_hex(bytes: &[u8]) -> String {
 }
 
 fn from_hex(hex: &str) -> Option<Vec<u8>> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return None;
     }
     let mut bytes = Vec::with_capacity(hex.len() / 2);
@@ -138,10 +138,10 @@ fn unsigned_grant(grant: &RemoteEmbeddingGrant) -> serde_json::Value {
 /// Default signing-key path: `$ZVEC_GREP_AUTHORIZATION_KEY_FILE`, else
 /// `~/.zvec-grep/authorization-signing.key` (real home, like TS `homedir`).
 fn default_signing_key_path() -> PathBuf {
-    if let Some(path) = std::env::var_os(SIGNING_KEY_ENV_VAR) {
-        if !path.is_empty() {
-            return PathBuf::from(path);
-        }
+    if let Some(path) = std::env::var_os(SIGNING_KEY_ENV_VAR)
+        && !path.is_empty()
+    {
+        return PathBuf::from(path);
     }
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)

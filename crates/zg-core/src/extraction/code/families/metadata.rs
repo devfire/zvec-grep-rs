@@ -184,10 +184,10 @@ pub fn clean_comment_text(text: &str) -> String {
             rest = rest.strip_prefix(is_gap).unwrap_or(rest);
         } else if let Some(after) = rest.strip_prefix('#') {
             rest = after.strip_prefix(is_gap).unwrap_or(after);
-        } else if let Some(after) = rest.strip_prefix('*') {
-            if after.starts_with(' ') || after.starts_with('\t') || after.is_empty() {
-                rest = after.strip_prefix(is_gap).unwrap_or(after);
-            }
+        } else if let Some(after) = rest.strip_prefix('*')
+            && (after.starts_with(' ') || after.starts_with('\t') || after.is_empty())
+        {
+            rest = after.strip_prefix(is_gap).unwrap_or(after);
         }
         if !out.is_empty() {
             out.push('\n');

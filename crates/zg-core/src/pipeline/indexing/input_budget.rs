@@ -51,7 +51,7 @@ fn is_token_dense_text(text: Option<&str>, max_input_tokens: usize) -> bool {
         }
         start += TOKEN_DENSE_WINDOW_STEP_CHARS;
     }
-    last_window_start % TOKEN_DENSE_WINDOW_STEP_CHARS != 0
+    !last_window_start.is_multiple_of(TOKEN_DENSE_WINDOW_STEP_CHARS)
         && is_token_dense_window(text, last_window_start, TOKEN_DENSE_WINDOW_CHARS)
 }
 

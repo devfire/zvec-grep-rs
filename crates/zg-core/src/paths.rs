@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 
 /// Default global state directory: `$ZVEC_GREP_HOME` or `~/.zvec-grep`.
 pub fn default_home() -> PathBuf {
-    if let Some(home) = std::env::var_os("ZVEC_GREP_HOME") {
-        if !home.is_empty() {
-            return PathBuf::from(home);
-        }
+    if let Some(home) = std::env::var_os("ZVEC_GREP_HOME")
+        && !home.is_empty()
+    {
+        return PathBuf::from(home);
     }
     let home_dir = std::env::var_os("HOME")
         .map(PathBuf::from)

@@ -29,6 +29,87 @@ strings, auth prompt text) never diverge; only internal structure does.
   Reason: GC-language artifact — in Rust ownership is the type system and
   the discriminant next to an `Arc` invites impossible-state matches (M3).
 
+## Local backends C/D — context-per-lease design note (M6/M7)
+
+`EmbeddingModel: Send + Sync` with `fn embed(&self, ..)` is shared as
+`Arc<dyn EmbeddingModel>` across phase-G pool tasks, but neither heavy
+backend has a shareable inference primitive: `ort::Session::run` takes `&mut self`, so each pooled lease is an
+exclusive run — the pool is not just M6's gate but the only sound way
+to share sessions. `llama-cpp-2` goes further: `LlamaBackend` is neither
+`Send` nor `Sync` (verified on docs.rs), so no inference state may
+cross threads at all — not even behind a mutex — and a stored
+`LlamaContext<'a>` cannot live inside a `'static` trait object anyway
+(self-referential lifetime). Required shapes: ONNX pools
+lazily-created `Session`s (one file, many handles) up to `min(8,
+available_parallelism)`; llama owns one dedicated worker thread per
+loaded model holding backend, model, and a single reused context as
+plain locals, with `embed` shipping texts over a channel and blocking
+on the reply. Embeds serialize per model instance (matching TS's CPU
+`parallelism: 1` default); the `ZVEC_GREP_LLAMA_CONTEXT_PARALLELISM`
+override has no effect on the CPU-only build, since fan-out would need
+shareable contexts that cannot exist. Tokenizers load through
+`models/download.rs`'s cache at the catalog's pinned `repo`/`revision`
+— never via the `tokenizers` crate's `http` feature directly, or offline
+runs break. Batch chunking stays caller-side: `validate_contents`
+errors past `max_batch_size`, so backends never chunk internally.
+GPU requests (`DeviceKind::{Metal, Vulkan, Cuda, Auto}` resolving off
+CPU) warn once through the load sink and fall back to CPU, mirroring
+the TS `usingCpuFallback` warnings — neither the `ort` dep (CPU build)
+nor the `llama-cpp-2` dep (`default-features = false`) ships GPU
+kernels. Llama `hf:` URIs resolve through `resolve/main` (the catalog
+pins no revision for GGUF entries, exactly like TS `catalog.ts:6-31`),
+and a non-GGUF download is deleted and reported with the TS-exact
+`INVALID_GGUF` / `INVALID_GGUF_HTML` codes. Deployment consequence:
+`ort` links a binary-downloaded dylib and `llama-cpp-2` needs a C++
+toolchain plus libclang/bindgen, so both stay behind off-by-default
+`onnx` / `llama` features and `BackendUnavailable` is the typed answer
+when compiled out; CI (`ubuntu-latest`) builds `--all-features` with
+its preinstalled cmake/clang, while hosts without a C++ toolchain
+verify `onnx` only and review `llama` by inspection (this host: no
+cmake and no C library headers — `llama-cpp-sys-2` bindgen fails on
+`stdbool.h` — so even `cargo check --features llama` cannot run here;
+the module is written against the documented `llama-cpp-rs` API as
+verified on docs.rs for the pinned version, and its unit tests (URI
+split, prompt formats, GGUF sniff) ship gated with the module and run
+under `--all-features` in CI, not here.
+- `transformers-js.ts findTruncatedInputIndexes` encodes at
+  `maxInputTokens + 1` and flags counts past the limit, but
+  `loadPipeline` first sets `tokenizer.model_max_length =
+  maxInputTokens`, which clamps the probe encoding back to the limit —
+  so with real tokenizers the count can never exceed it and `truncated`
+  is always empty (verified: a 64 KB input reports `[]` for
+  `all-minilm-l6-v2`). The Rust backend flags inputs whose real token
+  count exceeds the limit instead; vectors are identical either way,
+  and the parity test asserts the honest sets. Reason: reproducing a
+  dead detector would make `truncated` metadata useless.
+- `llama-cpp.ts` per-root context fan-out (`resolveParallelism` over
+  GPU VRAM plus `ZVEC_GREP_LLAMA_CONTEXT_PARALLELISM`); one worker
+  thread and one reused context per model, always sequential. Reason:
+  the CPU-only build has no VRAM signal and `LlamaBackend` cannot cross
+  threads, so there is nothing to fan out to; the override is parsed
+  nowhere. TS's CPU default is sequential too, so default behavior
+  matches.
+- `llama-cpp.ts` pooled sequence embeddings pass through an explicit
+  pooling selection in some paths; the Rust backend sets no pooling
+  type and returns raw (unnormalized) vectors like `embedTexts`.
+  Reason: the TS backend passes no pooling option to
+  `createEmbeddingContext` either, so llama.cpp's default resolution
+  applies on both sides — mirroring it is correct by construction,
+  and the parity test adjudicates the numeric result in CI.
+- The C/D parity gate asserts cosine > 0.999, not the plan's 0.9999.
+  Reason: measured similarity over all 20 ONNX cases is 0.99985–0.99999
+  with uniform ~2e-3 per-component noise — the int4 matmul kernels
+  differing between ORT Web (TS) and ORT native (Rust). Every genuine
+  bug class (tokenizer padding, pooling, prefix) scored 0.22–0.97, so
+  0.999 keeps margin on both sides; 0.9999 fails on proven-correct
+  output and is unachievable without matching ORT Web's kernels.
+- Baked-in `tokenizer.json` padding/truncation is stripped after load
+  (`with_padding(None)` / `with_truncation(None)`); batching, padding,
+  and truncation are owned by `embed_core`. Reason: minilm's hub file
+  pads every encoding to 128 zeros, which the attention mask would
+  otherwise mistake for real tokens (caught by the parity gate at
+  cosine 0.22 before the fix).
+
 ## Storage
 
 - `zvec.ts` FTS `tokenizerName: "jieba"`; `schema.rs` uses `"standard"`.

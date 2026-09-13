@@ -105,10 +105,10 @@ fn endpoint_host(endpoint: &str) -> Option<String> {
     if endpoint.is_empty() {
         return None;
     }
-    if let Ok(url) = url::Url::parse(endpoint) {
-        if let Some(host) = url.host_str() {
-            return Some(host.to_owned());
-        }
+    if let Ok(url) = url::Url::parse(endpoint)
+        && let Some(host) = url.host_str()
+    {
+        return Some(host.to_owned());
     }
     let without_scheme = endpoint
         .split_once("://")

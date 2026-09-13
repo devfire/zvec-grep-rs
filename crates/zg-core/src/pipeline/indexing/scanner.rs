@@ -612,16 +612,16 @@ fn scan_root_path(
     };
     if info.is_file() {
         let relative_path = file_name_of(&root.absolute_path);
-        if selection.matches(&relative_path) {
-            if let Some(file) = read_file_info(
+        if selection.matches(&relative_path)
+            && let Some(file) = read_file_info(
                 workspace_index_id,
                 root,
                 &root.absolute_path,
                 diagnostics,
                 known_files,
-            )? {
-                files.push(file);
-            }
+            )?
+        {
+            files.push(file);
         }
         return Ok(());
     }
@@ -783,19 +783,18 @@ fn read_gitignore_rules(root: &RootPath, current_path: &str) -> EngineResult<Vec
     };
     let base_path = display_relative(&root.absolute_path, current_path);
     let cache_key = format!("{}\0{base_path}", to_display_path(&ignore_path));
-    if let Ok(cache) = gitignore_cache().lock() {
-        if let Some((cached_content, rules)) = cache.entries.get(&cache_key) {
-            if cached_content == &content {
-                return Ok(rules.clone());
-            }
-        }
+    if let Ok(cache) = gitignore_cache().lock()
+        && let Some((cached_content, rules)) = cache.entries.get(&cache_key)
+        && cached_content == &content
+    {
+        return Ok(rules.clone());
     }
     let rules = parse_gitignore_rules(&content, &base_path);
-    if let Ok(mut cache) = gitignore_cache().lock() {
-        if cache.entries.len() > MAX_GITIGNORE_CACHE_ENTRIES {
-            if let Some(oldest) = cache.order.pop_front() {
-                cache.entries.remove(&oldest);
-            }
+    if let Ok(mut cache) = gitignore_cache().lock()
+        && cache.entries.len() > MAX_GITIGNORE_CACHE_ENTRIES
+    {
+        if let Some(oldest) = cache.order.pop_front() {
+            cache.entries.remove(&oldest);
         }
         cache.order.push_back(cache_key.clone());
         cache.entries.insert(cache_key, (content, rules.clone()));

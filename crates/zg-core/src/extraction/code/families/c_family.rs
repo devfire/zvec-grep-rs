@@ -100,10 +100,10 @@ pub fn c_family_scope_breadcrumb(node: &SyntaxNode<'_>, breadcrumb: &[String]) -
     }
     let mut out = breadcrumb.to_vec();
     let mut parts = qualifier.as_slice();
-    if let (Some(tail), Some((first, rest))) = (out.last(), parts.split_first()) {
-        if tail == first {
-            parts = rest;
-        }
+    if let (Some(tail), Some((first, rest))) = (out.last(), parts.split_first())
+        && tail == first
+    {
+        parts = rest;
     }
     out.extend(parts.iter().cloned());
     out

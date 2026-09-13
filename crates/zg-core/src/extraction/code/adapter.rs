@@ -128,10 +128,10 @@ impl<'a> SyntaxNode<'a> {
     /// First named child of exactly `kind`, if any.
     pub fn named_child_of_kind(&self, kind: &str) -> Option<SyntaxNode<'a>> {
         for index in 0..self.named_child_count() {
-            if let Some(child) = self.named_child(index) {
-                if child.kind() == kind {
-                    return Some(child);
-                }
+            if let Some(child) = self.named_child(index)
+                && child.kind() == kind
+            {
+                return Some(child);
             }
         }
         None
@@ -159,10 +159,10 @@ impl<'a> SyntaxNode<'a> {
             return Some(*self);
         }
         for index in 0..self.named_child_count() {
-            if let Some(child) = self.named_child(index) {
-                if let Some(found) = child.find_descendant_by_kind(kind) {
-                    return Some(found);
-                }
+            if let Some(child) = self.named_child(index)
+                && let Some(found) = child.find_descendant_by_kind(kind)
+            {
+                return Some(found);
             }
         }
         None

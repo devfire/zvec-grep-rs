@@ -109,10 +109,10 @@ pub fn fuse_candidates(candidates: &mut [Candidate]) {
             .iter()
             .any(|trace| trace.forced.unwrap_or(false));
         for recall in &candidate.recall {
-            if recall.found {
-                if let Some(rank) = recall.rank {
-                    candidate.score += 1.0 / (RRF_K + rank as f64);
-                }
+            if recall.found
+                && let Some(rank) = recall.rank
+            {
+                candidate.score += 1.0 / (RRF_K + rank as f64);
             }
         }
     }

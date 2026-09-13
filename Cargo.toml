@@ -7,7 +7,13 @@ version = "0.2.1"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/zvec-ai/zvec-grep"
-rust-version = "1.85"
+# Bumped 1.85 -> 1.88 by phases C/D: `ort =2.0.0-rc.13` declares
+# `rust-version = "1.88"` (verified via `cargo info`), and the plan
+# mandates bumping deliberately rather than holding a false MSRV.
+# `llama-cpp-2` declares no `rust-version`; its toolchain floor is
+# unverified (it needs a C++ toolchain regardless) and CI builds it on
+# stable.
+rust-version = "1.88"
 
 [workspace.dependencies]
 zg-core = { path = "crates/zg-core" }
@@ -67,6 +73,13 @@ url = "2"
 tempfile = "3"
 libc = "0.2"
 os_info = "3"
+# Heavy local-inference backends (M7): exact pins. `ort` is pinned to the
+# 2.x-rc line whose `Session::builder` / `inputs!` / `try_extract_tensor`
+# API this workspace targets (the 1.x line differs); `llama-cpp-2` caret
+# pins the 0.1 minor line. Both are `optional` and enabled via
+# `zg-core`'s `onnx` / `llama` features so default builds stay hermetic.
+ort = { version = "=2.0.0-rc.13" }
+llama-cpp-2 = { version = "0.1.156", default-features = false }
 
 [profile.release]
 lto = "thin"

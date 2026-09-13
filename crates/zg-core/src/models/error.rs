@@ -470,6 +470,72 @@ pub enum ModelError {
         /// Catalog reference being embedded with.
         reference: String,
     },
+    /// Transformers.js (ONNX) load or inference failure.
+    #[error("Transformers.js embedding failed")]
+    TransformersJsEmbed {
+        /// Catalog reference being embedded with.
+        reference: String,
+        /// Repository the ONNX artifact comes from.
+        repo: String,
+        /// What failed.
+        detail: String,
+    },
+    /// Transformers.js tokenization failure.
+    #[error("Transformers.js tokenization failed")]
+    TransformersJsTokenize {
+        /// Catalog reference being embedded with.
+        reference: String,
+        /// Repository the tokenizer comes from.
+        repo: String,
+        /// What failed.
+        detail: String,
+    },
+    /// Transformers.js returned a misshapen or non-finite tensor.
+    #[error("Transformers.js returned an unexpected tensor")]
+    TransformersJsInvalidTensor {
+        /// Catalog reference being embedded with.
+        reference: String,
+        /// Expected vs actual shape, or the offending index.
+        detail: String,
+    },
+    /// Transformers.js model used after disposal.
+    #[error("Transformers.js embedding model is disposed")]
+    TransformersJsDisposed {
+        /// Catalog reference being embedded with.
+        reference: String,
+    },
+    /// llama.cpp load or inference failure.
+    #[error("llama.cpp embedding failed")]
+    LlamaCppEmbed {
+        /// Catalog reference being embedded with.
+        reference: String,
+        /// What failed.
+        detail: String,
+    },
+    /// llama.cpp model used after disposal.
+    #[error("llama.cpp embedding model is disposed")]
+    LlamaCppDisposed {
+        /// Catalog reference being embedded with.
+        reference: String,
+    },
+    /// Downloaded file is not a GGUF model (deleted on detection, like TS).
+    #[error("Local embedding model is not a valid GGUF file")]
+    LlamaCppInvalidGguf {
+        /// Catalog reference being loaded.
+        reference: String,
+        /// Cache path of the rejected file.
+        path: String,
+        /// Expected vs actual magic plus size.
+        detail: String,
+    },
+    /// Downloaded file is an HTML error page, not a GGUF model.
+    #[error("Downloaded local embedding model is HTML, not GGUF")]
+    LlamaCppInvalidGgufHtml {
+        /// Catalog reference being loaded.
+        reference: String,
+        /// Cache path of the rejected file.
+        path: String,
+    },
     /// Model artifact download failed (detail carries url/repo context).
     #[error("model download failed")]
     DownloadFailed {
@@ -561,6 +627,30 @@ impl ModelError {
             }
             Self::WorkerFailed { .. } => {
                 EngineErrorCode::from_static("MODELS.MODEL2VEC_EMBED_FAILED")
+            }
+            Self::TransformersJsEmbed { .. } => {
+                EngineErrorCode::from_static("MODELS.TRANSFORMERS_JS_EMBED_FAILED")
+            }
+            Self::TransformersJsTokenize { .. } => {
+                EngineErrorCode::from_static("MODELS.TRANSFORMERS_JS_TOKENIZATION_FAILED")
+            }
+            Self::TransformersJsInvalidTensor { .. } => {
+                EngineErrorCode::from_static("MODELS.TRANSFORMERS_JS_INVALID_TENSOR")
+            }
+            Self::TransformersJsDisposed { .. } => {
+                EngineErrorCode::from_static("MODELS.TRANSFORMERS_JS_DISPOSED")
+            }
+            Self::LlamaCppEmbed { .. } => {
+                EngineErrorCode::from_static("MODELS.LLAMA_CPP_EMBED_FAILED")
+            }
+            Self::LlamaCppDisposed { .. } => {
+                EngineErrorCode::from_static("MODELS.LLAMA_CPP_DISPOSED")
+            }
+            Self::LlamaCppInvalidGguf { .. } => {
+                EngineErrorCode::from_static("MODELS.LLAMA_CPP_INVALID_GGUF")
+            }
+            Self::LlamaCppInvalidGgufHtml { .. } => {
+                EngineErrorCode::from_static("MODELS.LLAMA_CPP_INVALID_GGUF_HTML")
             }
             Self::DownloadFailed { .. } => {
                 EngineErrorCode::from_static("MODELS.MODEL_DOWNLOAD_FAILED")
@@ -699,6 +789,32 @@ impl From<ModelError> for EngineError {
                 rows,
             } => Some(format!("model={reference} id={id} rows={rows}")),
             ModelError::WorkerFailed { reference } => Some(format!("model={reference}")),
+            ModelError::TransformersJsEmbed {
+                reference,
+                repo,
+                detail,
+            } => Some(format!("model={reference} repo={repo} detail={detail}")),
+            ModelError::TransformersJsTokenize {
+                reference,
+                repo,
+                detail,
+            } => Some(format!("model={reference} repo={repo} detail={detail}")),
+            ModelError::TransformersJsInvalidTensor { reference, detail } => {
+                Some(format!("model={reference} detail={detail}"))
+            }
+            ModelError::TransformersJsDisposed { reference } => Some(format!("model={reference}")),
+            ModelError::LlamaCppEmbed { reference, detail } => {
+                Some(format!("model={reference} detail={detail}"))
+            }
+            ModelError::LlamaCppDisposed { reference } => Some(format!("model={reference}")),
+            ModelError::LlamaCppInvalidGguf {
+                reference,
+                path,
+                detail,
+            } => Some(format!("model={reference} path={path} detail={detail}")),
+            ModelError::LlamaCppInvalidGgufHtml { reference, path } => {
+                Some(format!("model={reference} path={path}"))
+            }
             ModelError::DownloadFailed { context } => Some(context),
         };
         let mut engine = EngineError::new(code, message);
@@ -913,6 +1029,71 @@ mod tests {
                 },
                 "ZVEC_GREP.ENGINE.MODELS.MODEL2VEC_EMBED_FAILED",
                 "Model2Vec worker thread failed",
+            ),
+            (
+                ModelError::TransformersJsEmbed {
+                    reference: reference(),
+                    repo: "repo".to_owned(),
+                    detail: "d".to_owned(),
+                },
+                "ZVEC_GREP.ENGINE.MODELS.TRANSFORMERS_JS_EMBED_FAILED",
+                "Transformers.js embedding failed",
+            ),
+            (
+                ModelError::TransformersJsTokenize {
+                    reference: reference(),
+                    repo: "repo".to_owned(),
+                    detail: "d".to_owned(),
+                },
+                "ZVEC_GREP.ENGINE.MODELS.TRANSFORMERS_JS_TOKENIZATION_FAILED",
+                "Transformers.js tokenization failed",
+            ),
+            (
+                ModelError::TransformersJsInvalidTensor {
+                    reference: reference(),
+                    detail: "d".to_owned(),
+                },
+                "ZVEC_GREP.ENGINE.MODELS.TRANSFORMERS_JS_INVALID_TENSOR",
+                "Transformers.js returned an unexpected tensor",
+            ),
+            (
+                ModelError::TransformersJsDisposed {
+                    reference: reference(),
+                },
+                "ZVEC_GREP.ENGINE.MODELS.TRANSFORMERS_JS_DISPOSED",
+                "Transformers.js embedding model is disposed",
+            ),
+            (
+                ModelError::LlamaCppEmbed {
+                    reference: reference(),
+                    detail: "d".to_owned(),
+                },
+                "ZVEC_GREP.ENGINE.MODELS.LLAMA_CPP_EMBED_FAILED",
+                "llama.cpp embedding failed",
+            ),
+            (
+                ModelError::LlamaCppDisposed {
+                    reference: reference(),
+                },
+                "ZVEC_GREP.ENGINE.MODELS.LLAMA_CPP_DISPOSED",
+                "llama.cpp embedding model is disposed",
+            ),
+            (
+                ModelError::LlamaCppInvalidGguf {
+                    reference: reference(),
+                    path: "p".to_owned(),
+                    detail: "d".to_owned(),
+                },
+                "ZVEC_GREP.ENGINE.MODELS.LLAMA_CPP_INVALID_GGUF",
+                "Local embedding model is not a valid GGUF file",
+            ),
+            (
+                ModelError::LlamaCppInvalidGgufHtml {
+                    reference: reference(),
+                    path: "p".to_owned(),
+                },
+                "ZVEC_GREP.ENGINE.MODELS.LLAMA_CPP_INVALID_GGUF_HTML",
+                "Downloaded local embedding model is HTML, not GGUF",
             ),
             (
                 ModelError::DownloadFailed {

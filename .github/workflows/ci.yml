@@ -10,6 +10,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # Warms the vector-parity gate (phases C/D): with the models cached,
+      # `vector_parity` embeds and compares instead of skipping. The
+      # default-feature run never downloads (compiled-out backends skip
+      # before any IO); `--all-features` consumes the cache when warm and
+      # skips with a printed reason when cold — never downloading inside
+      # a test.
+      - name: Cache embedding models
+        uses: actions/cache@v4
+        with:
+          path: ~/.zvec-grep/models
+          key: embedding-models-v1
       - run: cargo test --workspace
       - run: cargo test --workspace --all-features
       - run: cargo test --workspace --no-default-features

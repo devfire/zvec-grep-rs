@@ -820,12 +820,11 @@ fn visit_call_names(node: &SyntaxNode<'_>, calls: &mut Vec<String>, seen: &mut H
     if calls.len() >= OUTLINE_MAX_CALLS {
         return;
     }
-    if is_call_node(node.kind()) {
-        if let Some(name) = extract_call_name(node) {
-            if seen.insert(name.clone()) {
-                calls.push(name);
-            }
-        }
+    if is_call_node(node.kind())
+        && let Some(name) = extract_call_name(node)
+        && seen.insert(name.clone())
+    {
+        calls.push(name);
     }
     for child in node.named_children() {
         visit_call_names(&child, calls, seen);

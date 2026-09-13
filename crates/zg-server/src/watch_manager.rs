@@ -304,15 +304,15 @@ fn record_raw(
         });
     };
     // Never index internals.
-    if let Ok(relative) = Path::new(&absolute).strip_prefix(Path::new(&shared.root)) {
-        if relative.components().any(|component| {
+    if let Ok(relative) = Path::new(&absolute).strip_prefix(Path::new(&shared.root))
+        && relative.components().any(|component| {
             matches!(
                 component.as_os_str().to_str(),
                 Some(".git") | Some(".zvec-grep")
             )
-        }) {
-            return Ok(());
-        }
+        })
+    {
+        return Ok(());
     }
     let metadata = std::fs::symlink_metadata(&absolute).ok();
     let is_directory =

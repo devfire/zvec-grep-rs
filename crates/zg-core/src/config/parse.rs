@@ -188,13 +188,13 @@ fn parse_models(
             path,
             &format!("models.{reference}.endpoint"),
         )?;
-        if let Some(endpoint) = &endpoint {
-            if !crate::config::is_http_endpoint(endpoint) {
-                return Err(invalid_config(
-                    path,
-                    &format!("models.{reference}.endpoint must be a valid HTTP(S) URL"),
-                ));
-            }
+        if let Some(endpoint) = &endpoint
+            && !crate::config::is_http_endpoint(endpoint)
+        {
+            return Err(invalid_config(
+                path,
+                &format!("models.{reference}.endpoint must be a valid HTTP(S) URL"),
+            ));
         }
         let device = optional_device(
             entry.get("device"),

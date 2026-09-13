@@ -162,10 +162,10 @@ async fn run_index_direct(args: &IndexArgs, root: &PathBuf) -> Result<(), CliErr
         reporter.finish();
     }
     let result: zg_core::types::IndexResult = result?;
-    if args.debug {
-        if let Some(diagnostics) = &result.scan_diagnostics {
-            eprintln!("debug: scan diagnostics: {diagnostics:?}");
-        }
+    if args.debug
+        && let Some(diagnostics) = &result.scan_diagnostics
+    {
+        eprintln!("debug: scan diagnostics: {diagnostics:?}");
     }
     if result.files_scanned == 0 {
         print_no_indexable_files_tip();

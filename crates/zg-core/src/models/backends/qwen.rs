@@ -171,10 +171,11 @@ fn provider_error_context(
 /// to now, mirroring `retryAfterHeaderMs`.
 fn parse_retry_after_ms(value: &str) -> Option<u64> {
     let trimmed = value.trim();
-    if let Ok(seconds) = trimmed.parse::<f64>() {
-        if seconds.is_finite() && seconds >= 0.0 {
-            return Some((seconds * 1000.0).round() as u64);
-        }
+    if let Ok(seconds) = trimmed.parse::<f64>()
+        && seconds.is_finite()
+        && seconds >= 0.0
+    {
+        return Some((seconds * 1000.0).round() as u64);
     }
     let date = chrono::NaiveDateTime::parse_from_str(trimmed, "%a, %d %b %Y %H:%M:%S GMT").ok()?;
     let target = date.and_utc().timestamp_millis();

@@ -51,10 +51,8 @@ impl JobScheduler {
             // reuses the queued job as-is and drops the incoming run.
             let current = state.jobs.get(active_id).map(record_run);
             if let Some(job) = state.jobs.get_mut(active_id) {
-                if chainable {
-                    if let (Some(current), Some(run)) = (current, incoming_run.take()) {
-                        job.run = combine_runs(current, run);
-                    }
+                if chainable && let (Some(current), Some(run)) = (current, incoming_run.take()) {
+                    job.run = combine_runs(current, run);
                 }
                 if incoming_reason.priority() > job.reason.priority() {
                     job.reason = incoming_reason;

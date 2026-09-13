@@ -181,6 +181,63 @@ fn all_codes() -> Vec<String> {
         .code(),
     );
     push(
+        ModelError::TransformersJsEmbed {
+            reference: reference(),
+            repo: "org/repo".to_owned(),
+            detail: "boom".to_owned(),
+        }
+        .code(),
+    );
+    push(
+        ModelError::TransformersJsTokenize {
+            reference: reference(),
+            repo: "org/repo".to_owned(),
+            detail: "boom".to_owned(),
+        }
+        .code(),
+    );
+    push(
+        ModelError::TransformersJsInvalidTensor {
+            reference: reference(),
+            detail: "boom".to_owned(),
+        }
+        .code(),
+    );
+    push(
+        ModelError::TransformersJsDisposed {
+            reference: reference(),
+        }
+        .code(),
+    );
+    push(
+        ModelError::LlamaCppEmbed {
+            reference: reference(),
+            detail: "boom".to_owned(),
+        }
+        .code(),
+    );
+    push(
+        ModelError::LlamaCppDisposed {
+            reference: reference(),
+        }
+        .code(),
+    );
+    push(
+        ModelError::LlamaCppInvalidGguf {
+            reference: reference(),
+            path: "model.gguf".to_owned(),
+            detail: "boom".to_owned(),
+        }
+        .code(),
+    );
+    push(
+        ModelError::LlamaCppInvalidGgufHtml {
+            reference: reference(),
+            path: "model.gguf".to_owned(),
+        }
+        .code(),
+    );
+    push(
         ModelError::DownloadFailed {
             context: "url=https://example.invalid/x".to_owned(),
         }

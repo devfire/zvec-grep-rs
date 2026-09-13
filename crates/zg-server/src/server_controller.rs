@@ -138,10 +138,11 @@ impl DaemonInstanceLock {
                     });
                 }
             }
-            if let Some(existing) = read_record(&path).await {
-                if existing.hostname == machine_name() && process_alive(existing.pid) {
-                    return Err(DaemonError::AlreadyRunning { pid: existing.pid });
-                }
+            if let Some(existing) = read_record(&path).await
+                && existing.hostname == machine_name()
+                && process_alive(existing.pid)
+            {
+                return Err(DaemonError::AlreadyRunning { pid: existing.pid });
             }
             let _ = tokio::fs::remove_file(&path).await;
         }
@@ -364,10 +365,10 @@ async fn read_record(path: &Path) -> Option<DaemonInstanceRecord> {
 }
 
 fn machine_name() -> String {
-    if let Ok(name) = std::env::var("HOSTNAME") {
-        if !name.trim().is_empty() {
-            return name;
-        }
+    if let Ok(name) = std::env::var("HOSTNAME")
+        && !name.trim().is_empty()
+    {
+        return name;
     }
     std::fs::read_to_string("/proc/sys/kernel/hostname")
         .ok()

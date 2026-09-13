@@ -166,11 +166,11 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
     async fn schedule_idle_close(&self, seq: u64) {
         if self.idle_ttl.is_zero() {
             let mut state = self.shared.state.lock().await;
-            if state.active_readers == 0 {
-                if let Some(handle) = state.handle.take() {
-                    drop(state);
-                    handle.close().await;
-                }
+            if state.active_readers == 0
+                && let Some(handle) = state.handle.take()
+            {
+                drop(state);
+                handle.close().await;
             }
             return;
         }
@@ -179,11 +179,13 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
         tokio::spawn(async move {
             tokio::time::sleep(ttl).await;
             let mut state = shared.state.lock().await;
-            if !state.closed && state.active_readers == 0 && state.idle_seq == seq {
-                if let Some(handle) = state.handle.take() {
-                    drop(state);
-                    handle.close().await;
-                }
+            if !state.closed
+                && state.active_readers == 0
+                && state.idle_seq == seq
+                && let Some(handle) = state.handle.take()
+            {
+                drop(state);
+                handle.close().await;
             }
         });
     }

@@ -98,6 +98,15 @@ pub trait EmbeddingModel: Send + Sync {
     /// Maximum inputs accepted per [`EmbeddingModel::embed`] call.
     fn max_batch_size(&self) -> usize;
 
+    /// True when local artifacts are already in the cache, so `prepare`
+    /// loads without network traffic. Remote backends return true (there
+    /// is nothing to cache); local backends override this with their
+    /// artifact paths. The vector-parity gate uses it to skip — with a
+    /// printed reason — instead of downloading gigabytes inside a test.
+    fn is_cached(&self) -> bool {
+        true
+    }
+
     /// Downloads/loads the model (local backends); remote backends no-op.
     /// Mirrors the optional TS `prepare` (local models only).
     fn prepare(&self, sink: Option<ModelLoadSink>) -> EngineResult<()> {

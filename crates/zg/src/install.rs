@@ -297,10 +297,10 @@ fn uninstall_json(path: &Path) -> Result<Vec<PathBuf>, CliError> {
     let mut root = read_json_object(path)?;
     let mut changed = false;
     for key in ["mcp", "mcpServers"] {
-        if let Some(container) = root.get_mut(key).and_then(|value| value.as_object_mut()) {
-            if container.remove("zvec_grep").is_some() {
-                changed = true;
-            }
+        if let Some(container) = root.get_mut(key).and_then(|value| value.as_object_mut())
+            && container.remove("zvec_grep").is_some()
+        {
+            changed = true;
         }
     }
     if changed {

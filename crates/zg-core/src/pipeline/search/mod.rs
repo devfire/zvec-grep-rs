@@ -147,10 +147,10 @@ pub fn search_workspace_index(
             .find(|candidate| candidate.id.as_str() == id.as_str())
             .cloned()
     });
-    if let Some(tracked) = tracked {
-        if !visible.iter().any(|candidate| candidate.id == tracked.id) {
-            visible.push(tracked);
-        }
+    if let Some(tracked) = tracked
+        && !visible.iter().any(|candidate| candidate.id == tracked.id)
+    {
+        visible.push(tracked);
     }
     let hits: Vec<SearchHit> = timings.time("materialize", || {
         Ok::<_, EngineError>(
@@ -266,18 +266,18 @@ fn validate_search_plan(plan: &SearchPlan) -> EngineResult<ResolvedSearchPlan> {
     }
     let modified_after = normalize_modified_time(plan.modified_after, "modifiedAfter")?;
     let modified_before = normalize_modified_time(plan.modified_before, "modifiedBefore")?;
-    if let (Some(after), Some(before)) = (modified_after, modified_before) {
-        if after.as_millis() > before.as_millis() {
-            return Err(EngineError::new(
-                EngineErrorCode::from_static("SEARCH_PLAN.INVALID_MODIFIED_TIME_RANGE"),
-                "search plan modified-after filter must not be later than modified-before",
-            )
-            .with_context(format!(
-                "modifiedAfter={} modifiedBefore={}",
-                after.as_millis(),
-                before.as_millis()
-            )));
-        }
+    if let (Some(after), Some(before)) = (modified_after, modified_before)
+        && after.as_millis() > before.as_millis()
+    {
+        return Err(EngineError::new(
+            EngineErrorCode::from_static("SEARCH_PLAN.INVALID_MODIFIED_TIME_RANGE"),
+            "search plan modified-after filter must not be later than modified-before",
+        )
+        .with_context(format!(
+            "modifiedAfter={} modifiedBefore={}",
+            after.as_millis(),
+            before.as_millis()
+        )));
     }
     Ok(ResolvedSearchPlan {
         plan: SearchPlan {

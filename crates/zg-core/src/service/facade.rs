@@ -461,12 +461,11 @@ impl ZvecGrepService {
             }
             return crate::pipeline::indexing::root_paths::validate_root_paths(&roots);
         }
-        if !options.reset_paths {
-            if let Some(manifest) = existing {
-                if !manifest.info.root_paths.is_empty() {
-                    return Ok(manifest.info.root_paths.clone());
-                }
-            }
+        if !options.reset_paths
+            && let Some(manifest) = existing
+            && !manifest.info.root_paths.is_empty()
+        {
+            return Ok(manifest.info.root_paths.clone());
         }
         crate::pipeline::indexing::root_paths::validate_root_paths(&[RootPath {
             absolute_path: location.root.clone(),

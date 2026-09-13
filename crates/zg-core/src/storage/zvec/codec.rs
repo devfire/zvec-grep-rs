@@ -530,7 +530,7 @@ pub fn base64_decode(text: &str) -> Result<Vec<u8>, String> {
         };
         sextets.push(value);
     }
-    if sextets.len() % 4 != 0 {
+    if !sextets.len().is_multiple_of(4) {
         return Err("truncated input".to_owned());
     }
     if padding > 2 {

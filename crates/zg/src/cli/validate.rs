@@ -52,10 +52,10 @@ fn validate_query(args: &QueryArgs) -> Result<(), CliError> {
     if let Some(flag) = args.rg_compat.first_set() {
         return Err(CliError::rg_incompatible(&flag));
     }
-    if let Some(value) = &args.allow_remote {
-        if !value.is_empty() {
-            return Err(CliError::usage("--allow-remote does not take a value"));
-        }
+    if let Some(value) = &args.allow_remote
+        && !value.is_empty()
+    {
+        return Err(CliError::usage("--allow-remote does not take a value"));
     }
     if args.embedding_rejected.is_some() {
         return Err(CliError::usage(
@@ -118,10 +118,10 @@ fn validate_index(args: &IndexArgs) -> Result<(), CliError> {
     if args.roots.len() > 1 {
         return Err(CliError::usage("zg index accepts at most one root path"));
     }
-    if let Some(value) = &args.allow_remote {
-        if !value.is_empty() {
-            return Err(CliError::usage("--allow-remote does not take a value"));
-        }
+    if let Some(value) = &args.allow_remote
+        && !value.is_empty()
+    {
+        return Err(CliError::usage("--allow-remote does not take a value"));
     }
     if args.force_direct && args.mode != Some(ClientModeArg::Direct) {
         return Err(CliError::usage("--force-direct requires --mode direct"));

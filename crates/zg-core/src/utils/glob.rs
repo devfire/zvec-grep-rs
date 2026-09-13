@@ -223,12 +223,11 @@ fn escape_regex_char(ch: char) -> String {
 // -----------------------------------------------------------------------------
 
 fn glob_pattern_matches(pattern: &str, path: &str, case_insensitive: bool) -> bool {
-    if let Some(directory_pattern) = pattern.strip_suffix("/**") {
-        if let Some(matcher) = compile_matcher(directory_pattern, case_insensitive)
-            && matcher.is_match(path)
-        {
-            return true;
-        }
+    if let Some(directory_pattern) = pattern.strip_suffix("/**")
+        && let Some(matcher) = compile_matcher(directory_pattern, case_insensitive)
+        && matcher.is_match(path)
+    {
+        return true;
     }
     compile_matcher(pattern, case_insensitive).is_some_and(|m| m.is_match(path))
 }

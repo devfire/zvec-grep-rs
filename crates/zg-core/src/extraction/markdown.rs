@@ -205,12 +205,11 @@ fn scan_headings(lines: &[&str]) -> Vec<Heading> {
 
         let underline = lines.get(index + 1).map(|next| next.trim());
         let mut setext_level = None;
-        if !line.trim().is_empty() {
-            if let Some(next) = underline {
-                if is_setext_underline(next) {
-                    setext_level = Some(if next.starts_with('=') { 1 } else { 2 });
-                }
-            }
+        if !line.trim().is_empty()
+            && let Some(next) = underline
+            && is_setext_underline(next)
+        {
+            setext_level = Some(if next.starts_with('=') { 1 } else { 2 });
         }
         if let Some(level) = setext_level {
             headings.push(Heading {

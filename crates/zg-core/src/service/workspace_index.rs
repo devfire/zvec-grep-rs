@@ -273,10 +273,10 @@ fn require_workspace_index_embedding(
     info: &WorkspaceIndexInfo,
     operation: &str,
 ) -> EngineResult<WorkspaceIndexEmbeddingSchema> {
-    if let Some(Some(embedding)) = &info.embedding {
-        if info.index_version.is_some() {
-            return Ok(embedding.clone());
-        }
+    if let Some(Some(embedding)) = &info.embedding
+        && info.index_version.is_some()
+    {
+        return Ok(embedding.clone());
     }
     let detail = error_details(vec![
         DetailEntry::Line(&workspace_index_detail(&info.name)),

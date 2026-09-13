@@ -362,10 +362,10 @@ fn resolve_unknown_token_id(
     let text = fs::read_to_string(tokenizer_json_path).ok()?;
     let parsed: serde_json::Value = serde_json::from_str(&text).ok()?;
     let model = parsed.get("model")?;
-    if let Some(id) = model.get("unk_id").and_then(serde_json::Value::as_u64) {
-        if id <= u32::MAX as u64 {
-            return Some(id as u32);
-        }
+    if let Some(id) = model.get("unk_id").and_then(serde_json::Value::as_u64)
+        && id <= u32::MAX as u64
+    {
+        return Some(id as u32);
     }
     let token = model.get("unk_token")?.as_str()?;
     tokenizer.token_to_id(token)

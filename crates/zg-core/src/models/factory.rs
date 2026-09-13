@@ -4,15 +4,19 @@
 //! into a fully-validated [`ModelBuildPlan`] — endpoints defaulted, API keys
 //! required, cache directories defaulted. Each plan variant feeds its owning
 //! backend constructor; [`create_embedding_model`] is the dispatch entry
-//! point. Entries whose backend has no implementation yet (llama-cpp and
-//! transformers-js until phases C/D land their cargo-feature gates) report
-//! [`ModelError::BackendUnavailable`], mirroring the TypeScript
+//! point. The heavy local backends (`onnx`, `llama`) construct their models
+//! only when their cargo feature is enabled (M7); compiled out, the arm
+//! reports [`ModelError::BackendUnavailable`], mirroring the TypeScript
 //! `unsupportedCatalogEntry` arm with a typed error instead of a string.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::EmbeddingModel;
+#[cfg(feature = "llama")]
+use super::backends::LlamaCppEmbeddingModel;
+#[cfg(feature = "onnx")]
+use super::backends::OnnxEmbeddingModel;
 use super::backends::{Model2VecEmbeddingModel, Qwen3VlEmbeddingModel, QwenTextEmbeddingModel};
 use super::catalog::{
     BackendKind, EmbeddingCatalogEntry, LlamaCppEntry, Model2VecEntry, ModelReference,
@@ -27,10 +31,10 @@ pub const MODEL_CACHE_ENV_VAR: &str = "ZVEC_GREP_MODEL_CACHE";
 
 /// Default local model cache: `$ZVEC_GREP_MODEL_CACHE`, else `<home>/models`.
 pub fn default_model_cache_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os(MODEL_CACHE_ENV_VAR) {
-        if !dir.is_empty() {
-            return PathBuf::from(dir);
-        }
+    if let Some(dir) = std::env::var_os(MODEL_CACHE_ENV_VAR)
+        && !dir.is_empty()
+    {
+        return PathBuf::from(dir);
     }
     default_home().join("models")
 }
@@ -142,15 +146,18 @@ pub fn plan_embedding_model(
 /// Dispatch entry point: plans the model, then hands the plan to the owning
 /// backend constructor.
 ///
-/// Model2vec and both Qwen arms construct working models. The llama-cpp and
-/// transformers-js arms report [`ModelError::BackendUnavailable`] until
-/// phases C/D land their cargo-feature gates; unknown references report
+/// Model2vec, both Qwen arms, and — when their cargo features are enabled —
+/// the transformers-js (`onnx`) and llama-cpp (`llama`) arms construct
+/// working models. With the feature compiled out the heavy arms report
+/// [`ModelError::BackendUnavailable`]; unknown references report
 /// [`ModelError::CatalogModelNotFound`] via [`plan_embedding_model`].
 pub fn create_embedding_model(
     reference: &ModelReference,
     options: &CreateEmbeddingModelOptions,
 ) -> Result<Arc<dyn EmbeddingModel>, ModelError> {
     let plan = plan_embedding_model(reference, options)?;
+    // `DeviceKind` is `Copy`: the plan borrow and this read coexist.
+    let device = options.device;
     match plan {
         ModelBuildPlan::Model2Vec { entry, cache_dir } => Ok(Arc::new(
             Model2VecEmbeddingModel::from_plan(entry, cache_dir),
@@ -169,13 +176,20 @@ pub fn create_embedding_model(
         } => Ok(Arc::new(Qwen3VlEmbeddingModel::from_plan(
             entry, api_key, endpoint,
         ))),
-        // No `onnx`/`llama` cargo features exist yet (phases C/D): these
-        // entries resolve but cannot load, so the typed answer is
-        // `BackendUnavailable`, not a stringly `NOT_IMPLEMENTED`.
+        #[cfg(feature = "onnx")]
+        ModelBuildPlan::TransformersJs { entry, cache_dir } => Ok(Arc::new(
+            OnnxEmbeddingModel::from_plan(entry, cache_dir, device),
+        )),
+        #[cfg(not(feature = "onnx"))]
         ModelBuildPlan::TransformersJs { entry, .. } => Err(ModelError::BackendUnavailable {
             reference: entry.reference.to_owned(),
             backend: BackendKind::TransformersJs,
         }),
+        #[cfg(feature = "llama")]
+        ModelBuildPlan::LlamaCpp { entry, cache_dir } => Ok(Arc::new(
+            LlamaCppEmbeddingModel::from_plan(entry, cache_dir, device),
+        )),
+        #[cfg(not(feature = "llama"))]
         ModelBuildPlan::LlamaCpp { entry, .. } => Err(ModelError::BackendUnavailable {
             reference: entry.reference.to_owned(),
             backend: BackendKind::LlamaCpp,
@@ -312,22 +326,62 @@ mod tests {
         );
     }
 
+    /// Asserts one compiled-out entry reports `BackendUnavailable`.
+    fn assert_backend_unavailable(name: &str) {
+        let Err(err) = create_embedding_model(&reference(name), &options()) else {
+            panic!("expected BackendUnavailable for {name}");
+        };
+        assert!(
+            matches!(err, ModelError::BackendUnavailable { .. }),
+            "{name}"
+        );
+        assert_eq!(
+            err.code().to_string(),
+            "ZVEC_GREP.ENGINE.MODELS.EMBEDDING_BACKEND_UNAVAILABLE"
+        );
+    }
+
+    #[cfg(not(feature = "llama"))]
     #[test]
-    fn create_reports_backend_unavailable_when_compiled_out() {
-        // No `onnx`/`llama` cargo features exist yet (phases C/D), so the
-        // transformers-js and llama-cpp entries resolve but cannot load.
-        for name in ["local/embeddinggemma-300m", "local/bge-small-en-v1.5"] {
-            let Err(err) = create_embedding_model(&reference(name), &options()) else {
-                panic!("expected BackendUnavailable for {name}");
-            };
-            assert!(
-                matches!(err, ModelError::BackendUnavailable { .. }),
-                "{name}"
-            );
-            assert_eq!(
-                err.code().to_string(),
-                "ZVEC_GREP.ENGINE.MODELS.EMBEDDING_BACKEND_UNAVAILABLE"
-            );
+    fn create_reports_llama_unavailable_when_compiled_out() {
+        for name in ["local/embeddinggemma-300m", "local/qwen3-embedding-0.6b"] {
+            assert_backend_unavailable(name);
+        }
+    }
+
+    #[cfg(not(feature = "onnx"))]
+    #[test]
+    fn create_reports_onnx_unavailable_when_compiled_out() {
+        for name in ["local/bge-small-en-v1.5", "local/all-minilm-l6-v2"] {
+            assert_backend_unavailable(name);
+        }
+    }
+
+    #[cfg(feature = "llama")]
+    #[test]
+    fn create_constructs_llama_when_compiled_in() {
+        // Construction is pure (no download): dimensions and batch limits
+        // come straight from the catalog.
+        for (name, dimension, max_batch_size) in [
+            ("local/embeddinggemma-300m", 768, 16),
+            ("local/qwen3-embedding-0.6b", 1024, 8),
+        ] {
+            let model = create_embedding_model(&reference(name), &options()).unwrap();
+            assert_eq!(model.info().dimension, dimension, "{name}");
+            assert_eq!(model.max_batch_size(), max_batch_size, "{name}");
+        }
+    }
+
+    #[cfg(feature = "onnx")]
+    #[test]
+    fn create_constructs_onnx_when_compiled_in() {
+        for (name, dimension, max_batch_size) in [
+            ("local/bge-small-en-v1.5", 384, 4),
+            ("local/all-minilm-l6-v2", 384, 4),
+        ] {
+            let model = create_embedding_model(&reference(name), &options()).unwrap();
+            assert_eq!(model.info().dimension, dimension, "{name}");
+            assert_eq!(model.max_batch_size(), max_batch_size, "{name}");
         }
     }
 }

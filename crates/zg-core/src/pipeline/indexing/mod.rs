@@ -1789,10 +1789,11 @@ fn embed_contents_with_retry(
                         delay_ms,
                     });
                 }
-                if retry.fail_fast && (!retry.retryable || attempt >= max_retry_attempts(&retry)) {
-                    if let Some(flag) = on_terminal_failure {
-                        flag.store(true, Ordering::Relaxed);
-                    }
+                if retry.fail_fast
+                    && (!retry.retryable || attempt >= max_retry_attempts(&retry))
+                    && let Some(flag) = on_terminal_failure
+                {
+                    flag.store(true, Ordering::Relaxed);
                 }
                 if attempt >= max_retry_attempts(&retry) || !retry.retryable {
                     return Err(error);
@@ -2243,10 +2244,10 @@ fn http_status_from_text(text: &str) -> Option<u16> {
 }
 
 fn retry_after_ms_from_text(text: &str) -> Option<u64> {
-    if let Some(ms) = find_key_value(text, "retryAfterMs=") {
-        if let Ok(value) = ms.parse() {
-            return Some(value);
-        }
+    if let Some(ms) = find_key_value(text, "retryAfterMs=")
+        && let Ok(value) = ms.parse()
+    {
+        return Some(value);
     }
     find_key_value(text, "retryAfter=")
         .and_then(|value| value.parse::<f64>().ok())

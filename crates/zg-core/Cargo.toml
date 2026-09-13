@@ -40,19 +40,25 @@ tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 libc.workspace = true
 url.workspace = true
+# Feature-gated heavy backends (M7): optional workspace deps, enabled via
+# `dep:` below so default builds need no C++ toolchain or ORT download.
+ort = { workspace = true, optional = true }
+llama-cpp-2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
+# The vector-parity gate parses committed TS golden JSON.
+serde_json.workspace = true
 
 [features]
 default = []
 test-support = []
 # Heavy local-inference backends (M7): off by default so `cargo install zg`
 # needs no C++ toolchain and `cargo test -p zg-core` stays hermetic.
-# Phases C/D fill these with `dep:ort` / `dep:llama-cpp-2` plus
-# `#[cfg(feature)]`-gated factory arms; until then the factory answers
-# `ModelError::BackendUnavailable` for both entries.
-onnx = []
-llama = []
+# Each feature enables its pinned optional dep plus the matching
+# `#[cfg(feature)]`-gated backend module and factory arm; compiled out,
+# the factory answers `ModelError::BackendUnavailable` for those entries.
+onnx = ["dep:ort"]
+llama = ["dep:llama-cpp-2"]
 [lints]
 workspace = true
