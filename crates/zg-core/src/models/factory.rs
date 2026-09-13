@@ -156,7 +156,10 @@ pub fn create_embedding_model(
     options: &CreateEmbeddingModelOptions,
 ) -> Result<Arc<dyn EmbeddingModel>, ModelError> {
     let plan = plan_embedding_model(reference, options)?;
+    // Only the `onnx`/`llama` arms consume the device; without either feature
+    // the binding is dead (default builds warn on it).
     // `DeviceKind` is `Copy`: the plan borrow and this read coexist.
+    #[cfg(any(feature = "onnx", feature = "llama"))]
     let device = options.device;
     match plan {
         ModelBuildPlan::Model2Vec { entry, cache_dir } => Ok(Arc::new(

@@ -351,7 +351,12 @@ impl OnnxEmbeddingModel {
         // truncation are owned by `embed_core`, so the encoder must return
         // raw ids exactly like the TS pipeline inputs.
         tokenizer.with_padding(None);
-        tokenizer.with_truncation(None);
+        // `with_truncation` is fallible: discarding the `Result` would
+        // silently keep baked-in truncation (the minilm failure mode
+        // above), so a failure aborts the load instead.
+        tokenizer
+            .with_truncation(None)
+            .map_err(|err| embed_failed(entry, format_args!("clear truncation: {err}")))?;
         Ok(LoadedOnnx {
             tokenizer,
             pool: SessionPool::new(*entry, model_path),

@@ -69,6 +69,10 @@ fn cosine_similarity(expected: &[serde_json::Value], actual: &[f32]) -> f64 {
     dot / (expected_norm.sqrt() * actual_norm.sqrt())
 }
 
+// The skip summary is CI signal: without it a fully-skipped run is
+// indistinguishable from a full pass, so the `print_stdout` lint is
+// allowed for this test only.
+#[allow(clippy::print_stdout)]
 #[test]
 fn local_vectors_match_ts_goldens() {
     let dir = format!("{}/tests/golden/vectors", env!("CARGO_MANIFEST_DIR"));
