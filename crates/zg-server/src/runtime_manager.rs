@@ -47,6 +47,7 @@ pub struct RuntimeManager {
 
 impl RuntimeManager {
     /// Empty registry over shared backend state.
+    #[must_use]
     pub fn new(shared: BackendShared) -> Self {
         Self {
             inner: Arc::new(Mutex::new(Inner::default())),
@@ -56,6 +57,7 @@ impl RuntimeManager {
     }
 
     /// Idle TTL for quiet actors.
+    #[must_use]
     pub fn idle_ttl(&self) -> Duration {
         self.shared.runtime_idle_ttl
     }
@@ -63,6 +65,12 @@ impl RuntimeManager {
     /// Activates the actor for indexed search: the root must resolve and
     /// carry a built index with a recorded embedding, mirroring TS
     /// `activate` (which throws `INDEX_MISSING` otherwise).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError::Daemon`] when the manager is closed, the root is invalid,
+    /// or no built index with an embedding exists, or [`BackendError::Engine`] when
+    /// workspace inspection fails.
     pub async fn activate_for_search(
         &self,
         requested_root: &str,
@@ -83,6 +91,11 @@ impl RuntimeManager {
 
     /// Activates the actor for indexing: the root must resolve and be
     /// writable, with no index required (mirrors TS `activateForIndex`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError::Daemon`] when the manager is closed or the root is invalid
+    /// or not writable.
     pub fn activate_for_index(&self, requested_root: &str) -> Result<RootHandle, BackendError> {
         if self.closed.load(Ordering::SeqCst) {
             return Err(DaemonError::ShuttingDown.into());
@@ -92,6 +105,7 @@ impl RuntimeManager {
     }
 
     /// Handle for a live actor, if any.
+    #[must_use]
     pub fn get(&self, key: &RootKey) -> Option<RootHandle> {
         lock(&self.inner)
             .actors
@@ -100,12 +114,14 @@ impl RuntimeManager {
     }
 
     /// Live actor count (for server status).
+    #[must_use]
     pub fn actor_count(&self) -> usize {
         lock(&self.inner).actors.len()
     }
 
     /// Removes a key without stopping anything (actor-initiated exit).
     /// Returns the join handle when the manager still owned the entry.
+    #[must_use]
     pub fn unregister(&self, key: &RootKey) -> Option<JoinHandle<()>> {
         let mut inner = lock(&self.inner);
         let entry = inner.actors.remove(key.as_str())?;

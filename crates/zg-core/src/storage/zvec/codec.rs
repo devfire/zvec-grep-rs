@@ -31,6 +31,11 @@ pub struct StoredFragment {
 
 /// Encodes one fragment plus its embedding vector as a zvec document.
 /// `fragment_index` is the fragment's position within its file.
+///
+/// # Errors
+///
+/// Returns `STORAGE.DOC_ENCODE_FAILED` when the fragment id contains a null byte, a document
+/// field cannot be set, or the entity range cannot be serialized.
 pub fn fragment_to_doc(
     file: &FileInfo,
     fragment: &EntityFragment,
@@ -100,6 +105,12 @@ pub fn fragment_to_doc(
 
 /// Decodes a stored document, returning `None` when its file is unknown
 /// (mirrors the TypeScript `null` for orphan documents).
+///
+/// # Errors
+///
+/// Returns `STORAGE.DOC_DECODE_FAILED` when the primary key, a required field, or the range or
+/// image payload is missing or invalid, or `STORAGE.UNSUPPORTED_STORED_CONTENT_KIND` for unknown
+/// content kinds or image formats.
 pub fn doc_to_stored_fragment(
     doc: &Doc,
     files_by_id: &HashMap<String, FileInfo>,
@@ -145,6 +156,7 @@ pub fn doc_to_stored_fragment(
 }
 
 /// Collapses a fragment to its public entity (group id when set).
+#[must_use]
 pub fn fragment_to_entity(fragment: &EntityFragment) -> Entity {
     Entity {
         id: EntityId::from_raw(public_entity_id(fragment).to_owned()),
@@ -156,6 +168,7 @@ pub fn fragment_to_entity(fragment: &EntityFragment) -> Entity {
 }
 
 /// Public identity used for group collapse.
+#[must_use]
 pub fn public_entity_id(fragment: &EntityFragment) -> &str {
     fragment
         .group
@@ -184,6 +197,12 @@ pub fn public_entity_ids<'a>(
 
 /// Rejects fragments from another file, duplicate ids, and groups without
 /// exactly one major fragment.
+///
+/// # Errors
+///
+/// Returns `STORAGE.FRAGMENT_FILE_MISMATCH` for fragments from another file,
+/// `STORAGE.DUPLICATE_FRAGMENT_ID` for repeated ids, or `STORAGE.INVALID_FRAGMENT_GROUP` when a
+/// group lacks exactly one major fragment.
 pub fn validate_fragment_groups<'a>(
     file_id: &FileId,
     fragments: impl IntoIterator<Item = &'a EntityFragment>,
@@ -481,22 +500,33 @@ const BASE64_ALPHABET: &[u8; 64] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /// Standard-base64 encoding without external dependencies.
+#[must_use]
 pub fn base64_encode(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        out.push(BASE64_ALPHABET[(triple >> 18) as usize & 63] as char);
-        out.push(BASE64_ALPHABET[(triple >> 12) as usize & 63] as char);
+        let Some((&b0, rest)) = chunk.split_first() else {
+            continue;
+        };
+        let b1 = rest.first().copied().unwrap_or(0);
+        let b2 = rest.get(1).copied().unwrap_or(0);
+        let triple = (u32::from(b0) << 16) | (u32::from(b1) << 8) | u32::from(b2);
+        if let Some(&sextet) = BASE64_ALPHABET.get((triple >> 18) as usize & 63) {
+            out.push(sextet as char);
+        }
+        if let Some(&sextet) = BASE64_ALPHABET.get((triple >> 12) as usize & 63) {
+            out.push(sextet as char);
+        }
         if chunk.len() > 1 {
-            out.push(BASE64_ALPHABET[(triple >> 6) as usize & 63] as char);
+            if let Some(&sextet) = BASE64_ALPHABET.get((triple >> 6) as usize & 63) {
+                out.push(sextet as char);
+            }
         } else {
             out.push('=');
         }
         if chunk.len() > 2 {
-            out.push(BASE64_ALPHABET[triple as usize & 63] as char);
+            if let Some(&sextet) = BASE64_ALPHABET.get(triple as usize & 63) {
+                out.push(sextet as char);
+            }
         } else {
             out.push('=');
         }
@@ -505,6 +535,11 @@ pub fn base64_encode(data: &[u8]) -> String {
 }
 
 /// Standard-base64 decoding; ASCII whitespace is ignored.
+///
+/// # Errors
+///
+/// Returns an error string for excess padding, data after padding, an invalid character, or a
+/// truncated final quantum.
 pub fn base64_decode(text: &str) -> Result<Vec<u8>, String> {
     let mut sextets: Vec<u8> = Vec::with_capacity(text.len().div_ceil(4) * 3);
     let mut padding = 0usize;
@@ -538,10 +573,11 @@ pub fn base64_decode(text: &str) -> Result<Vec<u8>, String> {
     }
     let mut out = Vec::with_capacity(sextets.len() / 4 * 3);
     for quad in sextets.chunks_exact(4) {
-        let triple = (u32::from(quad[0]) << 18)
-            | (u32::from(quad[1]) << 12)
-            | (u32::from(quad[2]) << 6)
-            | u32::from(quad[3]);
+        let &[q0, q1, q2, q3] = quad else {
+            return Err("truncated input".to_owned());
+        };
+        let triple =
+            (u32::from(q0) << 18) | (u32::from(q1) << 12) | (u32::from(q2) << 6) | u32::from(q3);
         out.push((triple >> 16) as u8);
         out.push((triple >> 8) as u8);
         out.push(triple as u8);

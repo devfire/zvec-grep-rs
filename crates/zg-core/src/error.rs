@@ -20,16 +20,19 @@ impl EngineErrorCode {
     /// Builds a code from a dotted suffix (e.g. `CONFIG.INVALID`).
     ///
     /// `const` so domain error enums can map variants to codes in `const fn`.
+    #[must_use]
     pub const fn from_static(suffix: &'static str) -> Self {
         Self(suffix)
     }
 
     /// The dotted suffix without the `ZVEC_GREP.ENGINE.` prefix.
+    #[must_use]
     pub const fn suffix(self) -> &'static str {
         self.0
     }
 
     /// The fully-qualified wire string, e.g. `ZVEC_GREP.ENGINE.CONFIG.INVALID`.
+    #[must_use]
     pub fn qualified(self) -> String {
         format!("{ENGINE_ERROR_CODE_PREFIX}.{}", self.0)
     }
@@ -64,14 +67,17 @@ impl EngineError {
         self
     }
 
+    #[must_use]
     pub fn code(&self) -> &EngineErrorCode {
         &self.code
     }
 
+    #[must_use]
     pub fn message(&self) -> &str {
         &self.message
     }
 
+    #[must_use]
     pub fn context(&self) -> Option<&str> {
         self.context.as_deref()
     }
@@ -100,71 +106,88 @@ pub type EngineResult<T> = Result<T, EngineError>;
 pub mod codes {
     use super::EngineErrorCode;
 
+    #[must_use]
     pub const fn config_invalid() -> EngineErrorCode {
         EngineErrorCode::from_static("CONFIG.INVALID")
     }
 
+    #[must_use]
     pub const fn config_invalid_embedding_runtime() -> EngineErrorCode {
         EngineErrorCode::from_static("CONFIG.INVALID_EMBEDDING_RUNTIME")
     }
 
+    #[must_use]
     pub const fn manifest_invalid() -> EngineErrorCode {
         EngineErrorCode::from_static("MANIFEST.INVALID")
     }
 
+    #[must_use]
     pub const fn lock_busy() -> EngineErrorCode {
         EngineErrorCode::from_static("LOCK.BUSY")
     }
 
+    #[must_use]
     pub const fn daemon_lease_active() -> EngineErrorCode {
         EngineErrorCode::from_static("DAEMON_LEASE_ACTIVE")
     }
 
     /// A `spawn_blocking` body panicked or was aborted (daemon join failure).
+    #[must_use]
     pub const fn daemon_blocking_join_failed() -> EngineErrorCode {
         EngineErrorCode::from_static("DAEMON.BLOCKING_JOIN_FAILED")
     }
 
+    #[must_use]
     pub const fn service_read_session_closed() -> EngineErrorCode {
         EngineErrorCode::from_static("SERVICE.READ_SESSION_CLOSED")
     }
 
+    #[must_use]
     pub const fn extractor_code_invalid_chunk_size() -> EngineErrorCode {
         EngineErrorCode::from_static("EXTRACTORS.CODE_INVALID_CHUNK_SIZE")
     }
 
+    #[must_use]
     pub const fn extractor_code_invalid_chunk_overlap() -> EngineErrorCode {
         EngineErrorCode::from_static("EXTRACTORS.CODE_INVALID_CHUNK_OVERLAP")
     }
 
+    #[must_use]
     pub const fn extractor_markdown_invalid_chunk_size() -> EngineErrorCode {
         EngineErrorCode::from_static("EXTRACTORS.MARKDOWN_INVALID_CHUNK_SIZE")
     }
 
+    #[must_use]
     pub const fn extractor_markdown_invalid_chunk_overlap() -> EngineErrorCode {
         EngineErrorCode::from_static("EXTRACTORS.MARKDOWN_INVALID_CHUNK_OVERLAP")
     }
 
+    #[must_use]
     pub const fn extractor_text_invalid_chunk_size() -> EngineErrorCode {
         EngineErrorCode::from_static("EXTRACTORS.TEXT_INVALID_CHUNK_SIZE")
     }
 
+    #[must_use]
     pub const fn extractor_text_invalid_chunk_overlap() -> EngineErrorCode {
         EngineErrorCode::from_static("EXTRACTORS.TEXT_INVALID_CHUNK_OVERLAP")
     }
 
+    #[must_use]
     pub const fn extractor_empty_file_id() -> EngineErrorCode {
         EngineErrorCode::from_static("EXTRACTORS.EMPTY_FILE_ID")
     }
 
+    #[must_use]
     pub const fn extractor_empty_absolute_path() -> EngineErrorCode {
         EngineErrorCode::from_static("EXTRACTORS.EMPTY_ABSOLUTE_PATH")
     }
 
+    #[must_use]
     pub const fn extractor_empty_relative_path() -> EngineErrorCode {
         EngineErrorCode::from_static("EXTRACTORS.EMPTY_RELATIVE_PATH")
     }
 
+    #[must_use]
     pub const fn extractor_image_empty_data() -> EngineErrorCode {
         EngineErrorCode::from_static("EXTRACTORS.IMAGE_EMPTY_DATA")
     }
@@ -201,6 +224,7 @@ impl<'a> DetailValue<'a> {
 }
 
 /// Joins non-empty detail entries with newlines; `None` when nothing remains.
+#[must_use]
 pub fn error_details(entries: Vec<DetailEntry<'_>>) -> Option<String> {
     let mut lines = Vec::new();
     for entry in entries {
@@ -227,6 +251,7 @@ pub fn error_details(entries: Vec<DetailEntry<'_>>) -> Option<String> {
 }
 
 /// `workspaceIndex=<name>` detail helper.
+#[must_use]
 pub fn workspace_index_detail(name: &str) -> String {
     format!("workspaceIndex={name}")
 }
@@ -283,11 +308,13 @@ fn redact_url_userinfo(value: &str) -> String {
     let mut result = String::with_capacity(value.len());
     let mut cursor = 0usize;
 
-    while let Some(offset) = value[cursor..].find("://") {
+    while let Some(offset) = value.get(cursor..).unwrap_or("").find("://") {
         let separator = cursor + offset;
         let mut start = separator;
         while start > 0 {
-            let b = bytes[start - 1];
+            let Some(b) = bytes.get(start - 1) else {
+                break;
+            };
             if b.is_ascii_alphanumeric() || matches!(b, b'+' | b'.' | b'-') {
                 start -= 1;
             } else {
@@ -295,13 +322,16 @@ fn redact_url_userinfo(value: &str) -> String {
             }
         }
         let scheme_valid = start < separator
-            && bytes[start].is_ascii_alphabetic()
-            && !matches!(bytes[separator - 1], b'+' | b'.' | b'-');
+            && bytes.get(start).is_some_and(u8::is_ascii_alphabetic)
+            && separator
+                .checked_sub(1)
+                .and_then(|index| bytes.get(index))
+                .is_some_and(|b| !matches!(b, b'+' | b'.' | b'-'));
 
         let mut end = separator + 3;
         let mut terminator = None;
-        while end < bytes.len() {
-            match bytes[end] {
+        while let Some(&b) = bytes.get(end) {
+            match b {
                 b'@' => {
                     terminator = Some(end);
                     break;
@@ -312,16 +342,16 @@ fn redact_url_userinfo(value: &str) -> String {
         }
 
         if scheme_valid && terminator.is_some() {
-            result.push_str(&value[cursor..start]);
+            result.push_str(value.get(cursor..start).unwrap_or(""));
             result.push_str("[redacted]@");
             cursor = end + 1;
         } else {
             let copy_through = (separator + 3).min(bytes.len());
-            result.push_str(&value[cursor..copy_through]);
+            result.push_str(value.get(cursor..copy_through).unwrap_or(""));
             cursor = copy_through;
         }
     }
-    result.push_str(&value[cursor..]);
+    result.push_str(value.get(cursor..).unwrap_or(""));
     result
 }
 

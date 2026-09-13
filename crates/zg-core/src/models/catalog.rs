@@ -28,11 +28,13 @@ impl ModelReference {
         Self(reference.into())
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// True when the reference names an entry in [`EMBEDDING_MODEL_CATALOG`].
+    #[must_use]
     pub fn is_known(&self) -> bool {
         get_embedding_model_catalog_entry(&self.0).is_some()
     }
@@ -66,6 +68,7 @@ pub enum BackendKind {
 }
 
 impl BackendKind {
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::LlamaCpp => "llama-cpp",
@@ -84,6 +87,7 @@ pub enum LlamaModelFormat {
 }
 
 impl LlamaModelFormat {
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Embeddinggemma => "embeddinggemma",
@@ -101,6 +105,7 @@ pub enum TransformersDtype {
 }
 
 impl TransformersDtype {
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Q4 => "q4",
@@ -118,6 +123,7 @@ pub enum PoolingKind {
 }
 
 impl PoolingKind {
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Cls => "cls",
@@ -211,6 +217,7 @@ pub enum EmbeddingCatalogEntry {
 }
 
 impl EmbeddingCatalogEntry {
+    #[must_use]
     pub fn reference(&self) -> &'static str {
         match self {
             Self::LlamaCpp(e) => e.reference,
@@ -221,6 +228,7 @@ impl EmbeddingCatalogEntry {
         }
     }
 
+    #[must_use]
     pub fn provider(&self) -> &'static str {
         match self {
             Self::LlamaCpp(e) => e.provider,
@@ -231,6 +239,7 @@ impl EmbeddingCatalogEntry {
         }
     }
 
+    #[must_use]
     pub fn model(&self) -> &'static str {
         match self {
             Self::LlamaCpp(e) => e.model,
@@ -241,6 +250,7 @@ impl EmbeddingCatalogEntry {
         }
     }
 
+    #[must_use]
     pub fn dimension(&self) -> usize {
         match self {
             Self::LlamaCpp(e) => e.dimension,
@@ -251,10 +261,12 @@ impl EmbeddingCatalogEntry {
         }
     }
 
+    #[must_use]
     pub fn metric(&self) -> SearchMetric {
         SearchMetric::Cosine
     }
 
+    #[must_use]
     pub fn backend(&self) -> BackendKind {
         match self {
             Self::LlamaCpp(_) => BackendKind::LlamaCpp,
@@ -264,6 +276,7 @@ impl EmbeddingCatalogEntry {
         }
     }
 
+    #[must_use]
     pub fn max_batch_size(&self) -> usize {
         match self {
             Self::LlamaCpp(e) => e.max_batch_size,
@@ -275,6 +288,7 @@ impl EmbeddingCatalogEntry {
     }
 
     /// True for the single entry that accepts image inputs.
+    #[must_use]
     pub fn supports_images(&self) -> bool {
         matches!(self, Self::QwenMultimodal(_))
     }
@@ -469,11 +483,13 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
 ];
 
 /// All catalog entries, in catalog order.
+#[must_use]
 pub fn list_embedding_models() -> &'static [EmbeddingCatalogEntry] {
     EMBEDDING_MODEL_CATALOG
 }
 
 /// Finds the catalog entry for `reference`, if it names a known model.
+#[must_use]
 pub fn get_embedding_model_catalog_entry(
     reference: &str,
 ) -> Option<&'static EmbeddingCatalogEntry> {

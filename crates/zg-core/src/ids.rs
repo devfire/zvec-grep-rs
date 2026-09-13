@@ -15,10 +15,12 @@ pub struct FileId(String);
 
 impl FileId {
     /// Wraps an existing id string without validation (trusted internal data).
+    #[must_use]
     pub fn from_raw(raw: String) -> Self {
         Self(raw)
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -37,15 +39,21 @@ pub struct EntityId(String);
 
 impl EntityId {
     /// Wraps an existing id string without validation (trusted internal data).
+    #[must_use]
     pub fn from_raw(raw: String) -> Self {
         Self(raw)
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Parses a 64-char lowercase hex entity id.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] with [`codes::manifest_invalid()`] when `value` is not 64 lowercase hex characters.
     pub fn parse(value: &str) -> EngineResult<Self> {
         if value.len() == 64
             && value
@@ -70,6 +78,7 @@ impl fmt::Display for EntityId {
 
 /// Computes an entity id from its file id and fragment index:
 /// sha256(`${file_id}\0${index}`), hex-encoded.
+#[must_use]
 pub fn make_entity_id(file_id: &FileId, index: usize) -> EntityId {
     use sha2::{Digest, Sha256};
 
@@ -86,11 +95,13 @@ pub fn make_entity_id(file_id: &FileId, index: usize) -> EntityId {
     EntityId(hex)
 }
 
+/// Lowercase hex digit for a 4-bit nibble. Callers mask to the low 4 bits,
+/// so the lookup always hits; the fallback never triggers and never panics.
 fn hex_char(nibble: u8) -> &'static str {
     const HEX: [&str; 16] = [
         "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f",
     ];
-    HEX[nibble as usize]
+    HEX.get(nibble as usize).copied().unwrap_or("0")
 }
 
 #[cfg(test)]

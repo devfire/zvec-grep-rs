@@ -15,11 +15,13 @@ use std::cell::RefCell;
 pub struct TraceParent(String);
 
 impl TraceParent {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// The 32-hex trace id embedded in the `traceparent`.
+    #[must_use]
     pub fn trace_id(&self) -> &str {
         self.0.split('-').nth(1).unwrap_or("")
     }
@@ -38,6 +40,7 @@ impl std::fmt::Display for TraceParent {
 pub struct RequestId(String);
 
 impl RequestId {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -50,6 +53,7 @@ impl std::fmt::Display for RequestId {
 }
 
 /// Generates a fresh request id (mirrors TS `requestId`).
+#[must_use]
 pub fn request_id() -> RequestId {
     RequestId(uuid::Uuid::new_v4().to_string())
 }
@@ -64,6 +68,7 @@ pub struct TraceContext {
 
 impl TraceContext {
     /// The 32-hex trace id.
+    #[must_use]
     pub fn trace_id(&self) -> &str {
         self.traceparent.trace_id()
     }
@@ -74,6 +79,7 @@ thread_local! {
 }
 
 /// Returns the ambient trace context, if any.
+#[must_use]
 pub fn current_trace_context() -> Option<TraceContext> {
     CURRENT_TRACE.with(|cell| cell.borrow().clone())
 }
@@ -95,6 +101,7 @@ pub fn run_with_trace_context<T>(
 }
 
 /// Extracts trace context from an MCP request body (`params._meta`).
+#[must_use]
 pub fn trace_context_from_mcp_body(body: &serde_json::Value) -> Option<TraceContext> {
     let meta = body.get("params")?.get("_meta")?;
     trace_context_from_mcp_meta(meta)
@@ -115,6 +122,7 @@ pub fn trace_context_from_mcp_meta(meta: &serde_json::Value) -> Option<TraceCont
 }
 
 /// Outgoing propagation headers for the ambient context.
+#[must_use]
 pub fn trace_headers() -> Vec<(String, String)> {
     let Some(context) = current_trace_context() else {
         return Vec::new();
@@ -216,7 +224,7 @@ fn valid_tracestate(value: &serde_json::Value) -> Option<String> {
 
 fn valid_tracestate_key(key: &str) -> bool {
     let bytes = key.as_bytes();
-    if bytes.is_empty() || bytes[0] == b'@' {
+    if bytes.is_empty() || bytes.first().is_some_and(|first| *first == b'@') {
         return false;
     }
     if let Some(at) = key.find('@') {

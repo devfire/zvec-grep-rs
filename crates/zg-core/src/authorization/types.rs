@@ -25,6 +25,7 @@ impl WorkspaceFingerprint {
         Self(hex)
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -49,6 +50,7 @@ impl TargetFingerprint {
         Self(hex)
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -70,6 +72,7 @@ pub enum RemoteEmbeddingOperation {
 }
 
 impl RemoteEmbeddingOperation {
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Query => "query",
@@ -88,6 +91,7 @@ pub enum RemoteEmbeddingScope {
 }
 
 impl RemoteEmbeddingScope {
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Once => "once",
@@ -106,6 +110,7 @@ pub enum WorkspaceContentDisclosure {
 }
 
 impl WorkspaceContentDisclosure {
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",

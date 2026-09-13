@@ -57,7 +57,7 @@ fn from_hex(hex: &str) -> Option<Vec<u8>> {
     let raw = hex.as_bytes();
     let mut cursor = 0;
     while cursor < raw.len() {
-        let pair = std::str::from_utf8(&raw[cursor..cursor + 2]).ok()?;
+        let pair = std::str::from_utf8(raw.get(cursor..cursor + 2)?).ok()?;
         bytes.push(u8::from_str_radix(pair, 16).ok()?);
         cursor += 2;
     }
@@ -162,6 +162,7 @@ impl Default for RemoteEmbeddingAuthorizationStore {
 
 impl RemoteEmbeddingAuthorizationStore {
     /// Opens the store with the default signing-key path.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             signing_key_path: default_signing_key_path(),
@@ -169,6 +170,7 @@ impl RemoteEmbeddingAuthorizationStore {
     }
 
     /// Opens the store with an explicit signing-key path (tests).
+    #[must_use]
     pub fn with_signing_key(path: PathBuf) -> Self {
         Self {
             signing_key_path: path,
@@ -176,6 +178,10 @@ impl RemoteEmbeddingAuthorizationStore {
     }
 
     /// Grant file for the target's first workspace root.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::InvalidTarget`] when the target has no workspace roots.
     pub fn grant_path(&self, target: &RemoteEmbeddingTarget) -> Result<PathBuf, AuthError> {
         let Some(root) = target.workspace_roots.first() else {
             return Err(AuthError::InvalidTarget {
@@ -186,6 +192,10 @@ impl RemoteEmbeddingAuthorizationStore {
     }
 
     /// True when a valid signed grant covers the target fingerprint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::StoreFailed`] when the signing key or grant file cannot be read, or [`AuthError::InvalidTarget`] when the target has no workspace roots.
     pub fn has_grant(&self, target: &RemoteEmbeddingTarget) -> EngineResult<bool> {
         let Some(key) = self.read_signing_key()? else {
             return Ok(false);
@@ -200,6 +210,10 @@ impl RemoteEmbeddingAuthorizationStore {
 
     /// Signs and persists a workspace grant for every root of the target,
     /// replacing any grant with the same target fingerprint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::StoreFailed`] when the signing key cannot be created or a grant file cannot be written, or [`AuthError::InvalidTarget`] when the signing key is rejected.
     pub fn grant(&self, target: &RemoteEmbeddingTarget) -> EngineResult<RemoteEmbeddingGrant> {
         let key = self.get_or_create_signing_key()?;
         let unsigned = RemoteEmbeddingGrant {
@@ -236,6 +250,10 @@ impl RemoteEmbeddingAuthorizationStore {
 
     /// Removes the target's grant from every root file; true when any was
     /// removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::StoreFailed`] when a grant file cannot be read or written, or `LOCK.BUSY` when another writer holds the lock.
     pub fn revoke(&self, target: &RemoteEmbeddingTarget) -> EngineResult<bool> {
         let mut revoked = false;
         for root in &target.workspace_roots {
@@ -256,6 +274,10 @@ impl RemoteEmbeddingAuthorizationStore {
 
     /// Clears the root's grant file plus the same grants from sibling root
     /// files; returns the cleared file's grant count.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::StoreFailed`] when the signing key or a grant file cannot be read or written, or `LOCK.BUSY` when another writer holds the lock.
     pub fn revoke_all(&self, root: &str) -> EngineResult<usize> {
         let path = Path::new(root).join(".zvec-grep").join(GRANT_FILE);
         let key = self.read_signing_key()?;
@@ -302,6 +324,10 @@ impl RemoteEmbeddingAuthorizationStore {
     }
 
     /// Lists the root's grants with per-grant validity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::StoreFailed`] when the grant file or signing key cannot be read.
     pub fn status(&self, root: &str) -> EngineResult<AuthorizationStatus> {
         let path = Path::new(root).join(".zvec-grep").join(GRANT_FILE);
         let document = self.read_document(&path)?;
@@ -529,6 +555,7 @@ fn is_workspace_grant(value: &serde_json::Value) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use crate::authorization::target::create_remote_embedding_target;

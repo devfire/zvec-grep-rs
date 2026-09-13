@@ -83,6 +83,7 @@ pub struct CreateZvecGrepOptions {
 }
 
 /// Builds a [`ZvecGrepService`], mirroring `createZvecGrep`.
+#[must_use]
 pub fn create_zvec_grep(options: CreateZvecGrepOptions) -> ZvecGrepService {
     ZvecGrepService::new(options)
 }
@@ -117,12 +118,17 @@ impl ZvecGrepService {
     }
 
     /// Workspace root the facade is bound to.
+    #[must_use]
     pub fn root(&self) -> &str {
         &self.root
     }
 
     /// Resolves `root` (or the bound root) to its index locations, mirroring
     /// `openWorkspace` location handling.
+    ///
+    /// # Errors
+    ///
+    /// Returns `WORKSPACE.ROOT_UNAVAILABLE` when the workspace root cannot be resolved.
     pub fn open_workspace(&self, root: Option<&Path>) -> EngineResult<WorkspaceIndexLocation> {
         workspace_index_location(&self.root_string(root))
     }
@@ -132,6 +138,11 @@ impl ZvecGrepService {
     /// Progress flows through the owned [`IndexProgressSink`](crate::pipeline::indexing::IndexProgressSink);
     /// cancellation through `options.signal`, polled on a helper thread that
     /// trips a [`CancelFlag`] shared with the blocking index run.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when root or manifest handling fails, no embedding model resolves, the
+    /// index cannot be opened, or the indexing run fails.
     pub fn ensure_index(
         &self,
         options: &ZvecGrepIndexOptions<'_>,
@@ -223,6 +234,11 @@ impl ZvecGrepService {
 
     /// Deletes the manifest and index storage; `Ok(false)` when nothing
     /// existed, mirroring `dropIndex`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the workspace root cannot be resolved or stored index data cannot
+    /// be deleted.
     pub fn drop_index(&self, root: Option<&Path>) -> EngineResult<bool> {
         let location = workspace_index_location(&self.root_string(root))?;
         if !has_workspace_index(&location) {
@@ -237,6 +253,11 @@ impl ZvecGrepService {
     /// With `auto_update` set, a stale index is refreshed first via
     /// [`ensure_index`](Self::ensure_index); read sessions (phase G) always
     /// pass it cleared.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an empty query, when no built index is found, or when model
+    /// resolution, index open, or search fails.
     pub fn context(
         &self,
         options: &ZvecGrepContextOptions<'_>,
@@ -269,11 +290,19 @@ impl ZvecGrepService {
 
     /// Exhaustive in-process lexical search — never a subprocess, mirroring
     /// `rg` handling via `lexical/mod.rs`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when search paths are invalid or the in-process walk fails.
     pub fn rg_search(&self, options: &LexicalSearchOptions) -> EngineResult<LexicalSearchResult> {
         run_lexical_search(options)
     }
 
     /// Index freshness derived from stored files, mirroring `indexStatus`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no built index is found or the index cannot be opened for status.
     pub fn index_status(&self, root: Option<&Path>) -> EngineResult<WorkspaceIndexStatus> {
         let location = self.require_indexed_location(root)?;
         let manifest = self.require_manifest(&location)?;
@@ -288,6 +317,10 @@ impl ZvecGrepService {
     }
 
     /// Workspace identity, policy, embedding, and status, mirroring `info()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the manifest cannot be read or the workspace index is disabled.
     pub fn workspace_info(&self, root: Option<&Path>) -> EngineResult<ZvecGrepInfoResult> {
         let start = self.root_string(root);
         let Some(location) = find_nearest_workspace_index(&start) else {
@@ -338,6 +371,11 @@ impl ZvecGrepService {
     }
 
     /// Opens an explicit RAII read session; the daemon owns TTL eviction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no built index is found, the index is disabled or unbuilt, or model
+    /// resolution or index open fails.
     pub fn open_read_session(&self, root: Option<&Path>) -> EngineResult<ReadSession> {
         let location = self.require_indexed_location(root)?;
         let manifest = self.require_manifest(&location)?;
@@ -543,11 +581,16 @@ pub struct ReadSession {
 
 impl ReadSession {
     /// Workspace root the session was opened for.
+    #[must_use]
     pub fn root(&self) -> &str {
         &self.root
     }
 
     /// Searches through the open read handle; errors once closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session is closed, the query is empty, or search fails.
     pub fn context(
         &self,
         options: &ZvecGrepContextOptions<'_>,

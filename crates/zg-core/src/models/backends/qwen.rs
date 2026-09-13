@@ -222,19 +222,29 @@ fn base64_encode(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
-        let first = chunk[0] as u32;
-        let second = chunk.get(1).copied().unwrap_or(0) as u32;
-        let third = chunk.get(2).copied().unwrap_or(0) as u32;
-        let triple = (first << 16) | (second << 8) | third;
-        output.push(ALPHABET[((triple >> 18) & 0x3f) as usize] as char);
-        output.push(ALPHABET[((triple >> 12) & 0x3f) as usize] as char);
+        let Some((&first, rest)) = chunk.split_first() else {
+            continue;
+        };
+        let second = rest.first().copied().unwrap_or(0);
+        let third = rest.get(1).copied().unwrap_or(0);
+        let triple = (u32::from(first) << 16) | (u32::from(second) << 8) | u32::from(third);
+        if let Some(&alphabet_char) = ALPHABET.get(((triple >> 18) & 0x3f) as usize) {
+            output.push(alphabet_char as char);
+        }
+        if let Some(&alphabet_char) = ALPHABET.get(((triple >> 12) & 0x3f) as usize) {
+            output.push(alphabet_char as char);
+        }
         if chunk.len() > 1 {
-            output.push(ALPHABET[((triple >> 6) & 0x3f) as usize] as char);
+            if let Some(&alphabet_char) = ALPHABET.get(((triple >> 6) & 0x3f) as usize) {
+                output.push(alphabet_char as char);
+            }
         } else {
             output.push('=');
         }
         if chunk.len() > 2 {
-            output.push(ALPHABET[(triple & 0x3f) as usize] as char);
+            if let Some(&alphabet_char) = ALPHABET.get((triple & 0x3f) as usize) {
+                output.push(alphabet_char as char);
+            }
         } else {
             output.push('=');
         }
@@ -270,6 +280,7 @@ impl QwenTextEmbeddingModel {
     /// Builds the backend from the resolved factory plan fields for the
     /// `ModelBuildPlan::QwenText` arm. Display name and error-code prefix
     /// follow the entry's model id, mirroring the two TypeScript subclasses.
+    #[must_use]
     pub fn from_plan(entry: QwenTextEntry, api_key: ApiKey, endpoint: String) -> Self {
         let model_kind = QwenTextModel::from_model_id(entry.model);
         let display_name = model_kind.display_name();
@@ -381,7 +392,9 @@ impl QwenTextEmbeddingModel {
                 index,
                 item,
             )?;
-            vectors[index] = Some(vector);
+            if let Some(slot) = vectors.get_mut(index) {
+                *slot = Some(vector);
+            }
         }
         let mut resolved = Vec::with_capacity(texts.len());
         for (vector_index, slot) in vectors.into_iter().enumerate() {
@@ -444,6 +457,7 @@ pub struct Qwen3VlEmbeddingModel {
 impl Qwen3VlEmbeddingModel {
     /// Builds the backend from the resolved factory plan fields for the
     /// `ModelBuildPlan::QwenMultimodal` arm.
+    #[must_use]
     pub fn from_plan(entry: QwenMultimodalEntry, api_key: ApiKey, endpoint: String) -> Self {
         let info = EmbeddingModelInfo {
             reference: entry.reference.to_owned(),
@@ -591,7 +605,9 @@ impl Qwen3VlEmbeddingModel {
                 index,
                 item,
             )?;
-            vectors[index] = Some(vector);
+            if let Some(slot) = vectors.get_mut(index) {
+                *slot = Some(vector);
+            }
         }
         let mut resolved = Vec::with_capacity(inputs.len());
         for (vector_index, slot) in vectors.into_iter().enumerate() {

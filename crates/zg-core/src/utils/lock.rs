@@ -51,6 +51,7 @@ pub struct LockOptions<'a> {
 }
 
 impl<'a> LockOptions<'a> {
+    #[must_use]
     pub fn new(operation: &'a str) -> Self {
         Self {
             operation,
@@ -96,6 +97,10 @@ impl Drop for Guard {
 }
 
 /// Acquires a read or write lock at `lock_path`.
+///
+/// # Errors
+///
+/// Returns [`EngineError`] with [`codes::lock_busy()`] when another owner holds the lock after stale reclamation, or [`local_codes::lock_unavailable()`] when a lock directory cannot be created.
 pub fn acquire_read_write_lock(
     lock_path: &Path,
     mode: LockMode,
@@ -108,6 +113,10 @@ pub fn acquire_read_write_lock(
 }
 
 /// Fails fast when another writer holds `<path>.write`.
+///
+/// # Errors
+///
+/// Returns [`EngineError`] with [`codes::lock_busy()`] when an active writer holds the lock.
 pub fn assert_no_write_lock(lock_path: &Path, operation: &str) -> EngineResult<()> {
     let write_dir = write_dir(lock_path);
     match try_reclaim_stale(&write_dir, DEFAULT_STALE_MS) {
@@ -329,6 +338,7 @@ fn busy_error(_lock_dir: &Path, operation: &str, owner: &FileLockInfo) -> Engine
     EngineError::new(codes::lock_busy(), "Index unavailable").with_context(context)
 }
 
+#[must_use]
 pub fn hostname() -> String {
     hostname_impl()
 }
@@ -353,6 +363,7 @@ fn hostname_impl() -> String {
 /// needed: EPERM-style "exists but unpermitted" processes still have a
 /// `/proc` entry). Other Unix targets use `kill(pid, 0)`; that call is the
 /// sole `unsafe` in the crate, isolated here with a SAFETY justification.
+#[must_use]
 pub fn process_is_alive(pid: u32) -> bool {
     if pid == 0 {
         return false;

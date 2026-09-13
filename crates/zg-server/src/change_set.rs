@@ -27,11 +27,13 @@ impl MaxChangedPaths {
     pub const DEFAULT: Self = Self(DEFAULT_MAX_CHANGED_PATHS);
 
     /// Wraps a raw budget. Zero means "widen immediately".
+    #[must_use]
     pub const fn new(value: usize) -> Self {
         Self(value)
     }
 
     /// Raw budget value.
+    #[must_use]
     pub const fn get(self) -> usize {
         self.0
     }
@@ -96,6 +98,7 @@ pub struct ChangeSet {
 
 impl ChangeSet {
     /// Empty accumulator with the given root and budget.
+    #[must_use]
     pub fn new(options: ChangeSetOptions) -> Self {
         Self {
             touched_files: BTreeSet::new(),
@@ -109,6 +112,10 @@ impl ChangeSet {
 
     /// Records one event. Relative paths are rejected: watcher output must
     /// be absolute for prefix collapsing to mean anything.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DaemonError::RootNotAbsolute`] when the path is not absolute.
     pub fn add(
         &mut self,
         path: &str,
@@ -180,11 +187,13 @@ impl ChangeSet {
     }
 
     /// Total accumulated paths across all three sets.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.touched_files.len() + self.rescan_directories.len() + self.deleted_prefixes.len()
     }
 
     /// True when nothing is accumulated.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         !self.has_paths() && !self.force_full_reconcile
     }

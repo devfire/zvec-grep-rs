@@ -50,6 +50,7 @@ pub struct FileTypesMatcher {
 
 impl FileTypesMatcher {
     /// No type filtering at all.
+    #[must_use]
     pub fn none() -> Self {
         Self {
             include: None,
@@ -58,11 +59,13 @@ impl FileTypesMatcher {
         }
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.include.is_none() && self.exclude.is_none()
     }
 
     /// True when `path` passes the include/exclude type selection.
+    #[must_use]
     pub fn matches(&self, path: &Path) -> bool {
         if self.is_empty() {
             return true;
@@ -85,6 +88,10 @@ impl FileTypesMatcher {
 /// Resolves requested type names (with aliases) into a matcher.
 ///
 /// Unknown names produce `Unknown ripgrep file type: <name>`.
+///
+/// # Errors
+///
+/// Returns [`EngineError`] with [`codes::unknown_file_type()`] when a name is not a known ripgrep type, or [`codes::file_types_unavailable()`] when the type set fails to build.
 pub fn resolve_file_types(
     included: &[String],
     excluded: &[String],
@@ -132,7 +139,14 @@ fn resolve_selection(names: &[String], selecting: bool) -> EngineResult<Option<T
                 format!("Unknown ripgrep file type: {raw}"),
             )
         }
-        other => EngineError::new(
+        other @ (ignore::Error::Partial(_)
+        | ignore::Error::WithLineNumber { .. }
+        | ignore::Error::WithPath { .. }
+        | ignore::Error::WithDepth { .. }
+        | ignore::Error::Loop { .. }
+        | ignore::Error::Io(_)
+        | ignore::Error::Glob { .. }
+        | ignore::Error::InvalidDefinition) => EngineError::new(
             codes::file_types_unavailable(),
             "Unable to load ripgrep file types",
         )
@@ -163,6 +177,7 @@ struct GlobRule {
 impl OrderedGlobs {
     /// Builds from `globs` (case-sensitive) then `insensitive_globs`, trimming
     /// and dropping empty patterns.
+    #[must_use]
     pub fn new(globs: &[String], insensitive_globs: &[String]) -> Self {
         let mut rules = Vec::with_capacity(globs.len() + insensitive_globs.len());
         let mut push = |raw: &str, case_insensitive: bool| {
@@ -188,6 +203,7 @@ impl OrderedGlobs {
         Self { rules }
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty()
     }
@@ -195,6 +211,7 @@ impl OrderedGlobs {
     /// Evaluates the rules in order; the last matching rule decides. With no
     /// positive rule present, paths start included; otherwise excluded until a
     /// positive rule matches.
+    #[must_use]
     pub fn matches(&self, path: &str) -> bool {
         if self.rules.is_empty() {
             return true;
@@ -223,6 +240,7 @@ pub struct FileSelection {
 }
 
 impl FileSelection {
+    #[must_use]
     pub fn matches(&self, path: &str) -> bool {
         self.globs.matches(path) && self.types.matches(Path::new(path))
     }

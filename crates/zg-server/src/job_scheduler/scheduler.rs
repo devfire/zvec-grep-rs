@@ -32,6 +32,7 @@ pub struct JobScheduler {
 
 impl JobScheduler {
     /// Empty scheduler with the given options.
+    #[must_use]
     pub fn new(options: JobSchedulerOptions) -> Self {
         Self {
             shared: Arc::new(Shared {
@@ -53,6 +54,10 @@ impl JobScheduler {
     /// like TS `submit`: a queued job absorbs watch/followup runs and
     /// priority upgrades; a running job gains a chained followup for
     /// watch/followup runs; anything else reuses the active snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DaemonError::ShuttingDown`] when the scheduler is closed.
     pub fn submit(&self, input: SubmitIndexJob) -> Result<SubmitIndexJobResult, DaemonError> {
         let mut state = lock(&self.shared.state);
         if state.closed {
@@ -60,10 +65,10 @@ impl JobScheduler {
         }
         if let Some(active_id) = state.active_by_root.get(&input.canonical_root).cloned() {
             let reused = self.absorb_or_chain(&mut state, &active_id, input);
-            let snapshot = state
-                .jobs
-                .get(&reused)
-                .map_or_else(|| snapshot_missing(&reused), super::state::JobRecord::snapshot);
+            let snapshot = state.jobs.get(&reused).map_or_else(
+                || snapshot_missing(&reused),
+                super::state::JobRecord::snapshot,
+            );
             return Ok(SubmitIndexJobResult {
                 job: snapshot,
                 reused: true,
@@ -93,6 +98,7 @@ impl JobScheduler {
     }
 
     /// True while a job for the root is queued or running.
+    #[must_use]
     pub fn has_active_root(&self, canonical_root: &str) -> bool {
         lock(&self.shared.state)
             .active_by_root
@@ -110,6 +116,11 @@ impl JobScheduler {
     /// Awaits a terminal snapshot, optionally streaming progress. Progress
     /// observers never affect the outcome: panics inside `on_progress` are
     /// contained per call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DaemonError::UnknownJob`] when the id is unknown, or
+    /// [`DaemonError::IndexCancelled`] when the completion channel closes first.
     pub async fn wait(
         &self,
         id: &JobId,
@@ -157,6 +168,7 @@ impl JobScheduler {
     }
 
     /// Cancels the active job for a root. Returns false when idle.
+    #[must_use]
     pub fn cancel_root(&self, canonical_root: &str) -> bool {
         let id = lock(&self.shared.state)
             .active_by_root
@@ -171,6 +183,7 @@ impl JobScheduler {
     }
 
     /// Current queue depth.
+    #[must_use]
     pub fn load(&self) -> SchedulerLoad {
         let state = lock(&self.shared.state);
         SchedulerLoad {
@@ -232,5 +245,4 @@ impl JobScheduler {
             logger.event(name, fields);
         }
     }
-
 }

@@ -22,6 +22,7 @@ pub enum BackendError {
 
 impl BackendError {
     /// Raw wire code from either side.
+    #[must_use]
     pub fn code(&self) -> String {
         match self {
             Self::Daemon(error) => error.code().to_owned(),

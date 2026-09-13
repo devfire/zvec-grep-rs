@@ -30,6 +30,7 @@ pub enum DeviceKind {
 }
 
 impl DeviceKind {
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Auto => "auto",
@@ -88,6 +89,7 @@ impl fmt::Debug for NormalizedEmbeddingOptions {
 }
 
 /// Normalizes request options, defaulting the purpose to documents.
+#[must_use]
 pub fn normalize_embedding_options(options: &EmbeddingOptions) -> NormalizedEmbeddingOptions {
     NormalizedEmbeddingOptions {
         purpose: options.purpose,
@@ -113,6 +115,7 @@ impl ApiKey {
         Self(key.into())
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -125,6 +128,7 @@ impl fmt::Debug for ApiKey {
 }
 
 /// Selects the instruction prefix for `purpose`, if the model defines one.
+#[must_use]
 pub fn purpose_prefix<'a>(
     query_prefix: Option<&'a str>,
     document_prefix: Option<&'a str>,
@@ -139,6 +143,12 @@ pub fn purpose_prefix<'a>(
 /// Validates batch inputs exactly like `BaseEmbeddingModel.validateContents`:
 /// non-empty batch, within the model's batch limit, kinds the model accepts,
 /// and non-empty text / image payloads.
+///
+/// # Errors
+///
+/// Returns [`ModelError::EmptyInput`] when the batch is empty, [`ModelError::BatchTooLarge`] when
+/// it exceeds the model limit, or [`ModelError::EmptyText`], [`ModelError::UnsupportedImage`], or
+/// [`ModelError::EmptyImage`] when an entry is invalid.
 pub fn validate_contents(
     model: &dyn EmbeddingModel,
     inputs: &[EmbeddingInput<'_>],
@@ -192,6 +202,12 @@ pub fn validate_contents(
 /// Validates a backend's raw output exactly like
 /// `BaseEmbeddingModel.validateResult`: one finite vector of the model's
 /// dimension per input, plus in-range unique truncation indices.
+///
+/// # Errors
+///
+/// Returns [`ModelError::VectorCountMismatch`] when the vector count differs from the input count,
+/// [`ModelError::DimensionMismatch`] or [`ModelError::NonFiniteValue`] for malformed vectors, or
+/// [`ModelError::InvalidTruncatedIndex`] for out-of-range or duplicate truncation indices.
 pub fn validate_result(
     model: &dyn EmbeddingModel,
     input_count: usize,
@@ -230,7 +246,7 @@ pub fn validate_result(
     }
     let mut seen = vec![false; input_count];
     for index in &result.truncated {
-        if *index >= input_count || seen[*index] {
+        if *index >= input_count || seen.get(*index).is_some_and(|flag| *flag) {
             return Err(ModelError::InvalidTruncatedIndex {
                 reference: reference.clone(),
                 index: *index,
@@ -238,13 +254,20 @@ pub fn validate_result(
             }
             .into());
         }
-        seen[*index] = true;
+        if let Some(slot) = seen.get_mut(*index) {
+            *slot = true;
+        }
     }
     Ok(())
 }
 
 /// Convenience wrapper backends call: validate inputs, run `embed_core`,
 /// then validate the output.
+///
+/// # Errors
+///
+/// Propagates [`ModelError`] failures from [`validate_contents`], the embed core, and
+/// [`validate_result`].
 pub fn embed_validated(
     model: &dyn EmbeddingModel,
     inputs: &[EmbeddingInput<'_>],
@@ -284,6 +307,10 @@ pub trait RankingModel: Send + Sync {
 
     /// Scores every candidate against `query`; returns one score per
     /// candidate, best first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when scoring fails; backends report their own failure conditions.
     fn rank(
         &self,
         query: &Content,

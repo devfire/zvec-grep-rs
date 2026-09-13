@@ -29,6 +29,7 @@ pub struct StubEmbeddingModel {
 
 impl StubEmbeddingModel {
     /// Builds a stub emitting `dimension`-wide vectors.
+    #[must_use]
     pub fn new(dimension: usize) -> Self {
         Self {
             info: EmbeddingModelInfo {
@@ -122,7 +123,7 @@ mod tests {
             .vectors;
         assert_eq!(first, second);
         assert_eq!(first.len(), 1);
-        assert_eq!(first[0].len(), 16);
+        assert_eq!(first.first().map(Vec::len), Some(16));
     }
 
     #[test]

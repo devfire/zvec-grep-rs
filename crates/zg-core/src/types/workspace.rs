@@ -69,6 +69,11 @@ pub struct WorkspaceIndexInfo {
 pub mod double_option {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+    /// Serializes the inner option, preserving explicit `null` on round-trip.
+    ///
+    /// # Errors
+    ///
+    /// Returns `S::Error` when the inner value fails to serialize.
     pub fn serialize<T: Serialize, S: Serializer>(
         value: &Option<Option<T>>,
         serializer: S,
@@ -79,6 +84,11 @@ pub mod double_option {
         }
     }
 
+    /// Deserializes `null` as `Some(None)`, distinguishing it from absent.
+    ///
+    /// # Errors
+    ///
+    /// Returns `D::Error` when the inner value fails to deserialize.
     pub fn deserialize<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Option<Option<T>>, D::Error> {

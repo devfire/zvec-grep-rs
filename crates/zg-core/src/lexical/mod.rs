@@ -129,6 +129,7 @@ impl LexicalSearchOptions {
     /// `maxFileSizeBytes`, `follow`, `paths`) have no service-options
     /// counterpart and keep their defaults here; callers that need them set
     /// the fields directly.
+    #[must_use]
     pub fn from_context(
         root: &Path,
         patterns: Vec<String>,
@@ -200,6 +201,13 @@ pub struct LexicalSearchResult {
 /// search setup (no pattern, unreadable pattern/ignore file, unknown file
 /// type, unusable matcher); per-file IO failures during the walk skip that
 /// file, mirroring ripgrep's tolerance.
+///
+/// # Errors
+///
+/// Returns `LEXICAL.EMPTY_PATTERN` when no pattern is given, `LEXICAL.UNKNOWN_FILE_TYPE`
+/// for unknown file types, `LEXICAL.PATTERN_FILE_UNREADABLE` or `LEXICAL.INVALID_PATTERN`
+/// for bad patterns, `LEXICAL.IGNORE_FILE_INVALID` for bad ignore files, or
+/// `LEXICAL.SEARCH_FAILED` when the walk itself fails.
 pub fn run_lexical_search(options: &LexicalSearchOptions) -> EngineResult<LexicalSearchResult> {
     use crate::error::{EngineError, EngineErrorCode};
 
@@ -924,12 +932,18 @@ fn expand_context_item(
             start_line: window_start,
             end_line: window_end,
             start_offset: 0,
-            end_offset: lines[window_end - 1].chars().count(),
+            end_offset: lines
+                .get(window_end - 1)
+                .map(|line| line.chars().count())
+                .unwrap_or(0),
         },
     );
     item.excerpt_range = Some(original);
     item.content = crate::types::Content::Text {
-        text: lines[window_start - 1..window_end].join("\n"),
+        text: lines
+            .get(window_start - 1..window_end)
+            .map(|window| window.join("\n"))
+            .unwrap_or_default(),
     };
 }
 
@@ -960,6 +974,7 @@ fn read_text_lines(
 use crate::error::EngineResult;
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use std::io::Write as _;

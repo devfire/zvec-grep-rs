@@ -18,11 +18,13 @@ pub const STRUCTURED_CODE_FORMATS: &[&str] = &[
 pub const COMPONENT_CODE_FORMATS: &[&str] = &["vue", "svelte"];
 
 /// True when `format` has a tree-sitter grammar.
+#[must_use]
 pub fn is_structured_code_format(format: &str) -> bool {
     STRUCTURED_CODE_FORMATS.contains(&format)
 }
 
 /// True when `format` is a component format (script-block extraction).
+#[must_use]
 pub fn is_component_code_format(format: &str) -> bool {
     COMPONENT_CODE_FORMATS.contains(&format)
 }

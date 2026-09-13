@@ -129,7 +129,11 @@ pub fn install(
     let path = config_path(target, home);
     match target {
         InstallTarget::Codex => install_codex(&path, options),
-        _ => install_json(target, &path, options),
+        InstallTarget::Claude
+        | InstallTarget::OpenCode
+        | InstallTarget::Cursor
+        | InstallTarget::Qwen
+        | InstallTarget::Qoder => install_json(target, &path, options),
     }
 }
 
@@ -139,7 +143,11 @@ pub fn uninstall(target: InstallTarget, home: &Path) -> Result<Vec<PathBuf>, Cli
     let path = config_path(target, home);
     match target {
         InstallTarget::Codex => uninstall_codex(&path),
-        _ => uninstall_json(&path),
+        InstallTarget::Claude
+        | InstallTarget::OpenCode
+        | InstallTarget::Cursor
+        | InstallTarget::Qwen
+        | InstallTarget::Qoder => uninstall_json(&path),
     }
 }
 
@@ -167,7 +175,11 @@ pub fn detect_targets(home: &Path) -> Vec<InstallTarget> {
 fn container_key(target: InstallTarget) -> &'static str {
     match target {
         InstallTarget::OpenCode => "mcp",
-        _ => "mcpServers",
+        InstallTarget::Claude
+        | InstallTarget::Codex
+        | InstallTarget::Cursor
+        | InstallTarget::Qwen
+        | InstallTarget::Qoder => "mcpServers",
     }
 }
 
@@ -181,12 +193,16 @@ fn server_entry(target: InstallTarget, options: &InstallOptions) -> serde_json::
                 "args": stdio_args(options),
                 "timeout": timeout_ms,
             });
-            if target == InstallTarget::Qwen {
-                entry["alwaysLoadTools"] = true.into();
-                entry["trust"] = true.into();
+            if target == InstallTarget::Qwen
+                && let Some(map) = entry.as_object_mut()
+            {
+                map.insert("alwaysLoadTools".to_owned(), true.into());
+                map.insert("trust".to_owned(), true.into());
             }
-            if target == InstallTarget::Qoder {
-                entry["trust"] = true.into();
+            if target == InstallTarget::Qoder
+                && let Some(map) = entry.as_object_mut()
+            {
+                map.insert("trust".to_owned(), true.into());
             }
             if target == InstallTarget::OpenCode {
                 entry = serde_json::json!({
@@ -210,12 +226,19 @@ fn server_entry(target: InstallTarget, options: &InstallOptions) -> serde_json::
                     "url": options.server_url,
                     "timeout": timeout_ms,
                 }),
-                _ => serde_json::json!({"url": options.server_url}),
+                InstallTarget::Claude | InstallTarget::Codex | InstallTarget::Cursor => {
+                    serde_json::json!({"url": options.server_url})
+                }
             };
-            if let Some(env) = &options.token_env {
-                entry["headers"] = serde_json::json!({
-                    "Authorization": format!("Bearer ${{{env}}}"),
-                });
+            if let Some(env) = &options.token_env
+                && let Some(map) = entry.as_object_mut()
+            {
+                map.insert(
+                    "headers".to_owned(),
+                    serde_json::json!({
+                        "Authorization": format!("Bearer ${{{env}}}"),
+                    }),
+                );
             }
             entry
         }
@@ -284,8 +307,12 @@ fn install_json(
             target.label()
         )));
     }
-    container["zvec_grep"] = server_entry(target, options);
-    root[key] = container;
+    if let Some(container_map) = container.as_object_mut() {
+        container_map.insert("zvec_grep".to_owned(), server_entry(target, options));
+    }
+    if let Some(root_map) = root.as_object_mut() {
+        root_map.insert(key.to_owned(), container);
+    }
     write_json_file(path, &root)?;
     Ok(vec![path.to_owned()])
 }
@@ -437,11 +464,9 @@ fn has_jsonc_comments(path: &Path) -> Result<bool, CliError> {
 
 fn contains_comment(text: &str) -> bool {
     let bytes = text.as_bytes();
-    let mut index = 0;
     let mut in_string = false;
     let mut escaped = false;
-    while index < bytes.len() {
-        let byte = bytes[index];
+    for (index, &byte) in bytes.iter().enumerate() {
         if in_string {
             if escaped {
                 escaped = false;
@@ -452,14 +477,15 @@ fn contains_comment(text: &str) -> bool {
             }
         } else if byte == b'"' {
             in_string = true;
-        } else if byte == b'/' && index + 1 < bytes.len() {
+        } else if byte == b'/'
+            && bytes
+                .get(index + 1)
+                .is_some_and(|next| *next == b'/' || *next == b'*')
+        {
             // `https://` inside a string is skipped above; a bare `//` or
             // `/*` outside strings is a JSONC comment.
-            if bytes[index + 1] == b'/' || bytes[index + 1] == b'*' {
-                return true;
-            }
+            return true;
         }
-        index += 1;
     }
     false
 }
@@ -500,7 +526,8 @@ fn write_text_file(path: &Path, text: &str) -> Result<(), CliError> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+// A panic in test code is just a test failure, so indexing in assertions needs no guard.
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

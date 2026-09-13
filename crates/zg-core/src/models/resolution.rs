@@ -34,6 +34,11 @@ pub struct ResolveEmbeddingReferenceOptions {
 /// Resolves which embedding model to use. Returns `Ok(None)` only when no
 /// source names a model; returns `Err` when the environment names a model
 /// outside the catalog.
+///
+/// # Errors
+///
+/// Returns `CONFIG.EMBEDDING_ENVIRONMENT_INVALID` when the environment names a model outside
+/// the catalog.
 pub fn resolve_embedding_reference(
     options: &ResolveEmbeddingReferenceOptions,
 ) -> EngineResult<Option<ModelReference>> {

@@ -164,6 +164,7 @@ pub struct GlobalConfig {
 
 impl GlobalConfig {
     /// Empty config: `{ version: 1 }`, returned when no file exists.
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             version: GLOBAL_CONFIG_VERSION,
@@ -197,12 +198,17 @@ pub struct GlobalConfigUpdate {
 /// The TypeScript implementation resolves `~/.zvec-grep/config.json` from the
 /// OS home directory; the Rust port routes through
 /// [`crate::paths::default_home`] so `$ZVEC_GREP_HOME` overrides keep working.
+#[must_use]
 pub fn global_config_path() -> PathBuf {
     crate::paths::default_home().join("config.json")
 }
 
 /// Reads and validates the global config; returns an empty config when the
 /// file does not exist.
+///
+/// # Errors
+///
+/// Returns [`EngineError`](crate::error::EngineError) with `CONFIG.INVALID` when the file fails validation, or `JSON.READ_FAILED` when it cannot be read or parsed.
 pub fn read_global_config(path: &Path) -> EngineResult<GlobalConfig> {
     let value: serde_json::Value =
         crate::utils::json_io::read_json_file(path, serde_json::Value::Null)?;
@@ -214,6 +220,10 @@ pub fn read_global_config(path: &Path) -> EngineResult<GlobalConfig> {
 
 /// Merges `update` over the current file content under a write lock and
 /// persists the result atomically, mirroring `updateGlobalConfig`.
+///
+/// # Errors
+///
+/// Returns [`EngineError`](crate::error::EngineError) with `CONFIG.INVALID` when the merged config fails validation, `LOCK.BUSY` when another writer holds the lock, or `JSON.WRITE_FAILED` when the atomic write fails.
 pub fn update_global_config(path: &Path, update: GlobalConfigUpdate) -> EngineResult<GlobalConfig> {
     let lock_path = path
         .parent()
@@ -252,6 +262,10 @@ pub fn update_global_config(path: &Path, update: GlobalConfigUpdate) -> EngineRe
 }
 
 /// Resolves embedding runtime options from the process environment.
+///
+/// # Errors
+///
+/// Returns [`EngineError`](crate::error::EngineError) with `CONFIG.INVALID_EMBEDDING_RUNTIME` when `explicit` sets an endpoint on a local model, a device on a remote model, or a non-HTTP(S) endpoint.
 pub fn resolve_embedding_runtime_options(
     reference: &str,
     explicit: &EmbeddingRuntimeConfig,
@@ -268,6 +282,10 @@ pub fn resolve_embedding_runtime_options(
 /// Precedence per field: explicit call arguments, workspace manifest entry,
 /// per-model/per-provider global config, environment, then the default
 /// (`""` for `api_key`, `"auto"` for local `device`).
+///
+/// # Errors
+///
+/// Returns [`EngineError`](crate::error::EngineError) with `CONFIG.INVALID_EMBEDDING_RUNTIME` when `explicit` sets an endpoint on a local model, a device on a remote model, or a non-HTTP(S) endpoint.
 pub fn resolve_embedding_runtime_options_with_env(
     reference: &str,
     explicit: &EmbeddingRuntimeConfig,
@@ -351,6 +369,7 @@ pub fn resolve_embedding_runtime_options_with_env(
 
 /// Extracts the provider segment (`"local"` from `"local/bge-m3"`).
 /// Returns `None` when there is no `/` or it leads the reference.
+#[must_use]
 pub fn provider_from_embedding(reference: &str) -> Option<&str> {
     match reference.find('/') {
         Some(index) if index > 0 => Some(&reference[..index]),
@@ -359,6 +378,7 @@ pub fn provider_from_embedding(reference: &str) -> Option<&str> {
 }
 
 /// Accepts only `http:`/`https:` URLs, mirroring the TS `isHttpEndpoint`.
+#[must_use]
 pub fn is_http_endpoint(value: &str) -> bool {
     let Ok(url) = url::Url::parse(value) else {
         return false;

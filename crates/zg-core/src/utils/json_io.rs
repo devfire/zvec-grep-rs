@@ -30,6 +30,10 @@ pub const DEFAULT_MODES: WriteModes = WriteModes {
 
 /// Reads and parses a JSON file; returns `fallback` when it does not exist.
 /// Parse and IO errors propagate.
+///
+/// # Errors
+///
+/// Returns [`EngineError`](crate::error::EngineError) with `JSON.READ_FAILED` when the file cannot be read or fails to parse.
 pub fn read_json_file<T: DeserializeOwned>(path: &Path, fallback: T) -> EngineResult<T> {
     match fs::read_to_string(path) {
         Ok(text) => serde_json::from_str(&text).map_err(|error| {
@@ -50,6 +54,10 @@ pub fn read_json_file<T: DeserializeOwned>(path: &Path, fallback: T) -> EngineRe
 
 /// Writes `value` as pretty JSON atomically: write `<path>.<pid>.<uuid>.tmp`
 /// (optionally chmod), then rename over the target. Parent dirs are created.
+///
+/// # Errors
+///
+/// Returns [`EngineError`](crate::error::EngineError) with `JSON.WRITE_FAILED` when the value cannot be serialized or the atomic write fails.
 pub fn write_json_file<T: Serialize>(
     path: &Path,
     value: &T,

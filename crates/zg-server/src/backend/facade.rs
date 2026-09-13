@@ -33,6 +33,7 @@ pub struct DaemonBackend {
 impl DaemonBackend {
     /// Builds the backend: shared scheduler, pool, and actor registry.
     /// No actors spawn until the first command.
+    #[must_use]
     pub fn new(options: DaemonBackendOptions) -> Self {
         let scheduler = JobScheduler::new(options.scheduler);
         let pool = EmbeddingModelPool::new(options.pool);
@@ -59,16 +60,23 @@ impl DaemonBackend {
     }
 
     /// Shared scheduler (waiting on jobs, load reporting).
+    #[must_use]
     pub fn scheduler(&self) -> &JobScheduler {
         &self.scheduler
     }
 
     /// Shared model pool.
+    #[must_use]
     pub fn pool(&self) -> &EmbeddingModelPool {
         &self.pool
     }
 
     /// Hybrid search over an indexed root.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError::Daemon`] when the root cannot be activated or the actor call
+    /// fails, or [`BackendError::Engine`] when the search itself fails.
     pub async fn search(
         &self,
         root: &str,
@@ -79,6 +87,11 @@ impl DaemonBackend {
     }
 
     /// Submits an index job for a root.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError::Daemon`] when the root cannot be activated or the actor call
+    /// fails, or [`BackendError::Engine`] when job submission fails.
     pub async fn index(
         &self,
         root: &str,
@@ -89,11 +102,16 @@ impl DaemonBackend {
     }
 
     /// Deletes a root's index storage and stops its actor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError::Daemon`] when the root is invalid or the actor call fails,
+    /// or [`BackendError::Engine`] when dropping the index storage fails.
     pub async fn index_drop(&self, root: &str) -> Result<bool, BackendError> {
         let key = resolve_requested_root(root, true)?;
         if let Some(handle) = self.manager.get(&key) {
             let dropped: bool = send_recv(&handle, |reply| RootCommand::Drop { reply }).await??;
-            self.manager.unregister(&key);
+            let _ = self.manager.unregister(&key);
             return Ok(dropped);
         }
         // Never-activated roots drop straight through the facade: no model
@@ -108,6 +126,11 @@ impl DaemonBackend {
     }
 
     /// In-process lexical search over a root.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError::Daemon`] when the root cannot be activated or the actor call
+    /// fails, or [`BackendError::Engine`] when the lexical search fails.
     pub async fn rg_search(
         &self,
         root: &str,
@@ -118,12 +141,18 @@ impl DaemonBackend {
     }
 
     /// Index status with live job overlay.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError::Daemon`] when the root cannot be activated or the actor call
+    /// fails, or [`BackendError::Engine`] when status collection fails.
     pub async fn index_status(&self, root: &str) -> Result<DaemonIndexStatus, BackendError> {
         let handle = self.manager.activate_for_index(root)?;
         send_recv(&handle, |reply| RootCommand::Status { reply }).await?
     }
 
     /// Daemon liveness snapshot.
+    #[must_use]
     pub fn server_status(&self) -> DaemonServerStatus {
         let load = self.scheduler.load();
         let pool = self.pool.snapshot();

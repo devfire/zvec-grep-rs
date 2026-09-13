@@ -14,6 +14,13 @@ use crate::extraction::{ChunkOptions, make_entity_id, validate_source_file};
 use crate::types::{Content, Entity, EntityFragment, FileInfo, Range};
 
 /// Chunks `text` into line windows and wraps each as an [`EntityFragment`].
+///
+/// # Errors
+///
+/// Returns `EXTRACTORS.EMPTY_FILE_ID`, `EXTRACTORS.EMPTY_ABSOLUTE_PATH`, or
+/// `EXTRACTORS.EMPTY_RELATIVE_PATH` when the source file identity is invalid,
+/// `EXTRACTORS.TEXT_INVALID_CHUNK_SIZE` when the chunk size is zero, or
+/// `EXTRACTORS.TEXT_INVALID_CHUNK_OVERLAP` when overlap is not smaller than the chunk size.
 pub fn extract_fragments(
     file: &FileInfo,
     text: &str,
@@ -31,6 +38,7 @@ pub fn extract_fragments(
 
 /// Line-windows `text` without option handling (mirrors
 /// `extractPlainTextFragments`). Callers pass already-resolved limits.
+#[must_use]
 pub fn extract_plain_text_fragments(
     file: &FileInfo,
     text: &str,
@@ -73,11 +81,18 @@ fn chunk_text(text: &str, max_chars: usize, overlap_chars: usize) -> Vec<TextChu
     let mut start_index = 0;
 
     while start_index < lines.len() {
-        if line_chars[start_index] + 1 > max_chars {
+        let (Some(&first_chars), Some(first_line), Some(&first_offset)) = (
+            line_chars.get(start_index),
+            lines.get(start_index),
+            line_offsets.get(start_index),
+        ) else {
+            break;
+        };
+        if first_chars + 1 > max_chars {
             chunks.extend(split_long_line(
-                lines[start_index],
+                first_line,
                 start_index,
-                line_offsets[start_index],
+                first_offset,
                 max_chars,
             ));
             start_index += 1;
@@ -87,7 +102,10 @@ fn chunk_text(text: &str, max_chars: usize, overlap_chars: usize) -> Vec<TextChu
         let mut used_chars = 0;
         let mut end_index = start_index;
         while end_index < lines.len() {
-            let line_length = line_chars[end_index] + 1;
+            let Some(&line_length_chars) = line_chars.get(end_index) else {
+                break;
+            };
+            let line_length = line_length_chars + 1;
             if used_chars + line_length > max_chars && end_index > start_index {
                 break;
             }
@@ -95,18 +113,28 @@ fn chunk_text(text: &str, max_chars: usize, overlap_chars: usize) -> Vec<TextChu
             end_index += 1;
         }
 
-        let chunk = lines[start_index..end_index].join("\n");
+        let chunk = lines
+            .get(start_index..end_index)
+            .map(|window| window.join("\n"))
+            .unwrap_or_default();
         if !chunk.trim().is_empty() {
             // `end_index` always advanced past `start_index` (the first line
             // fits: over-long single lines take the branch above).
             let end_line_index = end_index - 1;
+            let (Some(&start_offset), Some(&end_offset_base), Some(end_line)) = (
+                line_offsets.get(start_index),
+                line_offsets.get(end_line_index),
+                lines.get(end_line_index),
+            ) else {
+                break;
+            };
             chunks.push(TextChunk {
                 text: chunk,
                 range: Range::Text {
                     start_line: start_index + 1,
                     end_line: end_index,
-                    start_offset: line_offsets[start_index],
-                    end_offset: line_offsets[end_line_index] + lines[end_line_index].len(),
+                    start_offset,
+                    end_offset: end_offset_base + end_line.len(),
                 },
             });
         }
@@ -137,13 +165,18 @@ fn split_long_line(
         let cut_chars = if remaining <= max_chars {
             remaining
         } else {
-            find_line_cut_chars(&chars[char_cursor..], max_chars)
+            let Some(rest) = chars.get(char_cursor..) else {
+                break;
+            };
+            find_line_cut_chars(rest, max_chars)
         };
-        let cut_bytes: usize = chars[char_cursor..char_cursor + cut_chars]
-            .iter()
-            .map(|c| c.len_utf8())
-            .sum();
-        let slice = &line[byte_cursor..byte_cursor + cut_bytes];
+        let cut_bytes: usize = chars
+            .get(char_cursor..char_cursor + cut_chars)
+            .map(|window| window.iter().map(|c| c.len_utf8()).sum())
+            .unwrap_or(0);
+        let Some(slice) = line.get(byte_cursor..byte_cursor + cut_bytes) else {
+            break;
+        };
         if !slice.trim().is_empty() {
             let line_number = line_index + 1;
             chunks.push(TextChunk {
@@ -189,7 +222,10 @@ fn compute_next_start_line(
     let mut index = end_index;
     while index > start_index && overlap_count < overlap_chars {
         index -= 1;
-        overlap_count += line_chars[index] + 1;
+        let Some(&count) = line_chars.get(index) else {
+            break;
+        };
+        overlap_count += count + 1;
         overlap_lines += 1;
     }
 

@@ -89,6 +89,7 @@ fn download_failed(entry: &Model2VecEntry, detail: impl std::fmt::Display) -> En
 impl Model2VecEmbeddingModel {
     /// Builds the backend from the resolved factory plan fields for the
     /// `ModelBuildPlan::Model2Vec` arm (catalog entry plus cache directory).
+    #[must_use]
     pub fn from_plan(entry: Model2VecEntry, cache_dir: PathBuf) -> Self {
         let info = EmbeddingModelInfo {
             reference: entry.reference.to_owned(),
@@ -113,6 +114,11 @@ impl Model2VecEmbeddingModel {
 
     /// Downloads (when the cache misses) and loads weights plus tokenizer,
     /// reporting through `sink`. Idempotent: later calls reuse the load.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ModelError::Model2VecDownload`] when artifact download fails, or
+    /// [`ModelError::Model2VecLoad`] when weights or tokenizer fail to load.
     pub fn prepare(&self, sink: Option<ModelLoadSink>) -> EngineResult<()> {
         self.ensure_loaded(sink)?;
         Ok(())
@@ -140,7 +146,7 @@ impl Model2VecEmbeddingModel {
                 Ok(loaded)
             }
             Err(err) => {
-                reporter.warning(
+                let _ = reporter.warning(
                     "Unable to prepare the local embedding model. Check network access and the model cache.",
                 );
                 Err(err)
@@ -306,21 +312,25 @@ fn read_static_embedding_table(
     let view = parsed
         .tensor(tensor_name)
         .map_err(|err| load_failed(format!("tensor '{tensor_name}' is missing: {err}")))?;
-    match view.dtype() {
-        Dtype::F16 | Dtype::F32 => {}
-        dtype => {
-            return Err(load_failed(format!(
-                "tensor '{tensor_name}' has incompatible dtype {dtype:?}"
-            )));
-        }
+    // `Dtype` is `#[non_exhaustive]`, so a wildcard arm is unavoidable; `matches!` keeps the
+    // accepted dtypes explicit without one.
+    if !matches!(view.dtype(), Dtype::F16 | Dtype::F32) {
+        return Err(load_failed(format!(
+            "tensor '{tensor_name}' has incompatible dtype {:?}",
+            view.dtype()
+        )));
     }
     let shape = view.shape();
-    if shape.len() != 2 || shape[1] != expected_dimension {
+    let &[rows, dimension] = shape else {
+        return Err(load_failed(format!(
+            "tensor '{tensor_name}' is missing or incompatible"
+        )));
+    };
+    if dimension != expected_dimension {
         return Err(load_failed(format!(
             "tensor '{tensor_name}' is missing or incompatible"
         )));
     }
-    let rows = shape[0];
     let bytes_per_value = if view.dtype() == Dtype::F16 { 2 } else { 4 };
     let value_count = rows
         .checked_mul(expected_dimension)
@@ -337,12 +347,17 @@ fn read_static_embedding_table(
     let mut data = Vec::with_capacity(value_count);
     if view.dtype() == Dtype::F16 {
         for chunk in raw.chunks_exact(2) {
-            let bits = u16::from_le_bytes([chunk[0], chunk[1]]);
-            data.push(half::f16::from_bits(bits).to_f32());
+            let pair: [u8; 2] = chunk
+                .try_into()
+                .map_err(|_| load_failed(format!("tensor '{tensor_name}' has invalid offsets")))?;
+            data.push(half::f16::from_bits(u16::from_le_bytes(pair)).to_f32());
         }
     } else {
         for chunk in raw.chunks_exact(4) {
-            data.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+            let quad: [u8; 4] = chunk
+                .try_into()
+                .map_err(|_| load_failed(format!("tensor '{tensor_name}' has invalid offsets")))?;
+            data.push(f32::from_le_bytes(quad));
         }
     }
     Ok(EmbeddingTable {

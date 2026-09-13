@@ -20,6 +20,7 @@ pub enum RecallPath {
 }
 
 impl RecallPath {
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Fts => "fts",
@@ -55,6 +56,7 @@ pub struct Candidate {
 }
 
 impl Candidate {
+    #[must_use]
     pub fn new(id: String, entity: Entity, file: FileInfo, forced: bool) -> Self {
         Self {
             id,
@@ -129,6 +131,7 @@ pub fn fuse_candidates(candidates: &mut [Candidate]) {
 }
 
 /// Materializes one candidate as a ranked hit (mirrors `candidateToHit`).
+#[must_use]
 pub fn candidate_to_hit(candidate: &Candidate, limit: usize, trace: bool) -> SearchHit {
     SearchHit {
         entity: candidate.entity.clone(),
@@ -164,6 +167,7 @@ fn evidence_to_hit_evidence(evidence: &CandidateEvidence) -> SearchHitEvidence {
 }
 
 /// Public identity used for group collapse (mirrors `publicEntityId`).
+#[must_use]
 pub fn public_entity_id(fragment: &EntityFragment) -> &str {
     fragment
         .group
@@ -217,6 +221,7 @@ fn derive_matched_by(sources: &HashSet<RecallPath>) -> SearchMatchedBy {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use crate::types::{Content, EntityMetadata};

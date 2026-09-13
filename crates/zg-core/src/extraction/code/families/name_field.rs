@@ -23,6 +23,7 @@ pub fn name_field_extract_name(node: &SyntaxNode<'_>) -> Option<String> {
 
 /// Finds the first `identifier` / `property_identifier` / `type_identifier`
 /// named child, if any.
+#[must_use]
 pub fn find_named_identifier_child<'a>(node: &SyntaxNode<'a>) -> Option<SyntaxNode<'a>> {
     for child in node.named_children() {
         match child.kind() {
@@ -34,16 +35,19 @@ pub fn find_named_identifier_child<'a>(node: &SyntaxNode<'a>) -> Option<SyntaxNo
 }
 
 /// Signature hook shared by name-field adapters.
+#[must_use]
 pub fn name_field_extract_signature(node: &SyntaxNode<'_>) -> Option<String> {
     extract_generic_signature(node)
 }
 
 /// Doc hook shared by name-field adapters.
+#[must_use]
 pub fn name_field_extract_doc(node: &SyntaxNode<'_>) -> Option<String> {
     extract_preceding_doc(node)
 }
 
 /// Modifier hook shared by name-field adapters.
+#[must_use]
 pub fn name_field_extract_modifiers(
     node: &SyntaxNode<'_>,
 ) -> Vec<crate::types::CodeEntityModifier> {

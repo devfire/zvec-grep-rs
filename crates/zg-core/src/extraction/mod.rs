@@ -28,11 +28,13 @@ impl ChunkOptions {
     pub const DEFAULT_MAX_CHUNK_CHARS: usize = 3600;
     pub const DEFAULT_OVERLAP_CHARS: usize = 540;
 
+    #[must_use]
     pub fn max_chunk_chars(&self) -> usize {
         self.max_chunk_chars
             .unwrap_or(Self::DEFAULT_MAX_CHUNK_CHARS)
     }
 
+    #[must_use]
     pub fn overlap_chars(&self) -> usize {
         self.overlap_chars.unwrap_or(Self::DEFAULT_OVERLAP_CHARS)
     }
@@ -53,6 +55,7 @@ pub enum Source<'a> {
 }
 
 impl Source<'_> {
+    #[must_use]
     pub fn file(&self) -> &FileInfo {
         match self {
             Self::Text { file, .. } | Self::Image { file, .. } => file,
@@ -70,11 +73,23 @@ pub struct ExtractedFragment {
 }
 
 /// Extracts fragments exactly as stored in the index.
+///
+/// # Errors
+///
+/// Returns `EXTRACTORS.EMPTY_FILE_ID`, `EXTRACTORS.EMPTY_ABSOLUTE_PATH`, or
+/// `EXTRACTORS.EMPTY_RELATIVE_PATH` when the source file identity is invalid, or the
+/// routed extractor's error (bad chunk options, empty image data).
 pub fn extract(source: &Source<'_>, options: &ChunkOptions) -> EngineResult<Vec<EntityFragment>> {
     extract_internal(source, options).map(|out| out.into_fragments())
 }
 
 /// Extracts fragments plus per-fragment embedding content for indexing.
+///
+/// # Errors
+///
+/// Returns `EXTRACTORS.EMPTY_FILE_ID`, `EXTRACTORS.EMPTY_ABSOLUTE_PATH`, or
+/// `EXTRACTORS.EMPTY_RELATIVE_PATH` when the source file identity is invalid, or the
+/// routed extractor's error (bad chunk options, empty image data).
 pub fn extract_for_indexing(
     source: &Source<'_>,
     options: &ChunkOptions,

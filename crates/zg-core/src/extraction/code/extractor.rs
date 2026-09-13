@@ -66,6 +66,12 @@ fn language_for_format(format: &str) -> Option<tree_sitter::Language> {
 
 /// Entry point used by [`crate::extraction`]: structural fragments plus
 /// per-fragment embedding content, or `None` when this file is not code.
+///
+/// # Errors
+///
+/// Returns `EXTRACTORS.CODE_INVALID_CHUNK_SIZE` when the chunk size is zero,
+/// `EXTRACTORS.CODE_INVALID_CHUNK_OVERLAP` when overlap is not smaller than the chunk
+/// size, or the component script-block extraction error.
 pub fn extract_for_indexing(
     file: &FileInfo,
     text: &str,
@@ -407,14 +413,11 @@ fn split_large_node(
         let statement_text = statement.text().unwrap_or("");
         let statement_chars = statement_text.chars().count();
         if statement_chars > max_chars {
-            if index > group_start {
-                out.push(slice_statements(
-                    source,
-                    base_start,
-                    &statements,
-                    group_start,
-                    index - 1,
-                ));
+            if index > group_start
+                && let Some(window) = statements.get(group_start..index)
+                && let Some(fragment) = slice_statements(source, base_start, window)
+            {
+                out.push(fragment);
             }
             out.extend(split_text_by_lines(
                 statement_text,
@@ -429,13 +432,11 @@ fn split_large_node(
         }
         let separator_chars = usize::from(index > group_start);
         if group_chars + separator_chars + statement_chars > max_chars && index > group_start {
-            out.push(slice_statements(
-                source,
-                base_start,
-                &statements,
-                group_start,
-                index - 1,
-            ));
+            if let Some(window) = statements.get(group_start..index)
+                && let Some(fragment) = slice_statements(source, base_start, window)
+            {
+                out.push(fragment);
+            }
             let overlap_start =
                 compute_overlap_start(&statements, group_start, index - 1, overlap_chars);
             let mut candidate_start = overlap_start.min(index);
@@ -443,7 +444,10 @@ fn split_large_node(
             let mut previous = index;
             while previous > candidate_start {
                 previous -= 1;
-                let added = statements[previous].text().unwrap_or("").chars().count() + 1;
+                let Some(statement) = statements.get(previous) else {
+                    break;
+                };
+                let added = statement.text().unwrap_or("").chars().count() + 1;
                 if candidate_chars + added > max_chars {
                     candidate_start = previous + 1;
                     break;
@@ -457,14 +461,11 @@ fn split_large_node(
         group_chars += separator_chars + statement_chars;
     }
 
-    if group_start < statements.len() {
-        out.push(slice_statements(
-            source,
-            base_start,
-            &statements,
-            group_start,
-            statements.len() - 1,
-        ));
+    if group_start < statements.len()
+        && let Some(window) = statements.get(group_start..)
+        && let Some(fragment) = slice_statements(source, base_start, window)
+    {
+        out.push(fragment);
     }
     out
 }
@@ -472,33 +473,33 @@ fn split_large_node(
 fn slice_statements(
     source: &str,
     base_start: usize,
-    statements: &[SyntaxNode<'_>],
-    start_index: usize,
-    end_index: usize,
-) -> CodeWindow {
-    let start = statements[start_index].start_byte();
-    let end = statements[end_index].end_byte();
+    window: &[SyntaxNode<'_>],
+) -> Option<CodeWindow> {
+    let first = window.first()?;
+    let last = window.last()?;
+    let start = first.start_byte();
+    let end = last.end_byte();
     let text = slice_bytes(
         source,
         start.saturating_sub(base_start),
         end.saturating_sub(base_start),
     )
     .to_owned();
-    let embedding_text = statements[start_index..=end_index]
+    let embedding_text = window
         .iter()
         .map(|statement| statement.text().unwrap_or(""))
         .collect::<Vec<_>>()
         .join("\n");
-    CodeWindow {
+    Some(CodeWindow {
         text,
         embedding_text: Some(embedding_text),
         range: Range::Text {
-            start_line: statements[start_index].start_row() + 1,
-            end_line: statements[end_index].end_row() + 1,
+            start_line: first.start_row() + 1,
+            end_line: last.end_row() + 1,
             start_offset: start,
             end_offset: end,
         },
-    }
+    })
 }
 
 fn split_text_by_lines(
@@ -513,29 +514,38 @@ fn split_text_by_lines(
     let mut line_index = 0usize;
     let mut offset = start_offset;
     while line_index < lines.len() {
-        if lines[line_index].chars().count() > max_chars {
+        let Some(current) = lines.get(line_index) else {
+            break;
+        };
+        if current.chars().count() > max_chars {
             out.extend(split_long_line_by_chars(
-                lines[line_index],
+                current,
                 max_chars,
                 start_line + line_index,
                 offset,
                 overlap_chars,
             ));
-            offset += lines[line_index].len() + 1;
+            offset += current.len() + 1;
             line_index += 1;
             continue;
         }
         let mut end_index = line_index;
         let mut used_chars = 0usize;
         while end_index < lines.len() {
-            let line_length = lines[end_index].chars().count() + 1;
+            let Some(line) = lines.get(end_index) else {
+                break;
+            };
+            let line_length = line.chars().count() + 1;
             if used_chars + line_length > max_chars && end_index > line_index {
                 break;
             }
             used_chars += line_length;
             end_index += 1;
         }
-        let chunk = lines[line_index..end_index].join("\n");
+        let chunk = lines
+            .get(line_index..end_index)
+            .map(|window| window.join("\n"))
+            .unwrap_or_default();
         out.push(CodeWindow {
             text: chunk.clone(),
             embedding_text: None,
@@ -551,7 +561,10 @@ fn split_text_by_lines(
         }
         let overlap_lines = compute_line_overlap(&lines, line_index, end_index, overlap_chars);
         let next_index = end_index - overlap_lines;
-        offset += lines[line_index..next_index].join("\n").len();
+        offset += lines
+            .get(line_index..next_index)
+            .map(|window| window.join("\n").len())
+            .unwrap_or(0);
         if next_index > line_index {
             offset += 1;
         }
@@ -578,14 +591,22 @@ fn split_long_line_by_chars(
     while relative_start < total {
         let raw_end = (relative_start + max_chars).min(total);
         let relative_end = raw_end;
+        let (Some(&byte_start), Some(&byte_end)) =
+            (bounds.get(relative_start), bounds.get(relative_end))
+        else {
+            break;
+        };
+        let Some(window_text) = text.get(byte_start..byte_end) else {
+            break;
+        };
         out.push(CodeWindow {
-            text: text[bounds[relative_start]..bounds[relative_end]].to_owned(),
+            text: window_text.to_owned(),
             embedding_text: None,
             range: Range::Text {
                 start_line: line,
                 end_line: line,
-                start_offset: start_offset + bounds[relative_start],
-                end_offset: start_offset + bounds[relative_end],
+                start_offset: start_offset + byte_start,
+                end_offset: start_offset + byte_end,
             },
         });
         if relative_end >= total {
@@ -611,7 +632,10 @@ fn compute_overlap_start(
     let mut index = group_end + 1;
     while index > group_start {
         index -= 1;
-        chars += statements[index].text().unwrap_or("").chars().count();
+        let Some(statement) = statements.get(index) else {
+            break;
+        };
+        chars += statement.text().unwrap_or("").chars().count();
         if index < group_end {
             chars += 1;
         }
@@ -634,7 +658,10 @@ fn compute_line_overlap(
     let mut chars = 0usize;
     let mut count = 0usize;
     for index in (start_index..end_index).rev() {
-        chars += lines[index].chars().count() + 1;
+        let Some(line) = lines.get(index) else {
+            break;
+        };
+        chars += line.chars().count() + 1;
         if chars > overlap_chars {
             break;
         }
@@ -1016,7 +1043,7 @@ fn script_lang_attr(attrs: &str) -> Option<String> {
     while index + 4 <= bytes.len() {
         if match_lang_keyword(bytes, index) {
             let mut cursor = index + 4;
-            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            while bytes.get(cursor).is_some_and(|b| b.is_ascii_whitespace()) {
                 cursor += 1;
             }
             if bytes.get(cursor) != Some(&b'=') {
@@ -1024,17 +1051,16 @@ fn script_lang_attr(attrs: &str) -> Option<String> {
                 continue;
             }
             cursor += 1;
-            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            while bytes.get(cursor).is_some_and(|b| b.is_ascii_whitespace()) {
                 cursor += 1;
             }
-            if cursor < bytes.len() && (bytes[cursor] == b'"' || bytes[cursor] == b'\'') {
+            if matches!(bytes.get(cursor), Some(b'"') | Some(b'\'')) {
                 cursor += 1;
             }
             let start = cursor;
-            while cursor < bytes.len()
-                && (bytes[cursor].is_ascii_alphanumeric()
-                    || bytes[cursor] == b'_'
-                    || bytes[cursor] == b'-')
+            while bytes
+                .get(cursor)
+                .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-')
             {
                 cursor += 1;
             }
@@ -1052,13 +1078,13 @@ fn script_lang_attr(attrs: &str) -> Option<String> {
 /// sides (mirrors the TS `\blang\s*=` pattern).
 fn match_lang_keyword(bytes: &[u8], index: usize) -> bool {
     let word = b"lang";
-    if bytes.len() < index + word.len() {
+    let Some(word_bytes) = bytes.get(index..index + word.len()) else {
+        return false;
+    };
+    if !word_bytes.eq_ignore_ascii_case(word) {
         return false;
     }
-    if !bytes[index..index + word.len()].eq_ignore_ascii_case(word) {
-        return false;
-    }
-    if index > 0 && is_attr_word_char(bytes[index - 1]) {
+    if index > 0 && bytes.get(index - 1).is_some_and(|b| is_attr_word_char(*b)) {
         return false;
     }
     !bytes
@@ -1077,7 +1103,10 @@ fn find_insensitive(haystack: &[u8], needle: &str, from: usize) -> Option<usize>
     }
     let mut start = from.min(haystack.len());
     while start + needle.len() <= haystack.len() {
-        if haystack[start..start + needle.len()].eq_ignore_ascii_case(needle) {
+        if haystack
+            .get(start..start + needle.len())
+            .is_some_and(|window| window.eq_ignore_ascii_case(needle))
+        {
             return Some(start);
         }
         start += 1;
@@ -1110,7 +1139,10 @@ fn find_script_blocks(text: &str) -> Vec<ScriptBlock> {
             break;
         };
         let mut close_end = close + 8;
-        while close_end < bytes.len() && bytes[close_end].is_ascii_whitespace() {
+        while bytes
+            .get(close_end)
+            .is_some_and(|b| b.is_ascii_whitespace())
+        {
             close_end += 1;
         }
         if bytes.get(close_end) != Some(&b'>') {
@@ -1196,7 +1228,11 @@ fn remap_script_block_range(range: &Range, start_line: usize, start_offset: usiz
             start_offset: start_offset + start_off,
             end_offset: start_offset + end_off,
         },
-        other => other.clone(),
+        Range::File
+        | Range::Byte { .. }
+        | Range::Page { .. }
+        | Range::PageText { .. }
+        | Range::PageRegion { .. } => range.clone(),
     }
 }
 

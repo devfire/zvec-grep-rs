@@ -25,6 +25,7 @@ pub fn global_config_path() -> PathBuf {
 }
 
 /// Lexically absolute form of `path` (no symlink resolution, like `resolve`).
+#[must_use]
 pub fn normalize_path(path: &Path) -> PathBuf {
     let mut result = PathBuf::new();
     for component in path.components() {
@@ -34,7 +35,9 @@ pub fn normalize_path(path: &Path) -> PathBuf {
             Component::ParentDir => {
                 result.pop();
             }
-            other => result.push(other),
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                result.push(component);
+            }
         }
     }
     if result.as_os_str().is_empty() {
@@ -45,11 +48,13 @@ pub fn normalize_path(path: &Path) -> PathBuf {
 }
 
 /// Renders a path with `/` separators (for display and index keys).
+#[must_use]
 pub fn to_display_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
 /// True when `child` equals `parent` or lives underneath it.
+#[must_use]
 pub fn is_path_inside(parent: &Path, child: &Path) -> bool {
     if child == parent {
         return true;

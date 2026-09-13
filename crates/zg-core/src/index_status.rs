@@ -30,6 +30,7 @@ pub enum IndexJobState {
 
 /// True when the status reports any adds, modifications, deletions, pending
 /// files, or failures that warrant a refresh.
+#[must_use]
 pub fn index_status_needs_refresh(status: Option<&WorkspaceIndexStatus>) -> bool {
     status.is_some_and(|status| {
         status.files_added > 0
@@ -42,6 +43,7 @@ pub fn index_status_needs_refresh(status: Option<&WorkspaceIndexStatus>) -> bool
 
 /// Derives `{ completed: filesUnchanged, total: filesScanned }` from a
 /// persisted status; `None` when there is no status.
+#[must_use]
 pub fn index_completion_from_status(
     status: Option<&WorkspaceIndexStatus>,
 ) -> Option<IndexCompletion> {
@@ -56,6 +58,7 @@ pub fn index_completion_from_status(
 /// Net succeeded files are `filesIndexed - filesFailed` (saturating at zero);
 /// without a base completion the progress must carry both numbers, otherwise
 /// the succeeded count is added to the base and clamped to its total.
+#[must_use]
 pub fn merge_index_completion(
     completion: Option<&IndexCompletion>,
     progress: Option<&IndexProgress>,
@@ -81,6 +84,7 @@ pub fn merge_index_completion(
 
 /// Applies the progress overlay only while the job is running; any other
 /// state (or no state) returns the base completion unchanged.
+#[must_use]
 pub fn index_completion_for_job(
     completion: Option<IndexCompletion>,
     state: Option<IndexJobState>,

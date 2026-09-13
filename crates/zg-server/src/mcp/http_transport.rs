@@ -66,6 +66,10 @@ impl McpHttpEndpoint {
     /// Builds the endpoint: session manager with the idle TTL, one
     /// stateful rmcp service whose factory mints a fresh tool router per
     /// session. Non-positive limits fail like the TS `RangeError`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::InvalidParams`] when the legacy session limits are non-positive.
     pub fn new(
         backend: DaemonBackend,
         version: String,
@@ -206,7 +210,10 @@ fn is_initialize_request(body: &[u8]) -> bool {
     match &value {
         serde_json::Value::Object(_) => is_initialize(&value),
         serde_json::Value::Array(items) => items.iter().any(is_initialize),
-        _ => false,
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => false,
     }
 }
 

@@ -180,6 +180,7 @@ pub struct RecognizedFileType {
 
 /// All recognized types with the patterns that produce them, deduplicated by
 /// `kind:format`.
+#[must_use]
 pub fn list_recognized_file_types() -> Vec<RecognizedFileType> {
     let mut grouped: BTreeMap<(FileKind, &'static str), Vec<String>> = BTreeMap::new();
     for (kind, table) in [
@@ -217,6 +218,7 @@ pub fn list_recognized_file_types() -> Vec<RecognizedFileType> {
 }
 
 /// Copies of the binary extension groups.
+#[must_use]
 pub fn list_known_binary_extension_groups() -> Vec<(String, Vec<String>)> {
     BINARY_EXTENSION_GROUPS
         .iter()

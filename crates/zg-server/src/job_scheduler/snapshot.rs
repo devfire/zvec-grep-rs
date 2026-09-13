@@ -66,6 +66,7 @@ pub struct IndexJobSnapshot {
 
 impl IndexJobSnapshot {
     /// True once the job reached succeeded/failed/cancelled.
+    #[must_use]
     pub fn is_terminal(&self) -> bool {
         matches!(
             self.state,

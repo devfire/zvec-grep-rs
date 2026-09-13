@@ -73,6 +73,7 @@ pub struct IndexCoordinator {
 
 impl IndexCoordinator {
     /// Empty coordinator for `root`.
+    #[must_use]
     pub fn new(root: &str, budget: Option<MaxChangedPaths>) -> Self {
         Self {
             root: root.to_owned(),
@@ -90,6 +91,7 @@ impl IndexCoordinator {
     /// True when unflushed changes are waiting for a run (merged but not
     /// yet taken). Search auto-update consults this so it never enqueues
     /// an empty run that would bump the dirty revision for nothing.
+    #[must_use]
     pub fn has_pending(&self) -> bool {
         !lock(&self.pending).set.is_empty()
     }
@@ -98,6 +100,10 @@ impl IndexCoordinator {
     /// one job built by `build_run` (which receives the take handle).
     /// Followup chaining is always on, mirroring TS
     /// `followupIfRunning: true`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DaemonError::ShuttingDown`] when the scheduler is closed.
     pub fn enqueue(
         &self,
         changes: &ChangeSetSnapshot,
@@ -151,6 +157,7 @@ fn lock<T>(state: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use crate::root_runtime::RootKey;

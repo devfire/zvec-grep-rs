@@ -66,6 +66,7 @@ pub fn extract_generic_signature(node: &SyntaxNode<'_>) -> Option<String> {
 /// Mirrors `extractPrecedingDoc`: walks `previousNamedSibling` while the
 /// sibling is a comment, cleans each with [`clean_comment_text`], and joins
 /// them in source order.
+#[must_use]
 pub fn extract_preceding_doc(node: &SyntaxNode<'_>) -> Option<String> {
     let mut comments = Vec::new();
     let mut sibling = node.prev_named_sibling();
@@ -102,6 +103,7 @@ pub fn extract_preceding_doc(node: &SyntaxNode<'_>) -> Option<String> {
 /// `export_statement`, then scans the generic signature for
 /// `public|private|protected|internal|static|async|pub` (`pub` normalizes to
 /// `public`).
+#[must_use]
 pub fn extract_common_modifiers(node: &SyntaxNode<'_>) -> Vec<CodeEntityModifier> {
     let mut modifiers: Vec<CodeEntityModifier> = Vec::new();
     let signature = extract_generic_signature(node)
@@ -133,11 +135,13 @@ pub fn extract_common_modifiers(node: &SyntaxNode<'_>) -> Vec<CodeEntityModifier
 }
 
 /// True when any ancestor of `node` has kind `kind`.
+#[must_use]
 pub fn is_inside_node_type(node: &SyntaxNode<'_>, kind: &str) -> bool {
     closest_ancestor(node, kind).is_some()
 }
 
 /// Nearest ancestor of `node` with kind `kind`, if any.
+#[must_use]
 pub fn closest_ancestor<'a>(node: &SyntaxNode<'a>, kind: &str) -> Option<SyntaxNode<'a>> {
     let mut parent = node.parent();
     while let Some(current) = parent {
@@ -150,6 +154,7 @@ pub fn closest_ancestor<'a>(node: &SyntaxNode<'a>, kind: &str) -> Option<SyntaxN
 }
 
 /// First non-blank line of `text`, trimmed. Empty when `text` is blank.
+#[must_use]
 pub fn first_non_empty_line(text: &str) -> &str {
     // `str::lines` splits on `\n` and strips a trailing `\r`, matching the
     // TS `/\r?\n/` split without extra allocation.
@@ -163,6 +168,7 @@ pub fn first_non_empty_line(text: &str) -> &str {
 }
 
 /// Strips comment markers (`//`, `#`, `/* */`, leading `*`) from doc text.
+#[must_use]
 pub fn clean_comment_text(text: &str) -> String {
     let mut stripped = text.trim();
     if stripped.starts_with("/**") || stripped.starts_with("/*") {

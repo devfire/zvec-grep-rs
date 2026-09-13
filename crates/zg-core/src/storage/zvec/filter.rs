@@ -59,8 +59,8 @@ fn push_in_clause<'a>(
 }
 
 fn build_in_filter(field: &str, values: &[&str]) -> String {
-    if values.len() == 1 {
-        return format!("{field} = {}", quote_filter_string(values[0]));
+    if let [single] = values {
+        return format!("{field} = {}", quote_filter_string(single));
     }
     let terms: Vec<String> = values
         .iter()
@@ -70,6 +70,7 @@ fn build_in_filter(field: &str, values: &[&str]) -> String {
 }
 
 /// Quotes a filter string literal, escaping backslashes and single quotes.
+#[must_use]
 pub fn quote_filter_string(value: &str) -> String {
     let mut quoted = String::with_capacity(value.len() + 2);
     quoted.push('\'');

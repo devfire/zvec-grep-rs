@@ -16,6 +16,7 @@ pub enum RemoteEmbeddingPurpose {
 }
 
 impl RemoteEmbeddingPurpose {
+    #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Query => "query",
@@ -48,6 +49,7 @@ pub enum AuthError {
 
 impl AuthError {
     /// Fully-qualified wire code for the variant (exhaustive `const` mapping).
+    #[must_use]
     pub const fn code(&self) -> EngineErrorCode {
         match self {
             Self::AuthorizationRequired { .. } => {

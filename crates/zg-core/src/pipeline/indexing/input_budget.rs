@@ -15,6 +15,7 @@ const CHUNK_OVERLAP_PERCENT: usize = 15;
 
 /// Chunk options for one source text, or defaults when the model declares no
 /// token window (mirrors `indexChunkOptions` returning `{}`).
+#[must_use]
 pub fn index_chunk_options(max_input_tokens: Option<usize>, text: Option<&str>) -> ChunkOptions {
     let Some(max_input_tokens) = max_input_tokens else {
         return ChunkOptions::default();

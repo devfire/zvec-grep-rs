@@ -58,6 +58,12 @@ pub struct ZvecWorkspaceIndexStorage {
 }
 
 impl ZvecWorkspaceIndexStorage {
+    /// Opens (or creates, in write mode) the zvec-backed workspace index storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when zvec initialization, the storage directory, lock, metadata store,
+    /// foreign-index check, or collection open/create fails.
     pub fn open(options: StorageOptions<'_>) -> EngineResult<Box<dyn WorkspaceIndexStorage>> {
         let read_only = options.read_only();
         let storage_path = options.storage_path().to_path_buf();

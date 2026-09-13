@@ -29,6 +29,7 @@ pub struct WorkspaceIndexStoragePaths {
 }
 
 /// Resolves `storagePath` and its `files.zvec` / `files.json` / `index.zvec` children.
+#[must_use]
 pub fn resolve_workspace_index_storage_paths(storage_path: &Path) -> WorkspaceIndexStoragePaths {
     let resolved = PathBuf::from(normalize_absolute_path(
         storage_path.to_string_lossy().as_ref(),
@@ -43,6 +44,7 @@ pub fn resolve_workspace_index_storage_paths(storage_path: &Path) -> WorkspaceIn
 
 /// True when the entity collection exists together with this build's file
 /// metadata (`files.json`). A lone `files.zvec` is not an index here.
+#[must_use]
 pub fn has_workspace_index_storage(storage_path: &Path) -> bool {
     let paths = resolve_workspace_index_storage_paths(storage_path);
     paths.index_path.exists() && paths.files_meta_path.exists()
@@ -50,6 +52,11 @@ pub fn has_workspace_index_storage(storage_path: &Path) -> bool {
 
 /// Removes index data inside `storage_path`. Targets are fixed to direct
 /// children of the storage directory; anything else is refused.
+///
+/// # Errors
+///
+/// Returns `STORAGE.INVALID_STORAGE_PATH` when a target escapes the storage directory, or
+/// `STORAGE.DELETE_FAILED` when removal fails.
 pub fn delete_workspace_index_storage(storage_path: &Path) -> EngineResult<()> {
     let paths = resolve_workspace_index_storage_paths(storage_path);
     for target in [&paths.files_meta_path, &paths.index_path] {
@@ -91,12 +98,14 @@ pub fn delete_workspace_index_storage(storage_path: &Path) -> EngineResult<()> {
 }
 
 /// Resolves the entity collection path for `storage_path`.
+#[must_use]
 pub fn workspace_index_path(storage_path: &Path) -> PathBuf {
     resolve_workspace_index_storage_paths(storage_path).index_path
 }
 
 /// Makes `path` absolute and lexically normal without touching the file
 /// system (mirrors `node:path.resolve`).
+#[must_use]
 pub fn normalize_absolute_path(path: &str) -> String {
     let current = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let absolute = {
@@ -124,6 +133,7 @@ pub fn normalize_absolute_path(path: &str) -> String {
 
 /// True when `path` equals one of `prefixes` or sits beneath one, walking
 /// parent segments exactly like the TypeScript implementation.
+#[must_use]
 pub fn path_has_prefix(path: &str, prefixes: &HashSet<String>) -> bool {
     let mut current = path;
     loop {

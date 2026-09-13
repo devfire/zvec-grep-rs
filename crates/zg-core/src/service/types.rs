@@ -119,6 +119,7 @@ pub struct ZvecGrepContextOptions<'a> {
 
 impl ZvecGrepContextOptions<'_> {
     /// True unless the caller explicitly disabled auto-refresh.
+    #[must_use]
     pub fn wants_auto_update(&self) -> bool {
         self.auto_update
     }
@@ -300,6 +301,7 @@ pub enum GroupRole {
 }
 
 /// Convenience constructor matching the TS `EMPTY_QUERY` error path.
+#[must_use]
 pub fn empty_query_error() -> crate::error::EngineError {
     crate::error::EngineError::new(
         crate::error::EngineErrorCode::from_static("CONTEXT.EMPTY_QUERY"),
@@ -308,6 +310,7 @@ pub fn empty_query_error() -> crate::error::EngineError {
 }
 
 /// Error used when a requested root has no workspace index.
+#[must_use]
 pub fn workspace_index_not_found(root: &str) -> crate::error::EngineError {
     crate::error::EngineError::new(
         crate::error::EngineErrorCode::from_static("CONTEXT.WORKSPACE_INDEX_NOT_FOUND"),
@@ -317,6 +320,7 @@ pub fn workspace_index_not_found(root: &str) -> crate::error::EngineError {
 }
 
 /// Error used when the workspace index exists but is disabled.
+#[must_use]
 pub fn workspace_index_disabled(root: &str) -> crate::error::EngineError {
     crate::error::EngineError::new(
         crate::error::EngineErrorCode::from_static("CONTEXT.WORKSPACE_INDEX_DISABLED"),

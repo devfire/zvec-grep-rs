@@ -17,6 +17,7 @@ pub enum FileKind {
 }
 
 impl FileKind {
+    #[must_use]
     pub fn is_code(&self) -> bool {
         matches!(self, Self::Code)
     }
@@ -42,6 +43,7 @@ impl FileFormat {
         }
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }

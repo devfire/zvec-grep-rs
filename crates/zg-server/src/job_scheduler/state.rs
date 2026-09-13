@@ -87,7 +87,9 @@ pub(crate) struct Shared {
 }
 
 pub(crate) fn lock(state: &Mutex<Inner>) -> MutexGuard<'_, Inner> {
-    state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 pub(crate) fn now_ms() -> u64 {
@@ -174,4 +176,3 @@ pub(crate) fn snapshot_missing(id: &JobId) -> IndexJobSnapshot {
 pub(crate) fn job_attempt(state: &Inner, id: &JobId) -> u32 {
     state.jobs.get(id).map(|job| job.attempt).unwrap_or(1)
 }
-

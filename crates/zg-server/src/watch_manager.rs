@@ -111,6 +111,7 @@ pub struct WatchManager {
 
 impl WatchManager {
     /// Builds an idle manager; call [`WatchManager::start`] to watch.
+    #[must_use]
     pub fn new(options: WatchManagerOptions) -> Self {
         let (flush_poke, flush_rx) = unbounded_channel();
         let (event_tx, event_rx) = unbounded_channel();
@@ -143,6 +144,10 @@ impl WatchManager {
 
     /// Starts the recursive notify watcher. Watching `.git` / `.zvec-grep`
     /// is skipped at record time (see `record_raw()`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DaemonError::IndexFailed`] when the watcher fails to start or watch the root.
     pub fn start(&mut self) -> Result<(), DaemonError> {
         if self.watcher.is_some() || self.shared.is_closed() {
             return Ok(());
@@ -157,7 +162,7 @@ impl WatchManager {
                             EventKind::Create(_) => Some(ChangeKind::Created),
                             EventKind::Modify(_) => Some(ChangeKind::Changed),
                             EventKind::Remove(_) => Some(ChangeKind::Deleted),
-                            _ => None,
+                            EventKind::Any | EventKind::Access(_) | EventKind::Other => None,
                         };
                         for path in event.paths {
                             let _ = sender.send(RawEvent { path, kind });
@@ -192,6 +197,11 @@ impl WatchManager {
 
     /// Records one event without a running watcher (tests, synthetic
     /// events). Runs the same skip/filter/add path as live events.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DaemonError::RootNotAbsolute`] when the path is relative, or propagates
+    /// the [`ChangeSet`] budget failure when the pending set overflows.
     pub fn inject_event(
         &self,
         path: &str,
@@ -455,6 +465,7 @@ fn flush_snapshot(shared: &Arc<Shared>) {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use std::sync::Mutex as StdMutex;

@@ -4,7 +4,13 @@
 // Test targets exercise fallible fixtures directly: `unwrap`/`expect`/`panic!`
 // refusal branches are the same class the crate roots allow under `cfg(test)`
 // (integration tests are separate crates, so they carry their own allow).
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+// A panic in test code is just a test failure, so indexing in assertions needs no guard.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 
 use zg_core::models::stub::StubEmbeddingModel;
 use zg_core::models::{EmbeddingInput, EmbeddingModel, EmbeddingPurpose};

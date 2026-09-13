@@ -75,6 +75,11 @@ struct ResolvedPlanFilter {
 }
 
 /// Executes a validated search plan (mirrors `searchWorkspaceIndex`).
+///
+/// # Errors
+///
+/// Returns `SEARCH_PLAN.EMPTY_ROUTES` when the plan has no routes, or an error when
+/// file-type resolution, query embedding, recall, or forced entity tracking fails.
 pub fn search_workspace_index(
     plan: &SearchPlan,
     ctx: &SearchContext<'_>,
@@ -179,6 +184,12 @@ pub fn search_workspace_index(
 
 /// Diagnoses why one entity does or does not match (mirrors
 /// `diagnoseEntitySearch`).
+///
+/// # Errors
+///
+/// Returns `SEARCH.ENTITY_NOT_FOUND` when the entity is absent,
+/// `SEARCH.DIAGNOSIS_ENCODE_FAILED` when the diagnosis cannot be encoded, or the
+/// nested plan-search error.
 pub fn diagnose_entity_search(
     query: &str,
     entity_id: &EntityId,
@@ -223,6 +234,10 @@ pub fn diagnose_entity_search(
 }
 
 /// Diagnoses the best entity in a file (mirrors `diagnoseFileSearch`).
+///
+/// # Errors
+///
+/// Returns an error when best-entity selection or the nested entity diagnosis fails.
 pub fn diagnose_file_search(
     query: &str,
     absolute_path: &str,
@@ -652,7 +667,9 @@ fn symbol_name_from_token(token: &str) -> Option<String> {
     if parts.len() < 2 {
         return Some(name.to_owned());
     }
-    let owner = parts[parts.len() - 2];
+    let Some(owner) = parts.get(parts.len() - 2) else {
+        return Some(name.to_owned());
+    };
     if owner.starts_with(|ch: char| ch.is_ascii_uppercase() || ch == '_' || ch == '~') {
         return Some(format!("{owner}::{name}"));
     }

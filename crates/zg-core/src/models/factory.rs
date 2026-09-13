@@ -19,9 +19,13 @@ use super::backends::LlamaCppEmbeddingModel;
 use super::backends::OnnxEmbeddingModel;
 use super::backends::{Model2VecEmbeddingModel, Qwen3VlEmbeddingModel, QwenTextEmbeddingModel};
 use super::catalog::{
-    BackendKind, EmbeddingCatalogEntry, LlamaCppEntry, Model2VecEntry, ModelReference,
-    QwenMultimodalEntry, QwenTextEntry, TransformersJsEntry, get_embedding_model_catalog_entry,
+    EmbeddingCatalogEntry, LlamaCppEntry, Model2VecEntry, ModelReference, QwenMultimodalEntry,
+    QwenTextEntry, TransformersJsEntry, get_embedding_model_catalog_entry,
 };
+// Only the compiled-out backend arms report `BackendUnavailable`, so the
+// kind import is dead when every backend is enabled.
+#[cfg(any(not(feature = "onnx"), not(feature = "llama")))]
+use super::catalog::BackendKind;
 use super::embeddings::{ApiKey, CreateEmbeddingModelOptions};
 use super::error::{ModelError, QwenBackend, QwenTextModel};
 use crate::paths::default_home;
@@ -30,6 +34,7 @@ use crate::paths::default_home;
 pub const MODEL_CACHE_ENV_VAR: &str = "ZVEC_GREP_MODEL_CACHE";
 
 /// Default local model cache: `$ZVEC_GREP_MODEL_CACHE`, else `<home>/models`.
+#[must_use]
 pub fn default_model_cache_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os(MODEL_CACHE_ENV_VAR)
         && !dir.is_empty()
@@ -75,6 +80,7 @@ pub enum ModelBuildPlan {
 }
 
 impl ModelBuildPlan {
+    #[must_use]
     pub fn reference(&self) -> &'static str {
         match self {
             Self::LlamaCpp { entry, .. } => entry.reference,
@@ -91,6 +97,11 @@ impl ModelBuildPlan {
 ///
 /// Takes the [`ModelReference`] newtype (M2) so a bare `&str` that is not a
 /// model reference cannot flow in.
+///
+/// # Errors
+///
+/// Returns [`ModelError::CatalogModelNotFound`] for an unknown reference, [`ModelError::MissingApiKey`]
+/// when a Qwen entry lacks an API key, or [`ModelError::MissingEndpoint`] when its endpoint is blank.
 pub fn plan_embedding_model(
     reference: &ModelReference,
     options: &CreateEmbeddingModelOptions,
@@ -151,6 +162,12 @@ pub fn plan_embedding_model(
 /// working models. With the feature compiled out the heavy arms report
 /// [`ModelError::BackendUnavailable`]; unknown references report
 /// [`ModelError::CatalogModelNotFound`] via [`plan_embedding_model`].
+///
+/// # Errors
+///
+/// Returns [`ModelError::CatalogModelNotFound`] for an unknown reference,
+/// [`ModelError::MissingApiKey`] or [`ModelError::MissingEndpoint`] for invalid Qwen options, or
+/// [`ModelError::BackendUnavailable`] when the entry's backend is compiled out.
 pub fn create_embedding_model(
     reference: &ModelReference,
     options: &CreateEmbeddingModelOptions,
@@ -204,6 +221,10 @@ pub fn create_embedding_model(
 ///
 /// The error code prefix follows the catalog entry (V4 / 3.7 / VL), exactly
 /// like the TS constructors — never a caller-supplied string.
+///
+/// # Errors
+///
+/// Returns [`ModelError::MissingApiKey`] when the key is missing or blank.
 pub fn require_api_key(
     reference: &str,
     backend: QwenBackend,
@@ -218,6 +239,10 @@ pub fn require_api_key(
 
 /// Resolves the remote endpoint: explicit option (trimmed) wins over the
 /// catalog default; a blank result is a configuration error.
+///
+/// # Errors
+///
+/// Returns [`ModelError::MissingEndpoint`] when the resolved endpoint is blank.
 pub fn resolve_endpoint(
     reference: &str,
     default_endpoint: &str,
@@ -330,6 +355,7 @@ mod tests {
     }
 
     /// Asserts one compiled-out entry reports `BackendUnavailable`.
+    #[cfg(any(not(feature = "onnx"), not(feature = "llama")))]
     fn assert_backend_unavailable(name: &str) {
         let Err(err) = create_embedding_model(&reference(name), &options()) else {
             panic!("expected BackendUnavailable for {name}");

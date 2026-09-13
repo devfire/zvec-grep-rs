@@ -13,6 +13,7 @@ pub const DEFAULT_MAX_IMAGE_FILE_SIZE_BYTES: u64 = 10_485_760;
 
 /// Resolves the effective size cap: an explicit override always wins,
 /// otherwise the per-kind default applies.
+#[must_use]
 pub fn resolve_max_file_size_bytes(kind: FileKind, explicit: Option<u64>) -> u64 {
     explicit.unwrap_or(match kind {
         FileKind::Code => DEFAULT_MAX_CODE_FILE_SIZE_BYTES,

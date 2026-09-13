@@ -15,6 +15,7 @@ use super::types::{RemoteEmbeddingTarget, TargetFingerprint, WorkspaceFingerprin
 
 /// Canonicalizes workspace roots: absolute, symlink-resolved when possible,
 /// deduplicated, sorted. Mirrors `canonicalizeWorkspaceRoots`.
+#[must_use]
 pub fn canonicalize_workspace_roots(roots: &[String]) -> Vec<String> {
     let mut canonical: Vec<String> = roots
         .iter()
@@ -49,12 +50,14 @@ fn sha256_hex(value: &str) -> String {
 }
 
 /// Fingerprint over the canonical roots: `sha256(JSON.stringify(roots))`.
+#[must_use]
 pub fn workspace_fingerprint(roots: &[String]) -> WorkspaceFingerprint {
     let json = serde_json::to_string(roots).unwrap_or_else(|_| "[]".to_owned());
     WorkspaceFingerprint::from_hex(sha256_hex(&json))
 }
 
 /// Fingerprint over `[workspaceFingerprint, provider, model, endpoint]`.
+#[must_use]
 pub fn remote_embedding_target_fingerprint(
     workspace: &WorkspaceFingerprint,
     provider: &str,
@@ -70,6 +73,10 @@ pub fn remote_embedding_target_fingerprint(
 ///
 /// Empty roots or a blank endpoint are [`AuthError::InvalidTarget`]; TS
 /// throws plain `Error`s with the same messages.
+///
+/// # Errors
+///
+/// Returns [`AuthError::InvalidTarget`] when no workspace roots survive canonicalization or the endpoint is blank.
 pub fn create_remote_embedding_target(
     roots: &[String],
     provider: &str,

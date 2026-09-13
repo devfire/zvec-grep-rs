@@ -25,6 +25,7 @@ use super::state::lock;
 /// moment `token` is cancelled and exits once the flag trips or the token
 /// fires, whichever comes first. This is the single documented adaptation
 /// point between [`CancellationToken`] and [`CancelFlag`].
+#[must_use]
 pub fn bridge_cancellation(token: &CancellationToken) -> CancelFlag {
     let flag = CancelFlag::new();
     if token.is_cancelled() {

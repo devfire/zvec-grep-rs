@@ -65,6 +65,7 @@ pub struct ZvecGrepMcpServer {
 
 impl ZvecGrepMcpServer {
     /// Builds the server around a backend.
+    #[must_use]
     pub fn new(backend: DaemonBackend, version: String, toolset: McpToolset) -> Self {
         Self {
             backend,
@@ -74,17 +75,20 @@ impl ZvecGrepMcpServer {
     }
 
     /// Underlying backend (test inspection, transport close).
+    #[must_use]
     pub fn backend(&self) -> &DaemonBackend {
         &self.backend
     }
 
     /// Active toolset.
+    #[must_use]
     pub fn toolset(&self) -> McpToolset {
         self.toolset
     }
 
     /// Builds the rmcp router with toolset-gated tools: `agent` exposes
     /// search only, `full` adds index lifecycle, rg, and status tools.
+    #[must_use]
     pub fn router(self) -> rmcp::handler::server::router::Router<Self> {
         let full = self.toolset == McpToolset::Full;
         let router = rmcp::handler::server::router::Router::new(self);

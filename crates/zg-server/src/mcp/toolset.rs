@@ -23,6 +23,10 @@ pub enum McpToolset {
 
 impl McpToolset {
     /// Parses an explicit value, mirroring TS `parseMcpToolset`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::InvalidParams`] when the value is not `"agent"` or `"full"`.
     pub fn parse(value: &str) -> Result<Self, McpError> {
         match value {
             "agent" => Ok(Self::Agent),
@@ -35,6 +39,10 @@ impl McpToolset {
 
     /// Resolves explicit flag → environment → default, mirroring TS
     /// `resolveMcpToolset`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::InvalidParams`] when the selected value is not `"agent"` or `"full"`.
     pub fn resolve(explicit: Option<&str>, environment: Option<&str>) -> Result<Self, McpError> {
         match explicit.or(environment) {
             None => Ok(DEFAULT_MCP_TOOLSET),
@@ -43,6 +51,10 @@ impl McpToolset {
     }
 
     /// Reads the environment variable, falling back to the default.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::InvalidParams`] when the environment value is not `"agent"` or `"full"`.
     pub fn from_environment() -> Result<Self, McpError> {
         let environment = std::env::var(MCP_TOOLSET_ENV).ok();
         Self::resolve(None, environment.as_deref())

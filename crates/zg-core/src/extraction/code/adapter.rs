@@ -24,45 +24,54 @@ pub struct SyntaxNode<'a> {
 
 impl<'a> SyntaxNode<'a> {
     /// Binds a raw tree-sitter node to its source bytes.
+    #[must_use]
     pub fn new(inner: tree_sitter::Node<'a>, source: &'a [u8]) -> Self {
         Self { inner, source }
     }
 
     /// Raw node kind, e.g. `"function_definition"`.
+    #[must_use]
     pub fn kind(&self) -> &str {
         self.inner.kind()
     }
 
     /// Source slice covered by this node, or `None` on invalid UTF-8.
+    #[must_use]
     pub fn text(&self) -> Option<&'a str> {
         self.inner.utf8_text(self.source).ok()
     }
 
     /// Byte offset where this node starts.
+    #[must_use]
     pub fn start_byte(&self) -> usize {
         self.inner.start_byte()
     }
     /// Byte offset where this node ends.
+    #[must_use]
     pub fn end_byte(&self) -> usize {
         self.inner.end_byte()
     }
 
     /// Zero-based start row.
+    #[must_use]
     pub fn start_row(&self) -> usize {
         self.inner.start_position().row
     }
 
     /// Zero-based end row.
+    #[must_use]
     pub fn end_row(&self) -> usize {
         self.inner.end_position().row
     }
 
     /// Number of children, including anonymous tokens.
+    #[must_use]
     pub fn child_count(&self) -> usize {
         self.inner.child_count()
     }
 
     /// The `index`-th child (named or anonymous), if any.
+    #[must_use]
     pub fn child(&self, index: usize) -> Option<SyntaxNode<'a>> {
         self.inner.child(index).map(|inner| SyntaxNode {
             inner,
@@ -71,6 +80,7 @@ impl<'a> SyntaxNode<'a> {
     }
 
     /// All children in source order, including anonymous tokens.
+    #[must_use]
     pub fn children(&self) -> Vec<SyntaxNode<'a>> {
         let mut out = Vec::with_capacity(self.child_count());
         for index in 0..self.child_count() {
@@ -82,11 +92,13 @@ impl<'a> SyntaxNode<'a> {
     }
 
     /// True for named (non-anonymous-token) nodes.
+    #[must_use]
     pub fn is_named(&self) -> bool {
         self.inner.is_named()
     }
 
     /// Child bound to `field`, if present.
+    #[must_use]
     pub fn field(&self, field: &str) -> Option<SyntaxNode<'a>> {
         self.inner
             .child_by_field_name(field)
@@ -97,16 +109,19 @@ impl<'a> SyntaxNode<'a> {
     }
 
     /// Text of the child bound to `field`, if present and valid UTF-8.
+    #[must_use]
     pub fn field_text(&self, field: &str) -> Option<&'a str> {
         self.field(field)?.text()
     }
 
     /// Number of named children.
+    #[must_use]
     pub fn named_child_count(&self) -> usize {
         self.inner.named_child_count()
     }
 
     /// The `index`-th named child, if any.
+    #[must_use]
     pub fn named_child(&self, index: usize) -> Option<SyntaxNode<'a>> {
         self.inner.named_child(index).map(|inner| SyntaxNode {
             inner,
@@ -115,6 +130,7 @@ impl<'a> SyntaxNode<'a> {
     }
 
     /// All named children, in source order.
+    #[must_use]
     pub fn named_children(&self) -> Vec<SyntaxNode<'a>> {
         let mut out = Vec::with_capacity(self.named_child_count());
         for index in 0..self.named_child_count() {
@@ -126,6 +142,7 @@ impl<'a> SyntaxNode<'a> {
     }
 
     /// First named child of exactly `kind`, if any.
+    #[must_use]
     pub fn named_child_of_kind(&self, kind: &str) -> Option<SyntaxNode<'a>> {
         for index in 0..self.named_child_count() {
             if let Some(child) = self.named_child(index)
@@ -138,6 +155,7 @@ impl<'a> SyntaxNode<'a> {
     }
 
     /// Parent node, if any.
+    #[must_use]
     pub fn parent(&self) -> Option<SyntaxNode<'a>> {
         self.inner.parent().map(|inner| SyntaxNode {
             inner,
@@ -146,6 +164,7 @@ impl<'a> SyntaxNode<'a> {
     }
 
     /// Previous named sibling, if any.
+    #[must_use]
     pub fn prev_named_sibling(&self) -> Option<SyntaxNode<'a>> {
         self.inner.prev_named_sibling().map(|inner| SyntaxNode {
             inner,
@@ -154,6 +173,7 @@ impl<'a> SyntaxNode<'a> {
     }
 
     /// Depth-first search for the first descendant (or self) of `kind`.
+    #[must_use]
     pub fn find_descendant_by_kind(&self, kind: &str) -> Option<SyntaxNode<'a>> {
         if self.kind() == kind {
             return Some(*self);
@@ -280,6 +300,7 @@ pub trait LanguageAdapter: Send + Sync {
 /// Mirrors the `ADAPTERS` table in `adapter.ts`: `jsx` shares the javascript
 /// adapter, `tsx` shares the typescript adapter. Returns `None` for formats
 /// without structural extraction.
+#[must_use]
 pub fn resolve_adapter(format: &str) -> Option<&'static dyn LanguageAdapter> {
     match format {
         "c" => Some(&super::languages::c_lang::C_ADAPTER),
@@ -299,6 +320,7 @@ pub fn resolve_adapter(format: &str) -> Option<&'static dyn LanguageAdapter> {
 /// Mirrors `findIdentifierLeaf` in `tree-sitter/nodes.ts`: descends through
 /// `*_declarator` wrappers (up to 16 levels) and returns the first
 /// `*identifier`, `destructor_name`, or `operator_name` node.
+#[must_use]
 pub fn find_identifier_leaf<'a>(node: &SyntaxNode<'a>) -> Option<SyntaxNode<'a>> {
     let mut current = *node;
     for _ in 0..16 {

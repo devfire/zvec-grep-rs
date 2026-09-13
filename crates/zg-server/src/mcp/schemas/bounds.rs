@@ -27,6 +27,10 @@ pub struct QueryText(String);
 impl QueryText {
     /// Validates length; emptiness is filtered at normalization (TS trims
     /// and drops empty groups rather than rejecting them).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::InvalidParams`] when the value exceeds the character budget.
     pub fn parse(value: String) -> Result<Self, McpError> {
         if !within_char_budget(&value, MCP_MAX_QUERY_CHARS) {
             return Err(McpError::invalid_params(format!(
@@ -49,6 +53,10 @@ pub struct PathFilter(String);
 
 impl PathFilter {
     /// Validates length.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::InvalidParams`] when the value exceeds the character budget.
     pub fn parse(value: String) -> Result<Self, McpError> {
         if !within_char_budget(&value, MCP_MAX_PATH_CHARS) {
             return Err(McpError::invalid_params(format!(
@@ -72,6 +80,10 @@ pub struct SearchLimit(usize);
 impl SearchLimit {
     /// Validates positivity and the upper bound (mirrors zod
     /// `.positive().max(50)`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::InvalidParams`] when the value is zero or above the maximum.
     pub fn parse(value: usize) -> Result<Self, McpError> {
         if value == 0 || value > MCP_MAX_SEARCH_LIMIT {
             return Err(McpError::invalid_params(format!(
@@ -89,6 +101,10 @@ impl SearchLimit {
 }
 
 /// Validates a group list against [`MCP_MAX_QUERY_GROUPS`].
+///
+/// # Errors
+///
+/// Returns [`McpError::InvalidParams`] when the list exceeds the group cap.
 pub fn bound_groups<T>(items: Vec<T>, what: &str) -> Result<Vec<T>, McpError> {
     if items.len() > MCP_MAX_QUERY_GROUPS {
         return Err(McpError::invalid_params(format!(
@@ -99,6 +115,10 @@ pub fn bound_groups<T>(items: Vec<T>, what: &str) -> Result<Vec<T>, McpError> {
 }
 
 /// Validates a path-filter list against [`MCP_MAX_PATH_FILTERS`].
+///
+/// # Errors
+///
+/// Returns [`McpError::InvalidParams`] when the list exceeds the filter cap.
 pub fn bound_path_filters(items: Vec<PathFilter>) -> Result<Vec<PathFilter>, McpError> {
     if items.len() > MCP_MAX_PATH_FILTERS {
         return Err(McpError::invalid_params(format!(
@@ -112,6 +132,11 @@ pub fn bound_path_filters(items: Vec<PathFilter>) -> Result<Vec<PathFilter>, Mcp
 /// required." / absolute-path refinement, 1024-char cap). Existence and
 /// permissions are the backend's concern: like TS, validation here only
 /// proves the path is absolute.
+///
+/// # Errors
+///
+/// Returns [`McpError::InvalidParams`] when the value is empty, over the character
+/// cap, or not an absolute path.
 pub fn parse_root(value: &str) -> Result<crate::root_runtime::RootKey, McpError> {
     let trimmed = value.trim();
     if trimmed.is_empty() {

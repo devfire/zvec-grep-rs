@@ -112,6 +112,7 @@ pub enum DaemonError {
 impl DaemonError {
     /// Frozen wire code for this variant. `const` so call sites and the
     /// golden registry stay literal-only.
+    #[must_use]
     pub const fn code(&self) -> &'static str {
         match self {
             Self::ShuttingDown => "DAEMON_SHUTTING_DOWN",
@@ -139,6 +140,7 @@ impl DaemonError {
     /// True only for [`DaemonError::ShuttingDown`], mirroring the TS
     /// `retryable` constructor flag. The scheduler retries only these plus
     /// `ZVEC_GREP.ENGINE.LOCK.BUSY` engine errors.
+    #[must_use]
     pub const fn retryable(&self) -> bool {
         matches!(self, Self::ShuttingDown)
     }
@@ -202,6 +204,7 @@ impl std::error::Error for DaemonError {}
 /// Every daemon wire code, one per enum variant, for the golden registry
 /// test (`tests/golden/daemon-error-codes.txt`). Adding a variant without
 /// extending this list fails that test by construction.
+#[must_use]
 pub fn all_codes() -> Vec<&'static str> {
     vec![
         DaemonError::ShuttingDown.code(),

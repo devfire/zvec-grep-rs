@@ -87,6 +87,11 @@ pub struct DaemonHttpServer {
 impl DaemonHttpServer {
     /// Builds the server, rejecting non-loopback hosts exactly like the TS
     /// constructor (`Daemon HTTP server requires a loopback host.`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DaemonError::LoopbackRequired`] when the host is not loopback, or
+    /// [`DaemonError::IndexFailed`] when the MCP endpoint options are invalid.
     pub fn new(options: DaemonHttpServerOptions) -> Result<Self, DaemonError> {
         if !is_loopback_host(&options.host) {
             return Err(DaemonError::LoopbackRequired { host: options.host });
@@ -116,6 +121,11 @@ impl DaemonHttpServer {
 
     /// Binds and starts serving; returns the bound address. Idempotent:
     /// a second call returns the existing address.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DaemonError::AddressInUse`] when the port is taken, or
+    /// [`DaemonError::IndexFailed`] when binding or reading the bound address fails.
     pub async fn start(&self) -> Result<SocketAddr, DaemonError> {
         if let Some(address) = lock(&self.bound).as_ref().copied() {
             return Ok(address);

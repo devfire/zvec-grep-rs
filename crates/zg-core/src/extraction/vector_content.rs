@@ -27,6 +27,7 @@ pub struct ResolvedChunkOptions {
 /// Builds the embedding text for `fragment`: the metadata header prepended to
 /// the embedding content, or the content unchanged when there is no metadata.
 /// Defaults to the fragment's own content when `embedding_content` is `None`.
+#[must_use]
 pub fn vector_content_for_fragment(
     fragment: &EntityFragment,
     embedding_content: Option<&Content>,
@@ -52,6 +53,7 @@ pub fn vector_content_for_fragment(
 
 /// Shrinks chunk limits to leave room for the metadata header (mirrors
 /// `chunkOptionsForMetadata`).
+#[must_use]
 pub fn chunk_options_for_metadata(
     max_chunk_chars: usize,
     chunk_overlap_chars: usize,
@@ -70,6 +72,7 @@ pub fn chunk_options_for_metadata(
 }
 
 /// Truncates to `max_chars` with a `...` marker (mirrors `fitTextToChars`).
+#[must_use]
 pub fn fit_text_to_chars(value: &str, max_chars: usize) -> String {
     if value.chars().count() <= max_chars {
         return value.to_owned();

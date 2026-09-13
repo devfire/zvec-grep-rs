@@ -125,6 +125,11 @@ fn as_strings(filters: &[PathFilter]) -> Vec<String> {
 }
 
 /// Normalizes a wire search input, mirroring `normalizeSearchInput`.
+///
+/// # Errors
+///
+/// Returns [`McpError::InvalidParams`] when no query group is supplied, or when the root,
+/// queries, limits, path filters, or modified times fail validation.
 pub fn normalize_search_input(input: &SearchInput) -> Result<NormalizedSearchInput, McpError> {
     let mut queries = normalize_query_list(input.query.as_ref(), "query")?;
     queries.extend(normalize_query_list(input.queries.as_ref(), "queries")?);
@@ -233,6 +238,10 @@ fn flatten_list(value: Option<&StringOrList>) -> Vec<String> {
 /// (digits → millis, `YYYY-MM-DD` → local midnight, RFC 3339 and
 /// `YYYY-MM-DD HH:MM:SS` → instant). Anything else errors with the TS
 /// message.
+///
+/// # Errors
+///
+/// Returns [`McpError::InvalidParams`] when the value is negative or unparseable.
 pub fn parse_modified_time(value: &TimeInput, option: &str) -> Result<UnixMillis, McpError> {
     match value {
         TimeInput::Millis(millis) => {
@@ -279,6 +288,11 @@ fn invalid_time(option: &str) -> McpError {
 
 /// Parses an `rg` command string into a backend lexical query, mirroring
 /// `parseManagedRgCommand` + `contextOptionsFromRgInput`.
+///
+/// # Errors
+///
+/// Returns [`McpError::InvalidParams`] when the root is invalid, the rg command is
+/// malformed or unsupported, or a path escapes the root.
 pub fn rg_query_from_input(input: &RgInput) -> Result<(RootKey, RgQuery), McpError> {
     let root = parse_root(&input.root)?;
     let parsed = parse_managed_rg_command(&input.command)?;
@@ -354,7 +368,10 @@ fn parse_managed_rg_command(command: &str) -> Result<ParsedRgCommand, McpError> 
     if argv.len() == 1 {
         return Err(McpError::invalid_params("rg command requires a pattern."));
     }
-    let mut parsed = parse_rg_argv(&argv[1..])?;
+    let rest = argv
+        .get(1..)
+        .ok_or_else(|| McpError::invalid_params("rg command requires a pattern."))?;
+    let mut parsed = parse_rg_argv(rest)?;
     parsed.command.limit = limit;
     // Positional pattern unless `-e`/`-f` supplied (mirrors
     // `normalizeManagedRgInput`); patterns are trimmed and empties dropped.
@@ -393,8 +410,8 @@ impl RawRgParse {
     }
 
     fn into_command(mut self) -> ParsedRgCommand {
-        self.command.paths =
-            self.positionals[self.positional_start.min(self.positionals.len())..].to_vec();
+        let start = self.positional_start.min(self.positionals.len());
+        self.command.paths = self.positionals.split_off(start);
         self.command
     }
 }
@@ -405,7 +422,9 @@ fn parse_rg_argv(argv: &[String]) -> Result<RawRgParse, McpError> {
     let mut index = 0;
     let mut end_of_flags = false;
     while index < argv.len() {
-        let token = &argv[index];
+        let Some(token) = argv.get(index) else {
+            break;
+        };
         if end_of_flags || !token.starts_with('-') || token == "-" {
             if token == "-" {
                 return Err(McpError::invalid_params(
@@ -596,11 +615,16 @@ fn parse_short_group(
     index: usize,
     command: &mut ParsedRgCommand,
 ) -> Result<usize, McpError> {
-    let token = &argv[index];
+    let Some(token) = argv.get(index) else {
+        return Err(McpError::invalid_params("rg command requires a pattern."));
+    };
     let bytes = token.as_bytes();
     let mut offset = 1;
     while offset < bytes.len() {
-        let short = bytes[offset] as char;
+        let Some(short_byte) = bytes.get(offset) else {
+            break;
+        };
+        let short = *short_byte as char;
         let flag = format!("-{short}");
         match short {
             'n' | 'H' => {
@@ -847,7 +871,9 @@ fn scan_rg_command(command: &str) -> Result<Vec<String>, McpError> {
     let chars: Vec<char> = command.chars().collect();
     let mut index = 0;
     while index < chars.len() {
-        let char = chars[index];
+        let Some(char) = chars.get(index).copied() else {
+            break;
+        };
         if char == '\0' {
             return Err(McpError::invalid_params(
                 "rg command cannot contain NUL characters.",
@@ -982,12 +1008,14 @@ fn split_head_suffix(tokens: &[String]) -> Result<(Vec<String>, Option<usize>), 
         // `split_off` keeps `[..pipe]` in place; the suffix (pipe
         // included) is validated as the head bound.
         let suffix = argv.split_off(pipe);
-        limit = Some(parse_head_limit(&suffix[1..])?);
+        let head_args = suffix.get(1..).ok_or_else(|| {
+            McpError::invalid_params(
+                "rg command only supports a trailing \"| head\", \"| head -N\", or \"| head -n N\" output bound.",
+            )
+        })?;
+        limit = Some(parse_head_limit(head_args)?);
     }
-    if argv.len() >= 3
-        && argv[argv.len() - 3] == "2"
-        && argv[argv.len() - 2] == ">"
-        && argv[argv.len() - 1] == "/dev/null"
+    if matches!(argv.as_slice(), [.., a, b, c] if a.as_str() == "2" && b.as_str() == ">" && c.as_str() == "/dev/null")
     {
         argv.truncate(argv.len() - 3);
     }
@@ -1106,7 +1134,9 @@ fn normalize_lexical(path: &Path) -> String {
                 parts.pop();
             }
             Component::CurDir => {}
-            other => parts.push(other.as_os_str().to_owned()),
+            other @ Component::Prefix(_)
+            | other @ Component::RootDir
+            | other @ Component::Normal(_) => parts.push(other.as_os_str().to_owned()),
         }
     }
     let mut normalized = PathBuf::new();
@@ -1154,6 +1184,7 @@ fn canonical_through_ancestors(path: &str) -> PathBuf {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use crate::mcp::schemas::{MCP_MAX_QUERY_CHARS, SearchInput};

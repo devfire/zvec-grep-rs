@@ -13,6 +13,7 @@ use crate::utils::glob::path_pattern_matches;
 /// Normalizes one root path: absolute form, `recursive` defaulting to true
 /// (mirrors `normalizeRootPath`; callers pass `recursive: true` explicitly,
 /// this keeps the stored value as-is).
+#[must_use]
 pub fn normalize_root_path(root: &RootPath) -> RootPath {
     let mut normalized = root.clone();
     normalized.absolute_path = display_normalized(&root.absolute_path);
@@ -21,6 +22,12 @@ pub fn normalize_root_path(root: &RootPath) -> RootPath {
 
 /// Validates root paths and rejects overlapping scan domains (mirrors
 /// `validateRootPaths`).
+///
+/// # Errors
+///
+/// Returns `SCANNER.ROOT_PATH_STAT_FAILED` when a root cannot be inspected,
+/// `SCANNER.UNSUPPORTED_ROOT_PATH` when a root is neither a file nor a directory, or
+/// `SCANNER.OVERLAPPING_ROOT_PATHS` when two roots overlap.
 pub fn validate_root_paths(roots: &[RootPath]) -> EngineResult<Vec<RootPath>> {
     let normalized: Vec<RootPath> = roots.iter().map(normalize_root_path).collect();
     let mut domains = Vec::with_capacity(normalized.len());
@@ -29,14 +36,18 @@ pub fn validate_root_paths(roots: &[RootPath]) -> EngineResult<Vec<RootPath>> {
     }
     for left in 0..domains.len() {
         for right in (left + 1)..domains.len() {
-            if scan_domains_overlap(&domains[left], &domains[right]) {
+            let (Some(left_domain), Some(right_domain)) = (domains.get(left), domains.get(right))
+            else {
+                continue;
+            };
+            if scan_domains_overlap(left_domain, right_domain) {
                 return Err(EngineError::new(
                     EngineErrorCode::from_static("SCANNER.OVERLAPPING_ROOT_PATHS"),
                     "workspace index root paths overlap",
                 )
                 .with_context(format!(
                     "left={} right={}",
-                    domains[left].root.absolute_path, domains[right].root.absolute_path
+                    left_domain.root.absolute_path, right_domain.root.absolute_path
                 )));
             }
         }
@@ -46,6 +57,7 @@ pub fn validate_root_paths(roots: &[RootPath]) -> EngineResult<Vec<RootPath>> {
 
 /// True when `absolute_path` belongs to `root` and passes its patterns
 /// (mirrors `fileBelongsToRootPath`).
+#[must_use]
 pub fn file_belongs_to_root_path(absolute_path: &str, root: &RootPath) -> bool {
     if !is_path_inside(Path::new(&root.absolute_path), Path::new(absolute_path)) {
         return false;
@@ -55,6 +67,7 @@ pub fn file_belongs_to_root_path(absolute_path: &str, root: &RootPath) -> bool {
 }
 
 /// Exclude-first, include-gated matching (mirrors `matchesRootPatterns`).
+#[must_use]
 pub fn matches_root_patterns(relative_path: &str, root: &RootPath) -> bool {
     if matches_any(relative_path, &root.exclude) {
         return false;
@@ -67,12 +80,14 @@ pub fn matches_root_patterns(relative_path: &str, root: &RootPath) -> bool {
 
 /// True when any include pattern matches (mirrors
 /// `matchesRootIncludePatterns`).
+#[must_use]
 pub fn matches_root_include_patterns(relative_path: &str, root: &RootPath) -> bool {
     matches_any(relative_path, &root.include)
 }
 
 /// True when any exclude pattern matches (mirrors
 /// `matchesRootExcludePatterns`).
+#[must_use]
 pub fn matches_root_exclude_patterns(relative_path: &str, root: &RootPath) -> bool {
     matches_any(relative_path, &root.exclude)
 }
@@ -205,6 +220,7 @@ pub fn parent_display(path: &str) -> String {
         .unwrap_or_default()
 }
 
+#[must_use]
 pub fn path_buf(path: &str) -> PathBuf {
     normalize_path(Path::new(path))
 }

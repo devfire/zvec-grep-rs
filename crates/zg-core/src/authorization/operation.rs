@@ -22,6 +22,7 @@ thread_local! {
 }
 
 /// Issues a permit for the target at the given scope.
+#[must_use]
 pub fn create_remote_embedding_operation_permit(
     target: RemoteEmbeddingTarget,
     scope: RemoteEmbeddingScope,
@@ -73,6 +74,7 @@ impl Default for RemoteEmbeddingGuard {
 
 impl RemoteEmbeddingGuard {
     /// Guards with the default grant store.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             store: RemoteEmbeddingAuthorizationStore::new(),
@@ -80,11 +82,16 @@ impl RemoteEmbeddingGuard {
     }
 
     /// Guards with an explicit store (tests, daemon wiring).
+    #[must_use]
     pub fn with_store(store: RemoteEmbeddingAuthorizationStore) -> Self {
         Self { store }
     }
 
     /// Checks one request against the ambient permit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::AuthorizationRequired`] when no ambient permit covers the request or the workspace grant is missing or revoked, or [`AuthError::StoreFailed`] when the grant store cannot be read.
     pub fn check(&self, request: &RemoteEmbeddingRequest) -> EngineResult<()> {
         let permit = CURRENT_PERMIT.with(|cell| cell.borrow().clone());
         let Some(permit) = permit else {
@@ -128,6 +135,7 @@ pub struct RemoteEmbeddingAuthorizationManager {
 
 impl RemoteEmbeddingAuthorizationManager {
     /// Manages permits against the default grant store.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             store: RemoteEmbeddingAuthorizationStore::new(),
@@ -135,12 +143,17 @@ impl RemoteEmbeddingAuthorizationManager {
     }
 
     /// Manages permits against an explicit store (tests, daemon wiring).
+    #[must_use]
     pub fn with_store(store: RemoteEmbeddingAuthorizationStore) -> Self {
         Self { store }
     }
 
     /// Returns a workspace permit when a valid grant already covers the
     /// target, `None` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::StoreFailed`] when the grant store cannot be read.
     pub fn existing_workspace_permit(
         &self,
         target: &RemoteEmbeddingTarget,
@@ -155,6 +168,10 @@ impl RemoteEmbeddingAuthorizationManager {
     }
 
     /// Issues a permit, persisting the grant for workspace scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::StoreFailed`] when the signing key or grant file cannot be written.
     pub fn grant(
         &self,
         target: &RemoteEmbeddingTarget,

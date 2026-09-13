@@ -34,6 +34,7 @@ pub enum QwenTextModel {
 
 impl QwenTextModel {
     /// Resolves the model identity from a catalog model id.
+    #[must_use]
     pub fn from_model_id(model: &str) -> Self {
         match model {
             "text-embedding-v4" => Self::V4,
@@ -43,6 +44,7 @@ impl QwenTextModel {
     }
 
     /// Human-readable name used in error messages (mirrors TS `displayName`).
+    #[must_use]
     pub const fn display_name(self) -> &'static str {
         match self {
             Self::V4 => "Qwen text-embedding-v4",
@@ -52,6 +54,7 @@ impl QwenTextModel {
     }
 
     /// Error-code prefix (mirrors TS `errorCodePrefix`).
+    #[must_use]
     pub const fn code_prefix(self) -> &'static str {
         match self {
             Self::V4 => "QWEN_TEXT_EMBEDDING_V4",
@@ -61,6 +64,7 @@ impl QwenTextModel {
     }
 
     /// Maps a text-backend failure to its fully-qualified code.
+    #[must_use]
     pub const fn code(self, failure: QwenTextFailure) -> EngineErrorCode {
         match (self, failure) {
             (Self::V4, QwenTextFailure::RequestFailed) => {
@@ -200,6 +204,7 @@ pub enum QwenVlFailure {
 }
 
 /// Maps a VL failure to its fully-qualified code.
+#[must_use]
 pub const fn qwen_vl_code(failure: QwenVlFailure) -> EngineErrorCode {
     match failure {
         QwenVlFailure::RequestFailed => {
@@ -555,6 +560,7 @@ pub enum QwenBackend {
 
 impl QwenBackend {
     /// Display name used in messages (mirrors TS `displayName`).
+    #[must_use]
     pub const fn display_name(self) -> &'static str {
         match self {
             Self::Text(model) => model.display_name(),
@@ -565,6 +571,7 @@ impl QwenBackend {
 
 impl ModelError {
     /// Exhaustive mapping from variant to wire code.
+    #[must_use]
     pub const fn code(&self) -> EngineErrorCode {
         match self {
             Self::CatalogModelNotFound { .. } => {
@@ -659,6 +666,7 @@ impl ModelError {
     }
 
     /// Missing-key error with the TS-exact message and hint.
+    #[must_use]
     pub fn missing_api_key(reference: &str, backend: QwenBackend) -> Self {
         let display = backend.display_name();
         Self::MissingApiKey {
@@ -673,6 +681,7 @@ impl ModelError {
     }
 
     /// Missing-endpoint error with the TS-exact message.
+    #[must_use]
     pub fn missing_endpoint(reference: &str, backend: QwenBackend) -> Self {
         let display = backend.display_name();
         Self::MissingEndpoint {

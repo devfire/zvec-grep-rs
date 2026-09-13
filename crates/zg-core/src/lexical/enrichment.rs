@@ -57,6 +57,11 @@ pub struct StructureEnrichmentResult {
 /// `max_file_size_bytes` overrides the per-kind size cap for the re-read
 /// files. Only [`crate::service::types::ContextItemKind::RgMatch`] items are considered; everything
 /// else passes through untouched.
+///
+/// # Errors
+///
+/// Always returns `Ok`; unreadable, oversized, non-structural, or
+/// fragment-free files yield `None` and leave their items untouched.
 pub fn enrich_lexical_items_with_structure(
     root: &Path,
     items: &[crate::service::types::ContextItem],
@@ -256,7 +261,11 @@ fn lexical_match_range(item: &crate::service::types::ContextItem) -> Option<(usi
             end_line,
             ..
         } => Some((*start_line, *end_line)),
-        _ => None,
+        crate::types::Range::File
+        | crate::types::Range::Byte { .. }
+        | crate::types::Range::Page { .. }
+        | crate::types::Range::PageText { .. }
+        | crate::types::Range::PageRegion { .. } => None,
     }
 }
 
@@ -291,7 +300,11 @@ fn text_range_contains(range: &crate::types::Range, start: usize, end: usize) ->
             end_line,
             ..
         } => *start_line <= start && *end_line >= end,
-        _ => false,
+        crate::types::Range::File
+        | crate::types::Range::Byte { .. }
+        | crate::types::Range::Page { .. }
+        | crate::types::Range::PageText { .. }
+        | crate::types::Range::PageRegion { .. } => false,
     }
 }
 
@@ -305,7 +318,11 @@ fn compare_fragment_container(left: &EntityFragment, right: &EntityFragment) -> 
             end_line,
             ..
         } => end_line as i64 - start_line as i64,
-        _ => i64::MAX,
+        crate::types::Range::File
+        | crate::types::Range::Byte { .. }
+        | crate::types::Range::Page { .. }
+        | crate::types::Range::PageText { .. }
+        | crate::types::Range::PageRegion { .. } => i64::MAX,
     };
     span(left).saturating_sub(span(right).clamp(i64::MIN + 1, i64::MAX - 1))
         + i64::from(
@@ -390,6 +407,7 @@ fn _absolute_display(path: &Path) -> PathBuf {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use crate::service::types::{ContentStatus, ContextFile, ContextItemKind};

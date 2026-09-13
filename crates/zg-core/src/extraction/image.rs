@@ -9,6 +9,12 @@ use crate::extraction::{make_entity_id, validate_source_file};
 use crate::types::{Content, Entity, EntityFragment, FileInfo, ImageFormat, Range};
 
 /// Extracts the single file-range fragment for image `data`.
+///
+/// # Errors
+///
+/// Returns `EXTRACTORS.EMPTY_FILE_ID`, `EXTRACTORS.EMPTY_ABSOLUTE_PATH`, or
+/// `EXTRACTORS.EMPTY_RELATIVE_PATH` when the source file identity is invalid, or
+/// `EXTRACTORS.IMAGE_EMPTY_DATA` when `data` is empty.
 pub fn extract_fragment(
     file: &FileInfo,
     data: &[u8],

@@ -109,6 +109,11 @@ pub trait EmbeddingModel: Send + Sync {
 
     /// Downloads/loads the model (local backends); remote backends no-op.
     /// Mirrors the optional TS `prepare` (local models only).
+    ///
+    /// # Errors
+    ///
+    /// Local backends return an error when artifacts fail to download or load; remote backends
+    /// no-op and always succeed.
     fn prepare(&self, sink: Option<ModelLoadSink>) -> EngineResult<()> {
         let _ = sink;
         Ok(())
@@ -116,6 +121,10 @@ pub trait EmbeddingModel: Send + Sync {
 
     /// Embeds a batch of inputs; returns one vector per input, in order,
     /// plus the indices truncated to the model token limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when inputs fail validation or the backend fails to produce embeddings.
     fn embed(
         &self,
         purpose: EmbeddingPurpose,

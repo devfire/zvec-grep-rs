@@ -38,6 +38,10 @@ pub struct PlanSearchInput<'a> {
 
 /// Plans remote-index authorization, mirroring
 /// `planRemoteIndexAuthorization`. `None` when no remote embedding runs.
+///
+/// # Errors
+///
+/// Returns [`AuthError::InvalidTarget`] when the model has no remote endpoint or the target and grant path cannot be built.
 pub fn plan_remote_index_authorization(
     input: &PlanIndexInput<'_>,
 ) -> EngineResult<Option<RemoteEmbeddingPlan>> {
@@ -94,6 +98,10 @@ pub fn plan_remote_index_authorization(
 
 /// Plans remote-search authorization, mirroring
 /// `planRemoteSearchAuthorization`. `None` when no remote embedding runs.
+///
+/// # Errors
+///
+/// Returns [`AuthError::InvalidTarget`] when the model mismatches the indexed schema, has no remote endpoint, or the target cannot be built.
 pub fn plan_remote_search_authorization(
     input: &PlanSearchInput<'_>,
 ) -> EngineResult<Option<RemoteEmbeddingPlan>> {
@@ -173,6 +181,7 @@ fn remote_endpoint(model: &EmbeddingModelInfo) -> Option<String> {
 
 /// True when the stored status shows no pending work, mirroring
 /// `indexStatusIsFresh`.
+#[must_use]
 pub fn index_status_is_fresh(info: &ZvecGrepInfoResult) -> bool {
     let Some(status) = info.status.as_ref() else {
         return false;

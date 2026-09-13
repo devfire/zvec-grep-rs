@@ -43,6 +43,7 @@ impl McpError {
     }
 
     /// Maps onto an rmcp JSON-RPC error payload.
+    #[must_use]
     pub fn into_error_data(self) -> ErrorData {
         match self {
             Self::InvalidParams { message } => ErrorData::invalid_params(message, None),

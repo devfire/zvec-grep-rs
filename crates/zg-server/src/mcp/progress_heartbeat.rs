@@ -31,6 +31,7 @@ pub struct ProgressHeartbeat {
 impl ProgressHeartbeat {
     /// Starts beating every [`REMOTE_AUTHORIZATION_HEARTBEAT_MS`] with
     /// `message` until dropped or [`ProgressHeartbeat::stop`]ped.
+    #[must_use]
     pub fn start(peer: Peer<RoleServer>, token: ProgressToken, message: String) -> Self {
         let task = tokio::spawn(async move {
             let mut interval =
@@ -56,6 +57,7 @@ impl ProgressHeartbeat {
     }
 
     /// No-op heartbeat for calls without a progress token.
+    #[must_use]
     pub fn noop() -> Self {
         Self { task: None }
     }
@@ -86,6 +88,7 @@ fn now_ms() -> u64 {
 
 /// Reads the `progressToken` from a request `_meta` object (mirrors
 /// `extra.mcpReq._meta?.progressToken`).
+#[must_use]
 pub fn progress_token_from_meta(meta: &rmcp::model::Meta) -> Option<ProgressToken> {
     let value = meta.0.get("progressToken")?;
     match value {
@@ -95,6 +98,9 @@ pub fn progress_token_from_meta(meta: &rmcp::model::Meta) -> Option<ProgressToke
         serde_json::Value::String(text) => {
             Some(ProgressToken(NumberOrString::String(text.as_str().into())))
         }
-        _ => None,
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Array(_)
+        | serde_json::Value::Object(_) => None,
     }
 }

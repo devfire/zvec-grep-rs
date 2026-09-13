@@ -133,6 +133,11 @@ const PERMANENT_REMOTE_MODEL_PROVIDER_CODES: &[&str] = &[
 ];
 
 /// Index the whole workspace (mirrors `indexWorkspace`).
+///
+/// # Errors
+///
+/// Returns `INDEXING.WORKSPACE_FAILED` when the workspace scan, embedding, or result
+/// build fails.
 pub fn index_workspace(ctx: &mut IndexContext<'_>) -> EngineResult<IndexResult> {
     index_workspace_inner(ctx).map_err(|error| {
         let context = workspace_index_context(&ctx.workspace_index);
@@ -145,6 +150,11 @@ pub fn index_workspace(ctx: &mut IndexContext<'_>) -> EngineResult<IndexResult> 
 }
 
 /// Index explicit changed paths (mirrors `indexWorkspacePaths`).
+///
+/// # Errors
+///
+/// Returns `INDEXING.WORKSPACE_FAILED` when scanning the changed paths, embedding, or
+/// result build fails.
 pub fn index_workspace_paths(
     ctx: &mut IndexContext<'_>,
     changed_paths: &[String],
@@ -160,6 +170,11 @@ pub fn index_workspace_paths(
 }
 
 /// Inspect status without writing (mirrors `getWorkspaceIndexStatus`).
+///
+/// # Errors
+///
+/// Returns an error when root-path scanning or stored-file diffing fails, or
+/// `INDEXING.CANCELLED` when cancelled.
 pub fn get_workspace_index_status(
     workspace_index: &WorkspaceIndexInfo,
     stored_files: &[FileInfo],
@@ -260,9 +275,10 @@ fn index_workspace_inner(ctx: &mut IndexContext<'_>) -> EngineResult<IndexResult
     let first_pass = run_index_pass(ctx, "Scanning files...", &mut timings, None)?;
     let mut passes = vec![first_pass];
     let mut progress_base = None;
-    if passes[0].stats.files_failed > 0 {
-        let failed = passes[0].stats.files_failed;
-        progress_base = Some(retry_progress_base(&passes[0]));
+    let first_failed = passes.first().map_or(0, |pass| pass.stats.files_failed);
+    if first_failed > 0 {
+        let failed = first_failed;
+        progress_base = passes.first().map(retry_progress_base);
         if let Some(base) = progress_base {
             report(
                 ctx,
@@ -337,8 +353,11 @@ fn index_workspace_paths_inner(
     let first_pass = run_path_index_pass(ctx, &normalized_paths, &mut timings, None)?;
     let mut passes = vec![first_pass];
     let mut progress_base = None;
-    if passes[0].stats.files_failed > 0 {
-        progress_base = Some(retry_progress_base(&passes[0]));
+    if passes
+        .first()
+        .is_some_and(|pass| pass.stats.files_failed > 0)
+    {
+        progress_base = passes.first().map(retry_progress_base);
         passes.push(run_path_index_pass(
             ctx,
             &normalized_paths,
@@ -669,9 +688,10 @@ fn build_index_result(
     timings: &mut TimingCollector,
 ) -> IndexResult {
     let _ = ctx;
-    let first = &passes[0];
-    let retries = &passes[1..];
-    let final_pass = &passes[passes.len() - 1];
+    let Some((first, retries)) = passes.split_first() else {
+        return IndexResult::default();
+    };
+    let final_pass = retries.last().unwrap_or(first);
     IndexResult {
         files_scanned: final_pass.files_scanned,
         files_added: first.diff.added.len()
@@ -977,7 +997,7 @@ fn index_files(
             {
                 Some(error.clone())
             }
-            _ => None,
+            UnitOutcome::Failed(_) | UnitOutcome::Embedded(_) => None,
         }) {
             return Err(error);
         }
@@ -1141,8 +1161,7 @@ fn embed_unit(
     progress_base: Option<ProgressBase>,
     total: usize,
 ) -> UnitOutcome {
-    if unit.len() == 1 {
-        let prepared = &unit[0];
+    if let [prepared] = unit {
         thread_report(
             on_progress,
             scheduler,
@@ -1305,7 +1324,11 @@ fn embed_unit_contents(
     let mut out = Vec::with_capacity(unit.len());
     for file in unit {
         let end = offset + file.fragments.len();
-        let vectors = result.vectors[offset..end].to_vec();
+        let vectors = result
+            .vectors
+            .get(offset..end)
+            .map(|window| window.to_vec())
+            .unwrap_or_default();
         let truncated_fragment_count = (offset..end)
             .filter(|index| truncated.contains(index))
             .count();
@@ -1567,7 +1590,10 @@ fn summarize_failed_files(files: &[String]) -> String {
     if files.len() > SHOWN {
         format!(
             "{} and {} more",
-            files[..SHOWN].join(", "),
+            files
+                .get(..SHOWN)
+                .map(|window| window.join(", "))
+                .unwrap_or_default(),
             files.len() - SHOWN
         )
     } else {
@@ -1576,16 +1602,16 @@ fn summarize_failed_files(files: &[String]) -> String {
 }
 
 fn describe_prepared_files(files: &[PreparedFile]) -> String {
-    if files.is_empty() {
+    let Some((first, rest)) = files.split_first() else {
         return "0 files".to_owned();
-    }
-    if files.len() == 1 {
-        return files[0].file.relative_path.clone();
+    };
+    if rest.is_empty() {
+        return first.file.relative_path.clone();
     }
     format!(
         "{} files, starting with {}",
         files.len(),
-        files[0].file.relative_path
+        first.file.relative_path
     )
 }
 
@@ -1628,8 +1654,11 @@ fn embed_fragments(
     let mut start = 0usize;
     while start < fragments.len() {
         let end = (start + max_batch).min(fragments.len());
+        let Some(batch) = fragments.get(start..end) else {
+            break;
+        };
         match embed_fragment_batch(
-            &fragments[start..end],
+            batch,
             model,
             start,
             scheduler,
@@ -1640,7 +1669,9 @@ fn embed_fragments(
         ) {
             Ok(result) => {
                 for (offset, vector) in result.vectors.into_iter().enumerate() {
-                    vectors[start + offset] = vector;
+                    if let Some(slot) = vectors.get_mut(start + offset) {
+                        *slot = vector;
+                    }
                 }
                 truncated.extend(result.truncated.into_iter().map(|index| start + index));
             }
@@ -1886,6 +1917,7 @@ pub struct EmbeddingScheduler {
 }
 
 impl EmbeddingScheduler {
+    #[must_use]
     pub fn new(policy: ConcurrencyPolicy) -> Self {
         let initial = policy.initial;
         Self {
@@ -1909,6 +1941,12 @@ impl EmbeddingScheduler {
         self.policy.max
     }
 
+    /// Runs `task` under the concurrency and cooldown gates, releasing the slot afterwards.
+    ///
+    /// # Errors
+    ///
+    /// Returns `INDEXING.CANCELLED` when aborted or cancelled, `INDEXING.SCHEDULER_FAILED`
+    /// when the scheduler lock fails, or the error returned by `task`.
     pub fn run<T>(
         &self,
         abort: &AtomicBool,

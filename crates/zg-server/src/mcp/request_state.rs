@@ -65,6 +65,7 @@ pub struct RequestStateFields {
 impl RemoteEmbeddingRequestState {
     /// Matches expected fields ignoring the nonce (mirrors
     /// `matchesRemoteEmbeddingRequestState`).
+    #[must_use]
     pub fn matches(&self, expected: &RequestStateFields) -> bool {
         self.version == 1
             && self.method == "tools/call"
@@ -77,6 +78,7 @@ impl RemoteEmbeddingRequestState {
 
 /// SHA-256 hex over canonical (sorted-key) JSON, mirroring TS
 /// `fingerprint` (`stableJson` + sha256 hex).
+#[must_use]
 pub fn fingerprint(value: &serde_json::Value) -> String {
     let canonical = stable_json(value);
     let digest = Sha256::digest(canonical.as_bytes());
@@ -87,8 +89,8 @@ fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
+        out.push(*HEX.get((byte >> 4) as usize).unwrap_or(&b'0') as char);
+        out.push(*HEX.get((byte & 0x0f) as usize).unwrap_or(&b'0') as char);
     }
     out
 }
@@ -120,7 +122,10 @@ fn stable_json(value: &serde_json::Value) -> String {
             out.push(']');
             out
         }
-        _ => serde_json::to_string(value).unwrap_or_default(),
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => serde_json::to_string(value).unwrap_or_default(),
     }
 }
 
@@ -135,6 +140,7 @@ pub struct InMemoryRequestStateReplayGuard {
 
 impl InMemoryRequestStateReplayGuard {
     /// Creates an empty guard.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -188,11 +194,17 @@ pub struct RequestStateCodec {
 
 impl RequestStateCodec {
     /// Builds a codec around a 32-byte key.
+    #[must_use]
     pub fn new(key: [u8; REQUEST_STATE_KEY_BYTES], ttl: Duration) -> Self {
         Self { key, ttl }
     }
 
     /// Mints an opaque token for `state`, bound to `principal`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::InvalidParams`] when the state cannot be encoded, or
+    /// [`McpError::Transport`] when request-state signing is unavailable.
     pub fn mint(
         &self,
         state: &RemoteEmbeddingRequestState,
@@ -218,6 +230,11 @@ impl RequestStateCodec {
     /// Verifies a token: signature, TTL, method/principal binding, and
     /// expected fields. Failures share one message (mirrors the TS
     /// `ProtocolError(-32602, "Invalid or expired requestState")`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::InvalidParams`] when the token is malformed, the signature
+    /// or binding check fails, the token is expired, or the state does not match.
     pub fn verify(
         &self,
         token: &str,
@@ -278,6 +295,7 @@ struct StateEnvelope {
 
 /// Principal for state binding: the bearer token's fingerprint, or the
 /// loopback-anonymous identity (mirrors TS `requestPrincipal`).
+#[must_use]
 pub fn request_principal(token: Option<&str>) -> String {
     match token {
         Some(token) => fingerprint(&serde_json::Value::String(token.to_owned())),
@@ -286,6 +304,7 @@ pub fn request_principal(token: Option<&str>) -> String {
 }
 
 /// Random 32-byte codec key (mirrors `randomBytes(32)` at server setup).
+#[must_use]
 pub fn random_state_key() -> [u8; REQUEST_STATE_KEY_BYTES] {
     let mut key = [0u8; REQUEST_STATE_KEY_BYTES];
     rand::rng().fill_bytes(&mut key);

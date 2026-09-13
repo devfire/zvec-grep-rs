@@ -16,6 +16,10 @@ use super::schema::{ENTITY_TEXT_FIELD, ENTITY_VECTOR_FIELD};
 pub const ZVEC_MAX_QUERY_TOPK: usize = 100_000;
 
 /// Keyword-only recall over the FTS-indexed text field.
+///
+/// # Errors
+///
+/// Returns `STORAGE.ZVEC_QUERY_FAILED` when the query payload, filter, or collection query fails.
 pub fn search_fts(
     collection: &Collection,
     query: &str,
@@ -38,6 +42,10 @@ pub fn search_fts(
 }
 
 /// Dense recall over the embedding vector field.
+///
+/// # Errors
+///
+/// Returns `STORAGE.ZVEC_QUERY_FAILED` when the query payload, filter, or collection query fails.
 pub fn search_vector(
     collection: &Collection,
     vector: &[f32],

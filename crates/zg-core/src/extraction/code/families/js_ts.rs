@@ -28,6 +28,7 @@ pub const JS_TS_FUNCTION_VALUE_TYPES: &[&str] = &["arrow_function", "function_ex
 /// are skipped (their `pair` parent carries them), `pair` nodes index only
 /// for exported function-valued objects, and value declarations index only
 /// with a function value.
+#[must_use]
 pub fn should_index_javascript_typescript_entity(node: &SyntaxNode<'_>) -> bool {
     if node.kind() == "method_definition" && is_object_member(node) {
         return false;
@@ -47,6 +48,7 @@ pub fn should_index_javascript_typescript_entity(node: &SyntaxNode<'_>) -> bool 
 /// True when `node` (or a wrapped call/arguments node) holds a function value.
 ///
 /// Re-exported for the extractor, mirroring `hasJavascriptTypescriptFunctionValue`.
+#[must_use]
 pub fn has_javascript_typescript_function_value(node: &SyntaxNode<'_>) -> bool {
     has_function_value(node)
 }
@@ -55,6 +57,7 @@ pub fn has_javascript_typescript_function_value(node: &SyntaxNode<'_>) -> bool {
 ///
 /// Mirrors `resolveJavascriptTypescriptEntities`: only exported object
 /// declarators fan out; everything else resolves to itself.
+#[must_use]
 pub fn resolve_javascript_typescript_entities<'a>(node: &SyntaxNode<'a>) -> Vec<SyntaxNode<'a>> {
     if node.kind() != "variable_declarator" {
         return vec![*node];
@@ -87,6 +90,7 @@ pub fn extract_javascript_typescript_name(node: &SyntaxNode<'_>) -> Option<Strin
 }
 
 /// Appends the exported object name to the breadcrumb for member entities.
+#[must_use]
 pub fn javascript_typescript_scope_breadcrumb(
     node: &SyntaxNode<'_>,
     breadcrumb: &[String],
@@ -102,6 +106,7 @@ pub fn javascript_typescript_scope_breadcrumb(
 }
 
 /// Signature hook: `pair` nodes render as `key: <value signature>`.
+#[must_use]
 pub fn extract_javascript_typescript_signature(node: &SyntaxNode<'_>) -> Option<String> {
     if node.kind() == "pair" {
         let key = extract_javascript_typescript_name(node)?;
@@ -113,6 +118,7 @@ pub fn extract_javascript_typescript_signature(node: &SyntaxNode<'_>) -> Option<
 }
 
 /// Classifies function-valued declarations/pairs as functions.
+#[must_use]
 pub fn classify_javascript_typescript_node(node: &SyntaxNode<'_>) -> Option<CodeSymbolType> {
     if node.kind() == "pair" || JS_TS_FUNCTION_VALUE_DECLARATION_TYPES.contains(&node.kind()) {
         return if has_function_value(node) {
@@ -125,11 +131,13 @@ pub fn classify_javascript_typescript_node(node: &SyntaxNode<'_>) -> Option<Code
 }
 
 /// Doc hook shared by the JS/TS adapters.
+#[must_use]
 pub fn extract_javascript_typescript_doc(node: &SyntaxNode<'_>) -> Option<String> {
     extract_preceding_doc(node)
 }
 
 /// Modifier hook shared by the JS/TS adapters.
+#[must_use]
 pub fn extract_javascript_typescript_modifiers(
     node: &SyntaxNode<'_>,
 ) -> Vec<crate::types::CodeEntityModifier> {

@@ -91,6 +91,7 @@ impl LlamaCppEmbeddingModel {
     /// Builds the backend from the resolved factory plan fields for the
     /// `ModelBuildPlan::LlamaCpp` arm (catalog entry plus cache directory)
     /// and the requested device for CPU-fallback warnings.
+    #[must_use]
     pub fn from_plan(entry: LlamaCppEntry, cache_dir: PathBuf, device: DeviceKind) -> Self {
         let info = EmbeddingModelInfo {
             reference: entry.reference.to_owned(),
@@ -116,6 +117,11 @@ impl LlamaCppEmbeddingModel {
     /// Downloads (when the cache misses), validates the GGUF file, and
     /// starts the inference worker, reporting through `sink`. Idempotent:
     /// later calls reuse the worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the download fails, the GGUF file is invalid, or
+    /// the worker cannot start.
     pub fn prepare(&self, sink: Option<ModelLoadSink>) -> EngineResult<()> {
         self.ensure_loaded(sink)?;
         Ok(())
@@ -134,7 +140,7 @@ impl LlamaCppEmbeddingModel {
         let mut reporter = ModelDownloadReporter::new(&reference, sink, &[file_name]);
         reporter.start();
         if !matches!(self.device, DeviceKind::Auto | DeviceKind::Cpu) {
-            reporter.warning(&format!(
+            let _ = reporter.warning(&format!(
                 "llama.cpp {} execution is unavailable, falling back to CPU.",
                 self.device.as_str()
             ));
@@ -146,7 +152,7 @@ impl LlamaCppEmbeddingModel {
                 Ok(loaded)
             }
             Err(err) => {
-                reporter.warning(
+                let _ = reporter.warning(
                     "Unable to prepare the local embedding model. Check network access and the model cache.",
                 );
                 Err(err)
@@ -350,7 +356,10 @@ fn embed_texts(
         // round-trip.
         let kept = if tokens.len() > limit {
             truncated.push(index);
-            tokens[..limit.saturating_sub(4).max(1).min(tokens.len())].to_vec()
+            // `end` is clamped to `tokens.len()`, so the `get` below only
+            // fails if the length changed concurrently (it cannot: local).
+            let end = limit.saturating_sub(4).max(1).min(tokens.len());
+            tokens.get(..end).map_or_else(Vec::new, <[_]>::to_vec)
         } else {
             tokens
         };
@@ -450,7 +459,12 @@ fn read_sniff(path: &Path, entry: &LlamaCppEntry) -> EngineResult<Vec<u8>> {
     let mut sniff = vec![0u8; GGUF_SNIFF_LEN];
     let mut filled = 0;
     while filled < GGUF_SNIFF_LEN {
-        match file.read(&mut sniff[filled..]) {
+        // `filled` never exceeds the buffer: reads return at most the
+        // remaining capacity, so `None` is unreachable — stop regardless.
+        let Some(buf) = sniff.get_mut(filled..) else {
+            break;
+        };
+        match file.read(buf) {
             Ok(0) => break,
             Ok(read) => filled = filled.saturating_add(read),
             Err(err) => {
@@ -541,12 +555,12 @@ mod tests {
         let magic = dir.path().join("good.gguf");
         let mut bytes = GGUF_MAGIC.to_vec();
         bytes.extend_from_slice(&[0u8; 64]);
-        std::fs::write(&magic, &bytes).unwrap();
+        fs::write(&magic, &bytes).unwrap();
         validate_gguf_file(&entry(LlamaModelFormat::Qwen3), &magic).unwrap();
         assert!(magic.exists());
 
         let html = dir.path().join("bad.gguf");
-        std::fs::write(&html, b"<!doctype html><html></html>").unwrap();
+        fs::write(&html, b"<!doctype html><html></html>").unwrap();
         let err = validate_gguf_file(&entry(LlamaModelFormat::Qwen3), &html).unwrap_err();
         assert_eq!(
             err.code().to_string(),
@@ -555,7 +569,7 @@ mod tests {
         assert!(!html.exists());
 
         let junk = dir.path().join("junk.gguf");
-        std::fs::write(&junk, b"NOTAGGUFMODEL").unwrap();
+        fs::write(&junk, b"NOTAGGUFMODEL").unwrap();
         let err = validate_gguf_file(&entry(LlamaModelFormat::Qwen3), &junk).unwrap_err();
         assert_eq!(
             err.code().to_string(),

@@ -122,6 +122,7 @@ pub struct Entity {
 
 impl Entity {
     /// Code metadata if this entity carries any.
+    #[must_use]
     pub fn code_metadata(&self) -> Option<&CodeEntityMetadata> {
         match &self.metadata {
             Some(EntityMetadata::Code(meta)) => Some(meta),
@@ -144,6 +145,7 @@ pub struct EntityFragment {
 impl EntityFragment {
     /// Public identity used for group collapse: the group id when set,
     /// otherwise the fragment's own id.
+    #[must_use]
     pub fn public_id(&self) -> &str {
         self.group.as_deref().unwrap_or(self.entity.id.as_str())
     }

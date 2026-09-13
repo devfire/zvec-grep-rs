@@ -25,6 +25,7 @@ pub struct FileRecord {
 }
 
 impl FileRecord {
+    #[must_use]
     pub fn file_info(&self) -> FileInfo {
         self.info.clone()
     }
@@ -41,6 +42,11 @@ pub struct FileMetaStore {
 impl FileMetaStore {
     /// Loads records from `path`; a missing file starts empty unless
     /// `read_only`, which mirrors the TypeScript missing-store error.
+    ///
+    /// # Errors
+    ///
+    /// Returns `STORAGE.ZVEC_FILE_META_MISSING` when a read-only store file is absent, or a JSON
+    /// I/O error when persisted records cannot be read.
     pub fn open(path: &Path, read_only: bool) -> EngineResult<Self> {
         if read_only && !path.exists() {
             return Err(EngineError::new(
@@ -57,17 +63,25 @@ impl FileMetaStore {
         })
     }
 
+    #[must_use]
     pub fn get(&self, file_id: &str) -> Option<&FileRecord> {
         self.records.get(file_id)
     }
 
     /// Records sorted by relative path, mirroring the TypeScript listing.
+    #[must_use]
     pub fn list(&self) -> Vec<FileRecord> {
         let mut records: Vec<FileRecord> = self.records.values().cloned().collect();
         records.sort_by(|left, right| left.info.relative_path.cmp(&right.info.relative_path));
         records
     }
 
+    /// Inserts or replaces `record`, persisting the whole map.
+    ///
+    /// # Errors
+    ///
+    /// Returns `STORAGE.FILE_META_READ_ONLY` when the store is read-only, or a JSON I/O error
+    /// when persistence fails.
     pub fn upsert(&mut self, record: FileRecord) -> EngineResult<()> {
         self.assert_writable("upsertFile")?;
         self.records
@@ -75,6 +89,12 @@ impl FileMetaStore {
         self.persist()
     }
 
+    /// Drops the record for `file_id` (no-op when absent), persisting the whole map.
+    ///
+    /// # Errors
+    ///
+    /// Returns `STORAGE.FILE_META_READ_ONLY` when the store is read-only, or a JSON I/O error
+    /// when persistence fails.
     pub fn remove(&mut self, file_id: &str) -> EngineResult<()> {
         self.assert_writable("deleteFile")?;
         self.records.remove(file_id);

@@ -22,6 +22,7 @@ pub struct RemoteEmbeddingPromptInput<'a> {
 /// Data phrases for a disclosure, mirroring
 /// `remoteEmbeddingDisclosureData`. Note the TS quirk: `full` maps to
 /// `"selected workspace files"`, preserved verbatim.
+#[must_use]
 pub fn remote_embedding_disclosure_data(disclosure: RemoteEmbeddingDisclosure) -> Vec<String> {
     let mut data = Vec::new();
     if disclosure.query_text {
@@ -92,13 +93,13 @@ fn workspace_label(roots: &[String]) -> String {
             clip(&base, 32)
         })
         .collect();
-    if names.is_empty() {
-        return "workspace".to_owned();
+    match names.as_slice() {
+        [] => "workspace".to_owned(),
+        [first, second, rest @ ..] if !rest.is_empty() => {
+            format!("{first}, {second} +{}", rest.len())
+        }
+        _ => names.join(", "),
     }
-    if names.len() <= 2 {
-        return names.join(", ");
-    }
-    format!("{}, {} +{}", names[0], names[1], names.len() - 2)
 }
 
 fn endpoint_host(endpoint: &str) -> Option<String> {

@@ -86,6 +86,11 @@ impl DaemonInstanceLock {
     /// taking over stale locks (dead PID or foreign hostname) after up to
     /// three attempts. A live same-host holder fails with
     /// [`DaemonError::AlreadyRunning`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DaemonError::AlreadyRunning`] when a live holder owns the lock, or
+    /// [`DaemonError::IndexFailed`] when the lock directory or file cannot be created.
     pub async fn acquire(home: Option<&Path>, server_url: &str) -> Result<Self, DaemonError> {
         let dir = daemon_dir(home);
         tokio::fs::create_dir_all(&dir)
@@ -178,6 +183,7 @@ impl DaemonInstanceLock {
     }
 
     /// Current record.
+    #[must_use]
     pub fn record(&self) -> DaemonInstanceRecord {
         DaemonInstanceRecord {
             pid: self.record.pid,
@@ -248,6 +254,11 @@ pub async fn server_status(home: Option<&Path>) -> DaemonControlStatus {
 /// then process-exit wait, then `SIGTERM`/`SIGKILL` escalation on Unix.
 /// Refusing to stop our own process surfaces as `ShutdownFailed` with a
 /// zero status (no HTTP round trip happened).
+///
+/// # Errors
+///
+/// Returns [`DaemonError::ShutdownFailed`] when the target is the current process, the
+/// shutdown request is refused, or escalation fails.
 pub async fn stop_server(
     home: Option<&Path>,
     timeout: Duration,
@@ -297,6 +308,11 @@ pub async fn stop_server(
 
 /// Spawns a detached `zg server run` child and waits for readiness.
 /// (Phase I owns the exact CLI surface; this is the spawn/wait primitive.)
+///
+/// # Errors
+///
+/// Returns [`DaemonError::IndexFailed`] when the child cannot be spawned or readiness
+/// times out.
 pub async fn start_server(
     program: &str,
     args: &[String],
@@ -320,6 +336,10 @@ pub async fn start_server(
 }
 
 /// Polls until the recorded server is running and ready.
+///
+/// # Errors
+///
+/// Returns [`DaemonError::IndexFailed`] when readiness times out.
 pub async fn wait_for_status(
     home: Option<&Path>,
     timeout: Duration,

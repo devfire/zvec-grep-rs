@@ -124,7 +124,8 @@ pub(crate) async fn run_rg_direct(args: QueryArgs, queries: Vec<String>) -> Resu
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+// A panic in test code is just a test failure, so indexing in assertions needs no guard.
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

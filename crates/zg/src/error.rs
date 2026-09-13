@@ -173,7 +173,16 @@ impl CliError {
         match self {
             Self::Engine(error) => error.code().to_string(),
             Self::Daemon(error) => error.code().to_owned(),
-            owned => owned.own_code().map_or_else(
+            Self::Usage { .. }
+            | Self::ConfigInvalid { .. }
+            | Self::AuthorizationDeclined { .. }
+            | Self::AuthorizationRequired { .. }
+            | Self::InstallRefused { .. }
+            | Self::ServerIncompatible { .. }
+            | Self::RgIncompatible { .. }
+            | Self::DaemonUnavailable { .. }
+            | Self::NotReady { .. }
+            | Self::Io { .. } => self.own_code().map_or_else(
                 || "ZVEC_GREP.ENGINE.CLI.UNKNOWN".to_owned(),
                 |code| code.qualified(),
             ),

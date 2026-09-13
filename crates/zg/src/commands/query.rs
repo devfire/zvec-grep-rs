@@ -230,23 +230,28 @@ async fn run_query_server(
         "freshness": policy.freshness.as_wire(),
         "autoUpdate": policy.auto_update,
     });
-    if !args.fts.is_empty() {
-        arguments["fts"] = json!(args.fts);
-    }
-    if !args.vector.is_empty() {
-        arguments["vector"] = json!(args.vector);
-    }
-    if !args.globs.is_empty() {
-        arguments["globs"] = json!(args.globs);
-    }
-    if !args.iglobs.is_empty() {
-        arguments["insensitiveGlobs"] = json!(args.iglobs);
-    }
-    if !args.file_types.is_empty() {
-        arguments["fileTypes"] = json!(args.file_types);
-    }
-    if !args.excluded_file_types.is_empty() {
-        arguments["excludedFileTypes"] = json!(args.excluded_file_types);
+    if let Some(map) = arguments.as_object_mut() {
+        if !args.fts.is_empty() {
+            map.insert("fts".to_owned(), json!(args.fts));
+        }
+        if !args.vector.is_empty() {
+            map.insert("vector".to_owned(), json!(args.vector));
+        }
+        if !args.globs.is_empty() {
+            map.insert("globs".to_owned(), json!(args.globs));
+        }
+        if !args.iglobs.is_empty() {
+            map.insert("insensitiveGlobs".to_owned(), json!(args.iglobs));
+        }
+        if !args.file_types.is_empty() {
+            map.insert("fileTypes".to_owned(), json!(args.file_types));
+        }
+        if !args.excluded_file_types.is_empty() {
+            map.insert(
+                "excludedFileTypes".to_owned(),
+                json!(args.excluded_file_types),
+            );
+        }
     }
     let result = client.call_tool("zvec_grep_search", arguments).await?;
     match parse_server_search_response(&result)? {

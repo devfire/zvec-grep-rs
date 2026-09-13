@@ -14,6 +14,10 @@ use crate::mcp::tools::ZvecGrepMcpServer;
 use crate::mcp::toolset::McpToolset;
 
 /// Serves the MCP tool router over stdio until the client disconnects.
+///
+/// # Errors
+///
+/// Returns [`McpError::Transport`] when serving starts or the server task fails.
 pub async fn run_stdio_server(
     backend: DaemonBackend,
     version: String,

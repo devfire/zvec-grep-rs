@@ -45,6 +45,7 @@ pub struct ModelDownloadReporter {
 }
 
 impl ModelDownloadReporter {
+    #[must_use]
     pub fn new(
         _model: &ModelReference,
         sink: Option<ModelLoadSink>,
@@ -105,6 +106,7 @@ impl ModelDownloadReporter {
 
     /// Emits a warning event. Returns false when no sink listens, so the
     /// caller can fall back to stderr like the TypeScript backends do.
+    #[must_use]
     pub fn warning(&self, message: &str) -> bool {
         let Some(sink) = &self.sink else {
             return false;
@@ -166,17 +168,20 @@ impl ModelDownloadReporter {
 }
 
 /// True when `path` exists and is non-empty.
+#[must_use]
 pub fn is_usable_file(path: &Path) -> bool {
     fs::metadata(path).is_ok_and(|meta| meta.len() > 0)
 }
 
 /// Builds a Hugging Face `resolve` URL for one repo file.
+#[must_use]
 pub fn huggingface_url(repo: &str, revision: &str, remote_file: &str) -> String {
     format!("https://huggingface.co/{repo}/resolve/{revision}/{remote_file}")
 }
 
 /// Cache location for one downloaded file: `<cache>/<scope>/<repo with / as
 /// -->/<revision>/<file_name>`, mirroring the model2vec layout.
+#[must_use]
 pub fn scoped_cache_path(
     cache_dir: &Path,
     scope: &str,
@@ -195,6 +200,11 @@ pub fn scoped_cache_path(
 ///
 /// Writes to a sibling temp file first and atomically renames on success;
 /// a failed download never leaves a partial file at `destination`.
+///
+/// # Errors
+///
+/// Returns [`ModelError::DownloadFailed`] when the cache directory cannot be created, the request
+/// or stream fails, the downloaded file is empty, or the rename into place fails.
 pub fn download_file(
     url: &str,
     destination: &Path,
@@ -233,6 +243,10 @@ pub fn download_file(
 /// Ensures `remote_file` from a Hugging Face repo is present at `local_path`,
 /// downloading it when the cache misses. Reports through `reporter` under
 /// `artifact_name` (usually the file's base name).
+///
+/// # Errors
+///
+/// Returns [`ModelError::DownloadFailed`] when the cached download fails.
 pub fn download_cached_file(
     repo: &str,
     revision: &str,

@@ -18,6 +18,7 @@ struct Entry {
 }
 
 impl TimingCollector {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -41,6 +42,10 @@ impl TimingCollector {
     }
 
     /// Times a closure and records it under `name` (records even on error).
+    ///
+    /// # Errors
+    ///
+    /// Returns the error produced by `task`, if any; timing itself never fails.
     pub fn time<T, E>(&mut self, name: &str, task: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
         let start = Instant::now();
         let result = task();
@@ -49,6 +54,7 @@ impl TimingCollector {
     }
 
     /// Rounded aggregate entries; `count` emitted only when > 1.
+    #[must_use]
     pub fn entries(&self) -> Vec<TimingEntry> {
         self.entries
             .iter()
@@ -98,6 +104,7 @@ impl<'a> ConcurrentTiming<'a> {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
 

@@ -20,6 +20,13 @@ use crate::types::{
 };
 
 /// Sections `text` per heading, or `None` when the plain-text fallback applies.
+///
+/// # Errors
+///
+/// Returns `EXTRACTORS.EMPTY_FILE_ID`, `EXTRACTORS.EMPTY_ABSOLUTE_PATH`, or
+/// `EXTRACTORS.EMPTY_RELATIVE_PATH` when the source file identity is invalid,
+/// `EXTRACTORS.MARKDOWN_INVALID_CHUNK_SIZE` when the chunk size is zero, or
+/// `EXTRACTORS.MARKDOWN_INVALID_CHUNK_OVERLAP` when overlap is not smaller than the chunk size.
 pub fn extract_for_indexing(
     file: &FileInfo,
     text: &str,
@@ -171,7 +178,9 @@ fn scan_headings(lines: &[&str]) -> Vec<Heading> {
     let mut index = 0;
 
     while index < lines.len() {
-        let line = lines[index];
+        let Some(&line) = lines.get(index) else {
+            break;
+        };
         let trimmed = line.trim_start();
 
         if let Some(open) = fence {
@@ -259,8 +268,8 @@ fn parse_atx_heading(line: &str) -> Option<(u32, String)> {
 
     let char_bounds: Vec<usize> = rest.char_indices().map(|(b, _)| b).collect();
     for k in 1..=char_bounds.len() {
-        let tail_byte = if k < char_bounds.len() {
-            char_bounds[k]
+        let tail_byte = if let Some(&bound) = char_bounds.get(k) {
+            bound
         } else {
             rest.len()
         };
@@ -284,9 +293,15 @@ fn is_setext_underline(line: &str) -> bool {
 fn build_sections(headings: &[Heading], lines: &[&str]) -> Vec<Section> {
     let mut stack: Vec<&Heading> = Vec::new();
     let mut sections = Vec::new();
-    let first = &headings[0];
+    let Some(first) = headings.first() else {
+        return Vec::new();
+    };
 
-    if first.line_index > 0 && !lines[..first.line_index].join("\n").trim().is_empty() {
+    if first.line_index > 0
+        && lines
+            .get(..first.line_index)
+            .is_some_and(|window| !window.join("\n").trim().is_empty())
+    {
         sections.push(Section {
             heading: None,
             start_index: 0,
@@ -302,8 +317,8 @@ fn build_sections(headings: &[Heading], lines: &[&str]) -> Vec<Section> {
         sections.push(Section {
             heading: Some(heading.clone()),
             start_index: heading.line_index,
-            end_index: if position + 1 < headings.len() {
-                headings[position + 1].line_index - 1
+            end_index: if let Some(next) = headings.get(position + 1) {
+                next.line_index - 1
             } else {
                 lines.len() - 1
             },
@@ -328,11 +343,18 @@ fn split_markdown_section(
     let mut start_index = section.start_index;
 
     while start_index <= section.end_index {
-        if line_chars[start_index] + 1 > max_chars {
+        let (Some(&first_chars), Some(first_line), Some(&first_offset)) = (
+            line_chars.get(start_index),
+            lines.get(start_index),
+            line_offsets.get(start_index),
+        ) else {
+            break;
+        };
+        if first_chars + 1 > max_chars {
             windows.extend(split_long_markdown_line(
-                lines[start_index],
+                first_line,
                 start_index,
-                line_offsets[start_index],
+                first_offset,
                 max_chars,
             ));
             start_index += 1;
@@ -342,7 +364,10 @@ fn split_markdown_section(
         let mut end_index = start_index;
         let mut used_chars = 0;
         while end_index <= section.end_index {
-            let line_length = line_chars[end_index] + 1;
+            let Some(&line_length_chars) = line_chars.get(end_index) else {
+                break;
+            };
+            let line_length = line_length_chars + 1;
             if used_chars + line_length > max_chars && end_index > start_index {
                 break;
             }
@@ -403,12 +428,21 @@ fn choose_markdown_break(
 }
 
 fn markdown_break_score(lines: &[&str], fence_lines: &[bool], break_index: usize) -> u32 {
-    if break_index == 0 || break_index >= lines.len() || fence_lines[break_index] {
+    if break_index == 0
+        || break_index >= lines.len()
+        || fence_lines
+            .get(break_index)
+            .is_some_and(|in_fence| *in_fence)
+    {
         return 0;
     }
 
-    let current = lines[break_index].trim();
-    let previous = lines[break_index - 1].trim();
+    let (Some(current), Some(previous)) = (lines.get(break_index), lines.get(break_index - 1))
+    else {
+        return 0;
+    };
+    let current = current.trim();
+    let previous = previous.trim();
 
     if is_heading_line(current) {
         return 100;
@@ -445,7 +479,7 @@ fn is_list_item(line: &str) -> bool {
     if bytes.is_empty() {
         return false;
     }
-    if matches!(bytes[0], b'-' | b'*' | b'+') {
+    if matches!(bytes.first(), Some(b'-' | b'*' | b'+')) {
         return line[1..].chars().next().is_some_and(|c| c.is_whitespace());
     }
     let digits = bytes.iter().take_while(|&&b| b.is_ascii_digit()).count();
@@ -480,12 +514,15 @@ fn split_long_markdown_line(
         let cut_chars = if remaining <= max_chars {
             remaining
         } else {
-            find_line_cut_chars(&chars[char_cursor..], max_chars)
+            let Some(rest) = chars.get(char_cursor..) else {
+                break;
+            };
+            find_line_cut_chars(rest, max_chars)
         };
-        let cut_bytes: usize = chars[char_cursor..char_cursor + cut_chars]
-            .iter()
-            .map(|c| c.len_utf8())
-            .sum();
+        let cut_bytes: usize = chars
+            .get(char_cursor..char_cursor + cut_chars)
+            .map(|window| window.iter().map(|c| c.len_utf8()).sum())
+            .unwrap_or(0);
         let text = &line[byte_cursor..byte_cursor + cut_bytes];
         let line_number = line_index + 1;
         windows.push(MarkdownWindow {
@@ -511,12 +548,16 @@ fn lines_to_window(
     end_index: usize,
 ) -> MarkdownWindow {
     MarkdownWindow {
-        text: lines[start_index..=end_index].join("\n"),
+        text: lines
+            .get(start_index..=end_index)
+            .map(|window| window.join("\n"))
+            .unwrap_or_default(),
         range: Range::Text {
             start_line: start_index + 1,
             end_line: end_index + 1,
-            start_offset: line_offsets[start_index],
-            end_offset: line_offsets[end_index] + lines[end_index].len(),
+            start_offset: line_offsets.get(start_index).copied().unwrap_or(0),
+            end_offset: line_offsets.get(end_index).copied().unwrap_or(0)
+                + lines.get(end_index).map(|line| line.len()).unwrap_or(0),
         },
     }
 }
@@ -538,7 +579,9 @@ fn compute_fence_lines(lines: &[&str]) -> Vec<bool> {
     for (index, line) in lines.iter().enumerate() {
         let trimmed = line.trim_start();
         if let Some(open) = fence {
-            in_fence[index] = true;
+            if let Some(slot) = in_fence.get_mut(index) {
+                *slot = true;
+            }
             if trimmed.starts_with(open) {
                 fence = None;
             }
@@ -567,7 +610,10 @@ fn compute_markdown_overlap_lines(
     let mut chars = 0;
     let mut count = 0;
     for index in (start_index + 1..end_index).rev() {
-        chars += lines[index].chars().count() + 1;
+        let Some(line) = lines.get(index) else {
+            break;
+        };
+        chars += line.chars().count() + 1;
         if chars > overlap_chars {
             break;
         }

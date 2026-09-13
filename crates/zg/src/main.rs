@@ -11,10 +11,7 @@
 // workspace `print_stdout`/`print_stderr` warnings (kept for libraries) do not
 // apply here. Phase 0 keeps them at `warn` workspace-wide for that reason.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
-#![cfg_attr(
-    test,
-    allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)
-)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod cli;
 mod client;
@@ -36,12 +33,16 @@ async fn main() {
             // Clap exits 0 for help/version and 2 for usage errors; the
             // frozen contract is 0 on success and 1 on every failure.
             use clap::error::ErrorKind;
-            match error.kind() {
-                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => error.exit(),
-                _ => {
-                    let _ = error.print();
-                    std::process::exit(1);
-                }
+            // `ErrorKind` is non-exhaustive, so a wildcard match arm would
+            // also match future variants: branch explicitly instead.
+            if matches!(
+                error.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+            ) {
+                error.exit()
+            } else {
+                let _ = error.print();
+                std::process::exit(1);
             }
         }
     };

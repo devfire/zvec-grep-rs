@@ -37,6 +37,7 @@ pub struct ServerListenAddress {
 
 impl ServerListenAddress {
     /// `host:port` display form.
+    #[must_use]
     pub fn display(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }
@@ -62,6 +63,7 @@ impl Default for ServerConfig {
 
 impl ServerConfig {
     /// `host:port` display form.
+    #[must_use]
     pub fn listen(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }
@@ -77,6 +79,7 @@ use std::path::Path;
 
 /// True for `127.0.0.1`, `::1`, and `localhost` (case-insensitive),
 /// mirroring TS `isLoopbackHost`.
+#[must_use]
 pub fn is_loopback_host(host: &str) -> bool {
     matches!(
         host.to_lowercase().as_str(),
@@ -86,6 +89,11 @@ pub fn is_loopback_host(host: &str) -> bool {
 
 /// Parses `host:port`, enforcing loopback hosts and port range, mirroring
 /// TS `parseListenAddress` (including bracket stripping for `[::1]`).
+///
+/// # Errors
+///
+/// Returns [`DaemonError::InvalidListenAddress`] when the value is malformed or out of
+/// range, or [`DaemonError::LoopbackRequired`] when the host is not loopback.
 pub fn parse_listen_address(value: Option<&str>) -> Result<ServerListenAddress, DaemonError> {
     let listen = value
         .unwrap_or(&format!("{}:{}", DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT))
@@ -116,6 +124,11 @@ pub fn parse_listen_address(value: Option<&str>) -> Result<ServerListenAddress, 
 
 /// Reads the global config's server section for the listen address,
 /// defaulting to loopback:7999 (mirrors TS `configuredListenAddress`).
+///
+/// # Errors
+///
+/// Returns [`DaemonError::InvalidListenAddress`] when the configured value is malformed,
+/// or [`DaemonError::LoopbackRequired`] when the host is not loopback.
 pub fn configured_listen_address(listen: Option<&str>) -> Result<ServerListenAddress, DaemonError> {
     if let Some(explicit) = listen {
         return parse_listen_address(Some(explicit));
@@ -138,6 +151,11 @@ pub fn configured_listen_address(listen: Option<&str>) -> Result<ServerListenAdd
 
 /// Server-side token: explicit value (or env) wins, else the token file.
 /// Files are chmodded `0600` after reading, mirroring TS.
+///
+/// # Errors
+///
+/// Returns [`DaemonError::InvalidToken`] when the token file is unreadable or the token
+/// is shorter than the minimum length.
 pub fn resolve_server_token(
     token: Option<String>,
     token_file: Option<PathBuf>,
@@ -160,6 +178,11 @@ pub fn resolve_server_token(
 /// Client-side token: env first, then the explicit/default daemon token
 /// file. A missing default file means "no token" (`Ok(None)`); a missing
 /// explicit file is an error (mirrors TS `resolveClientToken`).
+///
+/// # Errors
+///
+/// Returns [`DaemonError::InvalidToken`] when the token is too short or the explicit
+/// token file is missing.
 pub fn resolve_client_token(
     token_file: Option<PathBuf>,
     home: Option<&Path>,

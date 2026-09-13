@@ -26,6 +26,10 @@ pub struct WorkspaceIndexLocation {
 
 /// Absolute resolution of the workspace root (mirrors
 /// `resolveZvecGrepRoot`).
+///
+/// # Errors
+///
+/// Returns `WORKSPACE.ROOT_UNAVAILABLE` when the current directory cannot be determined.
 pub fn resolve_zvec_grep_root(root: Option<&str>) -> EngineResult<String> {
     let base = match root {
         Some(root) => PathBuf::from(root),
@@ -48,11 +52,16 @@ pub fn resolve_zvec_grep_root(root: Option<&str>) -> EngineResult<String> {
 }
 
 /// `.zvec-grep` home under `root` (mirrors `workspaceHome`).
+#[must_use]
 pub fn workspace_home(root: &str) -> String {
     to_display_path(&Path::new(root).join(ZVEC_GREP_DIR))
 }
 
 /// Full locations for `root` (mirrors `workspaceIndexLocation`).
+///
+/// # Errors
+///
+/// Returns `WORKSPACE.ROOT_UNAVAILABLE` when the root cannot be resolved.
 pub fn workspace_index_location(root: &str) -> EngineResult<WorkspaceIndexLocation> {
     let resolved = resolve_zvec_grep_root(Some(root))?;
     let requested_home = workspace_home(&resolved);
@@ -74,6 +83,10 @@ pub fn workspace_index_location(root: &str) -> EngineResult<WorkspaceIndexLocati
 }
 
 /// Deletes the manifest and index storage (mirrors `resetWorkspaceIndex`).
+///
+/// # Errors
+///
+/// Returns an error when the manifest or index storage cannot be deleted.
 pub fn reset_workspace_index(location: &WorkspaceIndexLocation) -> EngineResult<()> {
     let home = Path::new(&location.home);
     delete_workspace_manifest(home)?;
@@ -83,12 +96,14 @@ pub fn reset_workspace_index(location: &WorkspaceIndexLocation) -> EngineResult<
 
 /// Nearest ancestor (or self) whose manifest and storage both exist (mirrors
 /// `findNearestWorkspaceIndex`).
+#[must_use]
 pub fn find_nearest_workspace_index(start: &str) -> Option<WorkspaceIndexLocation> {
     find_nearest_workspace_location(start, &has_workspace_index)
 }
 
 /// Nearest ancestor (or self) with a manifest (mirrors
 /// `findNearestWorkspace`).
+#[must_use]
 pub fn find_nearest_workspace(start: &str) -> Option<WorkspaceIndexLocation> {
     find_nearest_workspace_location(start, &has_workspace_manifest)
 }
@@ -112,11 +127,13 @@ fn find_nearest_workspace_location(
 }
 
 /// True when a manifest exists (mirrors `hasWorkspaceManifest`).
+#[must_use]
 pub fn has_workspace_manifest(location: &WorkspaceIndexLocation) -> bool {
     Path::new(&location.manifest_path).is_file()
 }
 
 /// True when manifest and storage both exist (mirrors `hasWorkspaceIndex`).
+#[must_use]
 pub fn has_workspace_index(location: &WorkspaceIndexLocation) -> bool {
     has_workspace_manifest(location) && has_workspace_index_storage(Path::new(&location.home))
 }

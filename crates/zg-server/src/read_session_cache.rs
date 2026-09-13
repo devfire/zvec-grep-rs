@@ -113,6 +113,11 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
     /// cold. Operations serialize (mirrors TS default); the operation
     /// itself is synchronous and runs while the cache mutex is held, so it
     /// must be short and must never re-enter the cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::Closed`] when the cache is closed, or
+    /// [`SessionError::Open`] when opening the handle fails.
     pub async fn with_read<R>(&self, operation: impl FnOnce(&T) -> R) -> Result<R, SessionError> {
         let mut state = self.shared.state.lock().await;
         if state.closed {

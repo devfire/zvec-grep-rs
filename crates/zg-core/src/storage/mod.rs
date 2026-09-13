@@ -22,12 +22,14 @@ pub enum StorageOptions<'a> {
 }
 
 impl StorageOptions<'_> {
+    #[must_use]
     pub fn storage_path(&self) -> &Path {
         match self {
             Self::ReadOnly { storage_path } | Self::ReadWrite { storage_path, .. } => storage_path,
         }
     }
 
+    #[must_use]
     pub fn read_only(&self) -> bool {
         matches!(self, Self::ReadOnly { .. })
     }
@@ -101,12 +103,18 @@ pub trait WorkspaceIndexStorage: Send {
     ) -> Vec<StoredEntity>;
     fn get_entity(&self, entity_id: &EntityId) -> Option<StoredEntity>;
 
+    /// # Errors
+    ///
+    /// Returns an error when storage is closed or the FTS recall query fails.
     fn search_fts(
         &self,
         query: &str,
         limit: usize,
         filter: Option<&StorageSearchFilter>,
     ) -> EngineResult<Vec<StorageSearchHit>>;
+    /// # Errors
+    ///
+    /// Returns an error when storage is closed or the vector recall query fails.
     fn search_vector(
         &self,
         vector: &[f32],
@@ -114,20 +122,38 @@ pub trait WorkspaceIndexStorage: Send {
         filter: Option<&StorageSearchFilter>,
     ) -> EngineResult<Vec<StorageSearchHit>>;
 
+    /// # Errors
+    ///
+    /// Returns an error when storage is read-only or closed, fragments fail validation or
+    /// encoding, or the write fails.
     fn replace_file(
         &mut self,
         file: &FileInfo,
         entries: &[IndexedFragment],
         diagnostics: Option<&FileIndexDiagnostics>,
     ) -> EngineResult<()>;
+    /// # Errors
+    ///
+    /// Returns an error when storage is read-only or closed, or the write fails.
     fn mark_file_failed(&mut self, file: &FileInfo, error: &str) -> EngineResult<()>;
+    /// # Errors
+    ///
+    /// Returns an error when storage is read-only or closed, or the delete fails.
     fn delete_file(&mut self, file_id: &FileId) -> EngineResult<()>;
 
+    /// # Errors
+    ///
+    /// Returns an error when storage is read-only or closed, or the optimize fails.
     fn finalize_writes(&mut self) -> EngineResult<()>;
     fn close(&mut self);
 }
 
 /// Opens workspace index storage per `options`.
+///
+/// # Errors
+///
+/// Returns an error when the storage directory, lock, metadata store, or zvec collection cannot
+/// be prepared or opened.
 pub fn create_workspace_index_storage(
     options: StorageOptions<'_>,
 ) -> EngineResult<Box<dyn WorkspaceIndexStorage>> {

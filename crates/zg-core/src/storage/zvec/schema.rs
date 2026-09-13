@@ -14,6 +14,11 @@ pub const ENTITY_VECTOR_FIELD: &str = "embedding";
 pub const ENTITY_TEXT_FIELD: &str = "text";
 
 /// Builds the `zvec_grep_entities` collection schema for `embedding`.
+///
+/// # Errors
+///
+/// Returns `STORAGE.INVALID_EMBEDDING_DIMENSION` when the dimension does not fit a `u32`, or
+/// `STORAGE.SCHEMA_FAILED` when a schema field cannot be built.
 pub fn create_entities_schema(
     embedding: &WorkspaceIndexEmbeddingSchema,
 ) -> EngineResult<CollectionSchema> {
@@ -60,6 +65,10 @@ pub fn create_entities_schema(
 }
 
 /// Maps a workspace search metric onto the zvec metric type.
+///
+/// # Errors
+///
+/// Never returns `Err`; the `Result` reserves failure for future [`SearchMetric`] variants.
 pub fn metric_to_zvec(metric: SearchMetric) -> EngineResult<MetricType> {
     match metric {
         SearchMetric::Cosine => Ok(MetricType::Cosine),

@@ -105,7 +105,7 @@ impl RootActor {
         self.runtime.close();
         self.watcher.close().await;
         self.sessions.close().await;
-        self.manager.unregister(&self.key);
+        let _ = self.manager.unregister(&self.key);
     }
 
     pub(crate) fn temp_service(&self) -> ZvecGrepService {
@@ -245,7 +245,7 @@ impl RootActor {
     }
 
     async fn handle_drop(&mut self) -> Result<bool, BackendError> {
-        self.shared.scheduler.cancel_root(self.key.as_str());
+        let _ = self.shared.scheduler.cancel_root(self.key.as_str());
         self.watcher.close().await;
         self.sessions.close().await;
         let service = self.temp_service();

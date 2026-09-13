@@ -32,17 +32,23 @@ pub struct WorkspaceManifest {
 
 impl WorkspaceManifest {
     /// Splits the manifest back into its index identity half.
+    #[must_use]
     pub fn index_info(&self) -> WorkspaceIndexInfo {
         self.info.clone()
     }
 }
 
 /// Absolute path of the manifest file for a workspace home directory.
+#[must_use]
 pub fn workspace_manifest_path(home: &Path) -> PathBuf {
     home.join(WORKSPACE_MANIFEST_FILE)
 }
 
 /// Reads and validates the manifest; returns `None` when no file exists.
+///
+/// # Errors
+///
+/// Returns [`EngineError`] with [`codes::manifest_invalid()`] when the file fails structural or serde validation, or `JSON.READ_FAILED` when it cannot be read or parsed.
 pub fn read_workspace_manifest(home: &Path) -> EngineResult<Option<WorkspaceManifest>> {
     let path = workspace_manifest_path(home);
     let value: Value = crate::utils::json_io::read_json_file(&path, Value::Null)?;
@@ -58,6 +64,10 @@ pub fn read_workspace_manifest(home: &Path) -> EngineResult<Option<WorkspaceMani
 }
 
 /// Persists the manifest atomically with secure file modes.
+///
+/// # Errors
+///
+/// Returns [`EngineError`] with `JSON.WRITE_FAILED` when the manifest cannot be serialized or the atomic write fails.
 pub fn write_workspace_manifest(home: &Path, manifest: &WorkspaceManifest) -> EngineResult<()> {
     crate::utils::json_io::write_json_file(
         &workspace_manifest_path(home),
@@ -67,6 +77,10 @@ pub fn write_workspace_manifest(home: &Path, manifest: &WorkspaceManifest) -> En
 }
 
 /// Deletes the manifest file; a missing file is not an error.
+///
+/// # Errors
+///
+/// Returns [`EngineError`] with `MANIFEST.DELETE_FAILED` when removing an existing file fails.
 pub fn delete_workspace_manifest(home: &Path) -> EngineResult<()> {
     let path = workspace_manifest_path(home);
     match std::fs::remove_file(&path) {
@@ -82,6 +96,7 @@ pub fn delete_workspace_manifest(home: &Path) -> EngineResult<()> {
 
 /// Projects the manifest back to its [`WorkspaceIndexInfo`] half, mirroring
 /// `workspaceIndexInfoFromManifest`.
+#[must_use]
 pub fn workspace_index_info_from_manifest(manifest: &WorkspaceManifest) -> WorkspaceIndexInfo {
     manifest.info.clone()
 }

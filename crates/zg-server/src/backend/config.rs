@@ -37,6 +37,7 @@ pub struct ServiceConfig {
 
 impl ServiceConfig {
     /// Facade options bound to `root` with an explicit model handle.
+    #[must_use]
     pub fn facade_options(
         &self,
         root: &str,
@@ -53,6 +54,7 @@ impl ServiceConfig {
     }
 
     /// Model construction options for pool loads.
+    #[must_use]
     pub fn load_options(&self) -> CreateEmbeddingModelOptions {
         CreateEmbeddingModelOptions {
             api_key: self.api_key.clone(),
@@ -84,6 +86,7 @@ pub struct BackendShared {
 
 impl BackendShared {
     /// Facade options for `root` with no explicit model (catalog path).
+    #[must_use]
     pub fn catalog_options(&self, root: &str) -> CreateZvecGrepOptions {
         self.service.facade_options(root, None)
     }

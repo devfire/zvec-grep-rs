@@ -196,6 +196,7 @@ impl OnnxEmbeddingModel {
     /// Builds the backend from the resolved factory plan fields for the
     /// `ModelBuildPlan::TransformersJs` arm (catalog entry plus cache
     /// directory) and the requested device for CPU-fallback warnings.
+    #[must_use]
     pub fn from_plan(entry: TransformersJsEntry, cache_dir: PathBuf, device: DeviceKind) -> Self {
         let info = EmbeddingModelInfo {
             reference: entry.reference.to_owned(),
@@ -220,6 +221,11 @@ impl OnnxEmbeddingModel {
 
     /// Downloads (when the cache misses) and loads tokenizer plus model,
     /// reporting through `sink`. Idempotent: later calls reuse the load.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the download fails or the tokenizer/model cannot
+    /// be loaded from the cache.
     pub fn prepare(&self, sink: Option<ModelLoadSink>) -> EngineResult<()> {
         self.ensure_loaded(sink)?;
         Ok(())
@@ -240,7 +246,7 @@ impl OnnxEmbeddingModel {
             ModelDownloadReporter::new(&reference, sink, &[remote_onnx, "tokenizer.json"]);
         reporter.start();
         if !matches!(self.device, DeviceKind::Auto | DeviceKind::Cpu) {
-            reporter.warning(&format!(
+            let _ = reporter.warning(&format!(
                 "ONNX {} execution is unavailable, falling back to CPU.",
                 self.device.as_str()
             ));
@@ -252,7 +258,7 @@ impl OnnxEmbeddingModel {
                 Ok(loaded)
             }
             Err(err) => {
-                reporter.warning(
+                let _ = reporter.warning(
                     "Unable to prepare the local embedding model. Check network access and the model cache.",
                 );
                 Err(err)
@@ -610,6 +616,9 @@ fn pool_hidden_states(
 }
 
 #[cfg(test)]
+// Pooling assertions index fixed-shape test vectors; a panic here is just
+// a test failure.
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use crate::models::catalog::TransformersDtype;

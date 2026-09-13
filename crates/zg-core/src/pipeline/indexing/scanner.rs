@@ -122,6 +122,7 @@ pub struct CancelFlag(std::sync::Arc<AtomicBool>);
 
 impl CancelFlag {
     /// A flag that starts un-cancelled.
+    #[must_use]
     pub fn new() -> Self {
         Self(std::sync::Arc::new(AtomicBool::new(false)))
     }
@@ -132,6 +133,7 @@ impl CancelFlag {
     }
 
     /// True once [`CancelFlag::cancel`] ran on any clone.
+    #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Relaxed)
     }
@@ -207,6 +209,12 @@ fn default_ignore_rules() -> Vec<IgnoreRule> {
 }
 
 /// Scans every configured root (mirrors `scanRootPaths`).
+///
+/// # Errors
+///
+/// Returns `SCANNER.OVERLAPPING_ROOT_PATHS` for overlapping roots,
+/// `SCANNER.ROOT_PATH_STAT_FAILED` or `SCANNER.UNSUPPORTED_ROOT_PATH` for bad roots,
+/// `INDEXING.CANCELLED` when cancelled, or per-root scan errors.
 pub fn scan_root_paths(
     workspace_index_id: &str,
     root_paths: &[RootPath],
@@ -231,6 +239,11 @@ pub fn scan_root_paths(
 }
 
 /// Scans one file path under the matching roots (mirrors `scanFilePath`).
+///
+/// # Errors
+///
+/// Returns `INDEXING.CANCELLED` when cancelled, or an error when ignore rules, file
+/// selection, or file reads fail.
 pub fn scan_file_path(
     workspace_index_id: &str,
     root_paths: &[RootPath],
@@ -289,6 +302,10 @@ pub fn scan_file_path(
 
 /// True when `absolute_path` could affect the index (mirrors
 /// `pathCanAffectIndex`).
+///
+/// # Errors
+///
+/// Returns an error when ignore rules or file selection fail.
 pub fn path_can_affect_index(
     root_paths: &[RootPath],
     absolute_path: &str,
@@ -341,6 +358,11 @@ pub fn path_can_affect_index(
 
 /// Scans one directory under the matching roots (mirrors
 /// `scanDirectoryPath`).
+///
+/// # Errors
+///
+/// Returns `INDEXING.CANCELLED` when cancelled, or an error when directory scanning,
+/// ignore rules, or file reads fail.
 pub fn scan_directory_path(
     workspace_index_id: &str,
     root_paths: &[RootPath],
@@ -1026,25 +1048,39 @@ fn hidden_pattern_segment_matches(pattern_segment: &str, name: &str) -> bool {
 /// Single-segment glob (`*` any run, `?` one char, no `/` crossing).
 fn segment_glob_matches(pattern: &str, name: &str) -> bool {
     fn go(p: &[u8], n: &[u8]) -> bool {
-        if p.is_empty() {
+        let Some((&first, rest_p)) = p.split_first() else {
             return n.is_empty();
-        }
-        match p[0] {
+        };
+        match first {
             b'*' => {
-                let mut rest = &p[1..];
-                while rest.first() == Some(&b'*') {
-                    rest = &rest[1..];
+                let mut rest = rest_p;
+                while let Some((&b'*', tail)) = rest.split_first() {
+                    rest = tail;
                 }
                 for split in 0..=n.len() {
-                    if go(rest, &n[split..]) {
+                    if n.get(split..).is_some_and(|tail| go(rest, tail)) {
                         return true;
                     }
                 }
                 false
             }
-            b'?' => !n.is_empty() && go(&p[1..], &n[1..]),
-            b'\\' if p.len() > 1 => n.first() == Some(&p[1]) && go(&p[2..], &n[1..]),
-            c => n.first() == Some(&c) && go(&p[1..], &n[1..]),
+            b'?' => match n.split_first() {
+                Some((_, rest_n)) => go(rest_p, rest_n),
+                None => false,
+            },
+            b'\\' if !rest_p.is_empty() => {
+                let Some((&escaped, after_escape)) = rest_p.split_first() else {
+                    return false;
+                };
+                let Some((&first_n, rest_n)) = n.split_first() else {
+                    return false;
+                };
+                escaped == first_n && go(after_escape, rest_n)
+            }
+            c => match n.split_first() {
+                Some((&first_n, rest_n)) => first_n == c && go(rest_p, rest_n),
+                None => false,
+            },
         }
     }
     go(pattern.as_bytes(), name.as_bytes())
@@ -1177,6 +1213,7 @@ fn record_skipped_file(
 }
 
 /// Empty diagnostics accumulator (mirrors `createScanDiagnostics`).
+#[must_use]
 pub fn create_scan_diagnostics() -> FileScanDiagnostics {
     FileScanDiagnostics {
         skipped_files: 0,
@@ -1198,7 +1235,7 @@ fn is_likely_binary_file(path: &str) -> bool {
         return false;
     }
     let mut suspicious = 0usize;
-    for value in &buffer[..bytes_read] {
+    for value in buffer.get(..bytes_read).into_iter().flatten() {
         if *value == 0 {
             return true;
         }

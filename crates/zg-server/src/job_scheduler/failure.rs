@@ -46,6 +46,7 @@ impl From<EngineError> for JobFailure {
 
 impl JobFailure {
     /// Cancellation with the frozen `INDEX_CANCELLED` code.
+    #[must_use]
     pub fn from_cancelled() -> Self {
         Self::Cancelled
     }

@@ -21,15 +21,18 @@ pub enum Content {
 }
 
 impl Content {
+    #[must_use]
     pub fn is_text(&self) -> bool {
         matches!(self, Self::Text { .. })
     }
 
+    #[must_use]
     pub fn is_image(&self) -> bool {
         matches!(self, Self::Image { .. })
     }
 
     /// Text payload for text content; `None` for images.
+    #[must_use]
     pub fn as_text(&self) -> Option<&str> {
         match self {
             Self::Text { text } => Some(text),

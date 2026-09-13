@@ -59,6 +59,7 @@ pub fn extract_c_family_name(node: &SyntaxNode<'_>) -> Option<String> {
 }
 
 /// Symbol type for the nodes the generic walk cannot classify.
+#[must_use]
 pub fn classify_c_family_node(node: &SyntaxNode<'_>) -> Option<CodeSymbolType> {
     if node.kind() == "type_definition" {
         return Some(if typedef_wraps_class_like_body(node) {
@@ -135,7 +136,7 @@ fn extract_raw_c_function_name(node: &SyntaxNode<'_>) -> Option<String> {
 fn qualifier_parts(name: &str) -> Vec<&str> {
     let parts: Vec<&str> = name.split("::").filter(|part| !part.is_empty()).collect();
     if parts.len() > 1 {
-        parts[..parts.len() - 1].to_vec()
+        parts.split_at(parts.len() - 1).0.to_vec()
     } else {
         Vec::new()
     }
@@ -182,23 +183,22 @@ fn extract_c_function_name(text: &str) -> Option<String> {
     let mut last: Option<String> = None;
     let mut index = 0;
     while index < bytes.len() {
-        let byte = bytes[index];
+        let Some(&byte) = bytes.get(index) else {
+            break;
+        };
         if byte == b'~' || byte.is_ascii_alphabetic() || byte == b'_' {
             let start = index;
             index += 1;
-            while index < bytes.len()
-                && (bytes[index] == b'~'
-                    || bytes[index].is_ascii_alphanumeric()
-                    || bytes[index] == b'_'
-                    || bytes[index] == b':')
-            {
+            while bytes.get(index).is_some_and(|b| {
+                *b == b'~' || b.is_ascii_alphanumeric() || *b == b'_' || *b == b':'
+            }) {
                 index += 1;
             }
             let mut end = index;
-            while end < bytes.len() && bytes[end].is_ascii_whitespace() {
+            while bytes.get(end).is_some_and(|b| b.is_ascii_whitespace()) {
                 end += 1;
             }
-            if end < bytes.len() && bytes[end] == b'(' {
+            if bytes.get(end) == Some(&b'(') {
                 last = text.get(start..index).map(str::to_string);
             }
         } else {

@@ -67,6 +67,7 @@ impl From<bool> for LogField {
 
 /// Daemon home: `$ZVEC_GREP_HOME/daemon`, else `~/.zvec-grep/daemon`
 /// (mirrors TS `daemonHome` over `defaultHome`).
+#[must_use]
 pub fn daemon_home() -> PathBuf {
     zg_core::paths::default_home().join("daemon")
 }
@@ -80,11 +81,13 @@ pub struct DaemonLogger {
 
 impl DaemonLogger {
     /// Logs to `<daemon_home>/logs/server.log`.
+    #[must_use]
     pub fn new() -> Self {
         Self::with_home(daemon_home())
     }
 
     /// Logs under an explicit daemon home (tests).
+    #[must_use]
     pub fn with_home(home: PathBuf) -> Self {
         Self {
             path: home.join("logs").join("server.log"),
@@ -92,6 +95,7 @@ impl DaemonLogger {
     }
 
     /// Log file path.
+    #[must_use]
     pub fn path(&self) -> &std::path::Path {
         &self.path
     }
@@ -174,18 +178,22 @@ fn sanitize_fields(fields: BTreeMap<String, LogField>) -> BTreeMap<String, LogFi
                     let kept: String = text.chars().take(511).collect();
                     Some((key, LogField::Text(format!("{kept}\u{2026}"))))
                 }
-                other => Some((key, other)),
+                other @ LogField::Text(_)
+                | other @ LogField::Int(_)
+                | other @ LogField::Bool(_) => Some((key, other)),
             }
         })
         .collect()
 }
 
 /// Stable 16-hex identity for a workspace root (mirrors TS `rootIdentity`).
+#[must_use]
 pub fn root_identity(root: &str) -> String {
     sha_hex16(root)
 }
 
 /// Stable 16-hex identity for an opaque value (mirrors TS `opaqueIdentity`).
+#[must_use]
 pub fn opaque_identity(value: &str) -> String {
     sha_hex16(value)
 }
@@ -211,6 +219,7 @@ fn is_sensitive_key(key: &str) -> bool {
 }
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use crate::trace::run_with_trace_context;

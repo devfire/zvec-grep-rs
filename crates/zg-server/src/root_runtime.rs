@@ -28,6 +28,10 @@ pub struct RootKey(String);
 impl RootKey {
     /// Validates an absolute path into a canonical key. Symlink resolution
     /// is [`resolve_requested_root`]'s job; this only enforces absoluteness.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DaemonError::RootNotAbsolute`] when the value is not an absolute path.
     pub fn parse(value: &str) -> Result<Self, DaemonError> {
         if Path::new(value).is_absolute() {
             Ok(Self(value.to_owned()))
@@ -39,6 +43,7 @@ impl RootKey {
     }
 
     /// Raw canonical path.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -61,12 +66,14 @@ impl Generation {
     pub const ZERO: Self = Self(0);
 
     /// Raw counter value.
+    #[must_use]
     pub const fn get(self) -> u64 {
         self.0
     }
 
     /// Next value (`saturating_add(1)` — exhaustion saturates rather than
     /// wrapping, so staleness checks stay conservative).
+    #[must_use]
     pub const fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }
@@ -119,6 +126,7 @@ pub struct RootRuntime {
 
 impl RootRuntime {
     /// Fresh runtime with zeroed revisions for `key`.
+    #[must_use]
     pub fn new(key: RootKey) -> Self {
         Self {
             key,
@@ -138,6 +146,7 @@ impl RootRuntime {
     }
 
     /// Canonical root this runtime owns.
+    #[must_use]
     pub fn key(&self) -> &RootKey {
         &self.key
     }
@@ -166,6 +175,7 @@ impl RootRuntime {
     }
 
     /// Current full-reconciliation epoch (stamped into proofs).
+    #[must_use]
     pub fn reconciliation_epoch(&self) -> Generation {
         self.full_epoch
     }
@@ -179,16 +189,19 @@ impl RootRuntime {
     }
 
     /// True when a full reconciliation is still owed.
+    #[must_use]
     pub fn requires_full_reconciliation(&self) -> bool {
         self.reconciled_epoch < self.full_epoch
     }
 
     /// True when anything is unindexed or unreconciled.
+    #[must_use]
     pub fn needs_reconciliation(&self) -> bool {
         self.requires_full_reconciliation() || self.indexed_revision < self.dirty_revision
     }
 
     /// True when the watcher is up.
+    #[must_use]
     pub fn watcher_active(&self) -> bool {
         self.watcher_active
     }
@@ -229,6 +242,7 @@ impl RootRuntime {
 
     /// True while quiet enough to evict (no readers, ops, writer, or
     /// pending watcher changes).
+    #[must_use]
     pub fn is_quiet(&self) -> bool {
         self.active_readers == 0
             && self.active_operations == 0
@@ -245,11 +259,13 @@ impl RootRuntime {
     }
 
     /// True after [`RootRuntime::close`].
+    #[must_use]
     pub fn is_closed(&self) -> bool {
         self.closed
     }
 
     /// Observable snapshot.
+    #[must_use]
     pub fn snapshot(&self) -> RootRuntimeSnapshot {
         RootRuntimeSnapshot {
             active_readers: self.active_readers,
@@ -265,6 +281,12 @@ impl RootRuntime {
 /// Resolves a caller-supplied root into a [`RootKey`], mirroring TS
 /// `resolveRequestedRoot`: must be absolute, must exist as a directory,
 /// and must be readable (plus writable when `writable`).
+///
+/// # Errors
+///
+/// Returns [`DaemonError::RootNotAbsolute`] when the path is not absolute,
+/// [`DaemonError::RootNotFound`] when it is missing or not a directory, or
+/// [`DaemonError::RootPermissionDenied`] when it is unreadable (or read-only with `writable`).
 pub fn resolve_requested_root(requested: &str, writable: bool) -> Result<RootKey, DaemonError> {
     if !Path::new(requested).is_absolute() {
         return Err(DaemonError::RootNotAbsolute {
@@ -273,13 +295,14 @@ pub fn resolve_requested_root(requested: &str, writable: bool) -> Result<RootKey
     }
     let metadata = std::fs::metadata(requested).map_err(|error| {
         use std::io::ErrorKind;
-        match error.kind() {
-            ErrorKind::PermissionDenied => DaemonError::RootPermissionDenied {
+        if error.kind() == ErrorKind::PermissionDenied {
+            DaemonError::RootPermissionDenied {
                 root: requested.to_owned(),
-            },
-            _ => DaemonError::RootNotFound {
+            }
+        } else {
+            DaemonError::RootNotFound {
                 root: requested.to_owned(),
-            },
+            }
         }
     })?;
     if !metadata.is_dir() {

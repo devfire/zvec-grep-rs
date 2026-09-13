@@ -10,6 +10,11 @@ use crate::extraction::{ChunkOptions, ExtractedFragment};
 use crate::types::FileInfo;
 
 /// Structural code extraction; see [`extractor`].
+///
+/// # Errors
+///
+/// Returns `EXTRACTORS.CODE_INVALID_CHUNK_SIZE` when the chunk size is zero, or
+/// `EXTRACTORS.CODE_INVALID_CHUNK_OVERLAP` when overlap is not smaller than the chunk size.
 pub fn extract_for_indexing(
     file: &FileInfo,
     text: &str,

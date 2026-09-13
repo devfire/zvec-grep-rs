@@ -56,6 +56,12 @@ pub struct WorkspaceIndex {
 
 impl WorkspaceIndex {
     /// Opens (or creates, in write mode) the index described by `info`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `WORKSPACE_INDEX.MISSING` when the index was never built, a version or embedding
+    /// schema mismatch when the record disagrees with the current version or model, or a storage
+    /// error when the collection cannot be opened.
     pub fn open(info: WorkspaceIndexInfo, options: WorkspaceIndexOptions) -> EngineResult<Self> {
         let embedding = require_workspace_index_embedding(&info, "open")?;
         validate_index_version(&info)?;
@@ -82,22 +88,31 @@ impl WorkspaceIndex {
     }
 
     /// Index display name.
+    #[must_use]
     pub fn name(&self) -> &str {
         &self.info.name
     }
 
     /// Index identity the handle was opened with.
+    #[must_use]
     pub fn info(&self) -> &WorkspaceIndexInfo {
         &self.info
     }
 
     /// Recorded embedding schema the handle was opened with.
+    #[must_use]
     pub fn embedding(&self) -> &WorkspaceIndexEmbeddingSchema {
         &self.embedding
     }
 
     /// Runs indexing, or changed-path indexing when requested (mirrors
     /// `WorkspaceIndex#index`).
+    ///
+    /// # Errors
+    ///
+    /// Returns `WORKSPACE_INDEX.READ_ONLY` for a read-only handle,
+    /// `WORKSPACE_INDEX.EMBEDDING_MODEL_REQUIRED` without a model, or an indexing error when the
+    /// run fails.
     pub fn index(&mut self, options: &IndexOptions) -> EngineResult<IndexResult> {
         if self.storage.read_only() {
             return Err(EngineError::new(
@@ -122,11 +137,19 @@ impl WorkspaceIndex {
     }
 
     /// Derives status from stored files (mirrors `WorkspaceIndex#status`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the workspace root paths cannot be scanned.
     pub fn status(&self) -> EngineResult<WorkspaceIndexStatus> {
         get_workspace_index_status(&self.info, &self.storage.list_files(), None)
     }
 
     /// Executes a hybrid search plan (mirrors `WorkspaceIndex#searchPlan`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the plan is invalid or embedding recall or storage search fails.
     pub fn search_plan(&self, plan: &SearchPlan) -> EngineResult<SearchPlanResult> {
         search_workspace_index(
             plan,
@@ -265,6 +288,7 @@ fn workspace_index_operation_details(name: &str, operation: &str) -> String {
 
 /// True when the manifest record describes a built index (mirrors
 /// `isWorkspaceIndexed`).
+#[must_use]
 pub fn is_workspace_indexed(info: &WorkspaceIndexInfo) -> bool {
     matches!(info.embedding, Some(Some(_))) && info.index_version.is_some()
 }

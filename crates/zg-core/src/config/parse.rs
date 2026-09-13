@@ -15,6 +15,10 @@ use crate::error::{EngineError, EngineResult, codes};
 use serde_json::Value;
 
 /// Validates `value` as a complete global config file body.
+///
+/// # Errors
+///
+/// Returns [`EngineError`] with [`codes::config_invalid()`] when any field fails validation.
 pub fn parse_global_config(value: &Value, path: &str) -> EngineResult<GlobalConfig> {
     let object = value
         .as_object()
@@ -47,6 +51,7 @@ pub fn parse_global_config(value: &Value, path: &str) -> EngineResult<GlobalConf
 }
 
 /// Field-level merge of per-provider configs (`apiKey` only, today).
+#[must_use]
 pub fn merge_provider_configs(
     current: Option<BTreeMap<String, ProviderConfig>>,
     update: Option<BTreeMap<String, ProviderConfig>>,
@@ -66,6 +71,7 @@ pub fn merge_provider_configs(
 }
 
 /// Field-level merge of per-model configs (`endpoint`/`device`).
+#[must_use]
 pub fn merge_model_configs(
     current: Option<BTreeMap<String, EmbeddingModelConfig>>,
     update: Option<BTreeMap<String, EmbeddingModelConfig>>,
@@ -404,6 +410,7 @@ fn invalid_config(path: &str, detail: &str) -> EngineError {
 
 /// Builds the `CONFIG.INVALID_EMBEDDING_RUNTIME` error used by runtime
 /// resolution.
+#[must_use]
 pub fn invalid_runtime(reference: &str, message: &str) -> EngineError {
     EngineError::new(
         codes::config_invalid_embedding_runtime(),

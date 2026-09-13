@@ -3,11 +3,13 @@
 use sha2::{Digest, Sha256};
 
 /// Hex sha256 of a text value.
+#[must_use]
 pub fn sha256_text(text: &str) -> String {
     sha256_bytes(text.as_bytes())
 }
 
 /// Hex sha256 of raw bytes.
+#[must_use]
 pub fn sha256_bytes(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     let mut hex = String::with_capacity(64);

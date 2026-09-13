@@ -22,11 +22,13 @@ pub const SHORT_OUTLINE_MAX_LINES: usize = 7;
 pub const AGENT_PREVIEW_MAX_LINE_LENGTH: usize = 160;
 
 /// Text-only tool result.
+#[must_use]
 pub fn text_tool_result(text: String) -> CallToolResult {
     CallToolResult::success(vec![McpContent::text(text)])
 }
 
 /// Tool result with text and structured content.
+#[must_use]
 pub fn tool_result(text: String, structured: serde_json::Value) -> CallToolResult {
     let mut result = CallToolResult::structured(structured);
     result.content = vec![McpContent::text(text)];
@@ -36,6 +38,7 @@ pub fn tool_result(text: String, structured: serde_json::Value) -> CallToolResul
 /// Compact agent rendering of a context result. `trace` controls the
 /// `score=` header suffix and `trace:` detail lines (mirrors the
 /// `options.trace` flag, not the per-item payload presence).
+#[must_use]
 pub fn format_agent_context_result(result: &ZvecGrepContextResult, trace: bool) -> String {
     if result.source == ContextSource::Rg || result.group_results.is_none() {
         let refs: Vec<&ContextItem> = result.items.iter().collect();
@@ -143,7 +146,11 @@ fn compare_items(left: &ContextItem, right: &ContextItem) -> std::cmp::Ordering 
 fn range_start_line(range: &Range) -> usize {
     match range {
         Range::Text { start_line, .. } => *start_line,
-        _ => 0,
+        Range::File
+        | Range::Byte { .. }
+        | Range::Page { .. }
+        | Range::PageText { .. }
+        | Range::PageRegion { .. } => 0,
     }
 }
 
@@ -307,7 +314,11 @@ fn text_span(range: &Range) -> Option<(usize, usize)> {
             end_line,
             ..
         } => Some((*start_line, *end_line)),
-        _ => None,
+        Range::File
+        | Range::Byte { .. }
+        | Range::Page { .. }
+        | Range::PageText { .. }
+        | Range::PageRegion { .. } => None,
     }
 }
 
@@ -435,6 +446,7 @@ fn one_line(value: &str) -> String {
 }
 
 /// `file:start-end` labels (mirrors `cli/format/range.ts`).
+#[must_use]
 pub fn range_label(range: &Range) -> String {
     match range {
         Range::File => "file".to_owned(),
@@ -472,7 +484,11 @@ fn empty_context_label(result: &ZvecGrepContextResult) -> String {
 fn trace_detail_line(trace: &serde_json::Value) -> Option<String> {
     match trace {
         serde_json::Value::Null => None,
-        _ => serde_json::to_string(trace).ok(),
+        serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_)
+        | serde_json::Value::Array(_)
+        | serde_json::Value::Object(_) => serde_json::to_string(trace).ok(),
     }
 }
 

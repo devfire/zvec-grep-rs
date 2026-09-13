@@ -14,6 +14,7 @@ const DESCENDANT_SENTINEL: &str = "__zvec_grep_descendant__";
 /// Trims, converts backslashes to `/`, collapses duplicate slashes. Absolute
 /// patterns are returned untouched after that; relative ones strip leading
 /// `./` repetitions.
+#[must_use]
 pub fn normalize_path_pattern(pattern: &str) -> String {
     let collapsed = collapse_slashes(&pattern.trim().replace('\\', "/"));
     if is_absolute_path_pattern(&collapsed) {
@@ -27,20 +28,23 @@ pub fn normalize_path_pattern(pattern: &str) -> String {
 }
 
 /// Backslashes to `/` plus slash collapsing for candidate paths.
+#[must_use]
 pub fn normalize_path_for_match(path: &str) -> String {
     collapse_slashes(&path.replace('\\', "/"))
 }
 
 /// True for `/`-rooted or `X:/` patterns.
+#[must_use]
 pub fn is_absolute_path_pattern(pattern: &str) -> bool {
     if pattern.starts_with('/') {
         return true;
     }
-    let bytes = pattern.as_bytes();
-    bytes.len() >= 3
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-        && (bytes[2] == b'/' || bytes[2] == b'\\')
+    match pattern.as_bytes() {
+        [first, second, third, ..] => {
+            first.is_ascii_alphabetic() && *second == b':' && (*third == b'/' || *third == b'\\')
+        }
+        _ => false,
+    }
 }
 
 fn collapse_slashes(value: &str) -> String {
@@ -61,6 +65,7 @@ fn collapse_slashes(value: &str) -> String {
 }
 
 /// True when the pattern contains glob metacharacters.
+#[must_use]
 pub fn has_path_glob(pattern: &str) -> bool {
     pattern.contains(['*', '?', '['])
 }
@@ -73,6 +78,7 @@ pub fn has_path_glob(pattern: &str) -> bool {
 ///
 /// Patterns containing `/` anchor at the start; otherwise they match on any
 /// basename (`^(?:.*/)?`).
+#[must_use]
 pub fn glob_to_regex(pattern: &str) -> String {
     let mut expression = if pattern.contains('/') {
         String::from("^")
@@ -174,8 +180,8 @@ fn read_glob_alternation(pattern: &str, start_index: usize) -> Option<Alternatio
     let mut alternative_start = start_index + 1;
     let bytes = pattern.as_bytes();
     let mut index = start_index + 1;
-    while index < bytes.len() {
-        let ch = bytes[index] as char;
+    while let Some(&byte) = bytes.get(index) {
+        let ch = byte as char;
         match ch {
             '{' => {
                 depth += 1;
@@ -233,11 +239,13 @@ fn glob_pattern_matches(pattern: &str, path: &str, case_insensitive: bool) -> bo
 }
 
 /// Ripgrep-style glob matching (case-sensitive). Empty patterns never match.
+#[must_use]
 pub fn ripgrep_glob_matches(pattern: &str, path: &str) -> bool {
     ripgrep_glob_matches_with_case(pattern, path, false)
 }
 
 /// Ripgrep-style glob matching (case-insensitive).
+#[must_use]
 pub fn ripgrep_glob_matches_case_insensitive(pattern: &str, path: &str) -> bool {
     ripgrep_glob_matches_with_case(pattern, path, true)
 }
@@ -256,11 +264,13 @@ fn ripgrep_glob_matches_with_case(pattern: &str, path: &str, case_insensitive: b
 
 /// Literal or glob pattern with directory-prefix semantics: a literal pattern
 /// matches itself and everything underneath it.
+#[must_use]
 pub fn path_pattern_matches(pattern: &str, path: &str) -> bool {
     path_pattern_matches_with_case(pattern, path, false)
 }
 
 /// Case-insensitive [`path_pattern_matches`].
+#[must_use]
 pub fn path_pattern_matches_case_insensitive(pattern: &str, path: &str) -> bool {
     path_pattern_matches_with_case(pattern, path, true)
 }
@@ -294,6 +304,7 @@ fn path_pattern_matches_with_case(pattern: &str, path: &str, case_insensitive: b
 
 /// Cheap check used to prune directory walks: might anything inside `dir`
 /// match `pattern`?
+#[must_use]
 pub fn path_pattern_might_match_descendant(pattern: &str, directory_path: &str) -> bool {
     let normalized_pattern = normalize_path_pattern(pattern);
     let normalized_directory = normalize_path_for_match(directory_path)
@@ -360,6 +371,7 @@ pub struct CompiledGlob {
 
 impl CompiledGlob {
     /// Compiles a pattern for repeated matching.
+    #[must_use]
     pub fn new(pattern: &str, case_insensitive: bool) -> Self {
         let normalized = normalize_path_pattern(pattern);
         let regex = compile_matcher(&normalized, case_insensitive);
@@ -369,6 +381,7 @@ impl CompiledGlob {
         Self { regex, dir_prefix }
     }
 
+    #[must_use]
     pub fn matches(&self, path: &str) -> bool {
         let normalized = normalize_path_for_match(path);
         self.dir_prefix

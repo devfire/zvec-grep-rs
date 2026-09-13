@@ -46,16 +46,19 @@ pub struct UnixMillis(i64);
 
 impl UnixMillis {
     /// Current wall-clock time.
+    #[must_use]
     pub fn now() -> Self {
         Self(chrono::Utc::now().timestamp_millis())
     }
 
     /// Wraps a raw millisecond count (file mtimes, wire values).
+    #[must_use]
     pub fn from_millis(millis: i64) -> Self {
         Self(millis)
     }
 
     /// The wrapped millisecond count.
+    #[must_use]
     pub fn as_millis(self) -> i64 {
         self.0
     }
