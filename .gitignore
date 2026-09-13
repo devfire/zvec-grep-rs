@@ -1,1 +1,64 @@
-/target
+# Rust build output
+/target/
+**/*.rs.bk
+**/*.pdb
+
+# Cargo local state.
+# NOTE: Cargo.lock and .cargo/config.toml stay tracked (binary workspace).
+.cargo/credentials.toml
+.cargo/ok
+.cargo/registry/
+.cargo/git/
+
+# Coverage / profiling / benchmarks
+lcov.info
+coverage/
+*.profraw
+*.profdata
+tarpaulin-report*.json
+tarpaulin-report*.xml
+cobertura.xml
+criterion/
+flamegraph.svg
+perf.data*
+cachegrind.out*
+
+# This project's local runtime state (per-daemon index, locks, manifests)
+.zvec-grep/
+
+# Env / secrets (local overrides only; keep .env.example tracked)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Logs / temp / merge fallout
+*.log
+*.tmp
+*.orig
+*.rej
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+.vim/
+helix.log
+
+# direnv / nix
+.direnv/
+result
+result-*
+
+# Distribution / packaging scratch
+dist/
+*.tgz
