@@ -91,7 +91,7 @@ impl FileTypesMatcher {
 ///
 /// # Errors
 ///
-/// Returns [`EngineError`] with [`codes::unknown_file_type()`] when a name is not a known ripgrep type, or [`codes::file_types_unavailable()`] when the type set fails to build.
+/// Returns [`EngineError`] with `FILE_SELECTION.UNKNOWN_FILE_TYPE` when a name is not a known ripgrep type, or `FILE_SELECTION.TYPES_UNAVAILABLE` when the type set fails to build.
 pub fn resolve_file_types(
     included: &[String],
     excluded: &[String],

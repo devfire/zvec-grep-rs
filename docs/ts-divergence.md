@@ -35,11 +35,12 @@ strings, auth prompt text) never diverge; only internal structure does.
 `Arc<dyn EmbeddingModel>` across phase-G pool tasks, but neither heavy
 backend has a shareable inference primitive: `ort::Session::run` takes `&mut self`, so each pooled lease is an
 exclusive run — the pool is not just M6's gate but the only sound way
-to share sessions. `llama-cpp-2` goes further: `LlamaBackend` is neither
-`Send` nor `Sync` (verified on docs.rs), so no inference state may
-cross threads at all — not even behind a mutex — and a stored
-`LlamaContext<'a>` cannot live inside a `'static` trait object anyway
-(self-referential lifetime). Required shapes: ONNX pools
+to share sessions. `llama-cpp-2` goes further: inference state (`LlamaContext` borrows,
+model handles) may not cross threads, and a stored `LlamaContext<'a>`
+cannot live inside a `'static` trait object anyway (self-referential
+lifetime). (`LlamaBackend` itself is a fieldless proof token — `Send +
+`Sync` — so it is initialized once per process and shared by reference;
+only the per-model state stays thread-local.) Required shapes: ONNX pools
 lazily-created `Session`s (one file, many handles) up to `min(8,
 available_parallelism)`; llama owns one dedicated worker thread per
 loaded model holding backend, model, and a single reused context as

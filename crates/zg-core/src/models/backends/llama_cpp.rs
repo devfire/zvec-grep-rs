@@ -12,14 +12,15 @@
 //! vectors).
 //!
 //! Concurrency follows the C/D design note in `docs/ts-divergence.md`:
-//! `llama-cpp-2`'s `LlamaBackend` is neither `Send` nor `Sync`, so no
-//! inference state may cross threads at all — not even behind a mutex.
-//! Each loaded model therefore owns one dedicated worker thread holding
-//! the backend, the model, and a single reused context as plain locals;
-//! [`EmbeddingModel::embed`] ships formatted texts over a channel and
-//! blocks on the reply. Embeds serialize per model instance (matching
-//! TS's CPU `parallelism: 1` default); batching still amortizes the cost
-//! because one call embeds up to `max_batch_size` inputs.
+//! inference state (`LlamaContext` borrows, model handles) may not cross
+//! threads, so each loaded model owns one dedicated worker thread holding
+//! the model and a single reused context as plain locals; the
+//! process-wide [`LlamaBackend`] (a fieldless proof token: `Send + Sync`)
+//! is initialized once and shared by reference. [`EmbeddingModel::embed`]
+//! ships formatted texts over a channel and blocks on the reply. Embeds
+//! serialize per model instance (matching TS's CPU `parallelism: 1`
+//! default); batching still amortizes the cost because one call embeds up
+//! to `max_batch_size` inputs.
 //!
 //! The `llama-cpp-2` dependency builds CPU-only (`default-features =
 //! false`), so a non-CPU [`DeviceKind`] warns once through the load sink
@@ -41,6 +42,7 @@ use crate::models::{
     ModelLoadSink,
 };
 use crate::types::SearchMetric;
+use llama_cpp_2::llama_backend::LlamaBackend;
 
 /// GGUF magic sniffed at the head of every download, mirroring `GGUF_MAGIC`.
 const GGUF_MAGIC: &[u8; 4] = b"GGUF";
@@ -239,17 +241,49 @@ impl EmbeddingModel for LlamaCppEmbeddingModel {
     }
 }
 
+/// Process-wide llama backend, initialized once and shared by every model
+/// worker: `LlamaBackend::init` succeeds exactly once per process
+/// (`BackendAlreadyInitialized` afterwards), while each loaded model runs
+/// its own worker thread holding a borrow. The first init's errors surface
+/// to its caller; a sibling losing the init race spins until the winner's
+/// store lands (no fallible step sits between its successful CAS and the
+/// store, so the spin always terminates).
+fn global_backend(entry: &LlamaCppEntry) -> EngineResult<&'static LlamaBackend> {
+    static BACKEND: OnceLock<LlamaBackend> = OnceLock::new();
+    if let Some(backend) = BACKEND.get() {
+        return Ok(backend);
+    }
+    match LlamaBackend::init() {
+        Ok(backend) => Ok(BACKEND.get_or_init(|| backend)),
+        Err(llama_cpp_2::LlamaCppError::BackendAlreadyInitialized) => {
+            let mut spins = 0_u32;
+            loop {
+                if let Some(backend) = BACKEND.get() {
+                    return Ok(backend);
+                }
+                spins = spins.saturating_add(1);
+                if spins > 10_000 {
+                    return Err(embed_failed(entry, "llama backend initialized elsewhere"));
+                }
+                std::thread::yield_now();
+            }
+        }
+        Err(err) => Err(embed_failed(entry, format_args!("init llama backend: {err}"))),
+    }
+}
+
 /// Starts the dedicated inference worker and blocks until it is ready:
-/// backend init plus model load happen on the worker thread, so their
-/// failures surface here through the handshake instead of the first
-/// `embed`.
+/// model load happens on the worker thread, so its failures surface here
+/// through the handshake instead of the first `embed`. Backend init runs
+/// on the calling thread first (it is process-wide and shared).
 fn spawn_worker(entry: &LlamaCppEntry, model_path: PathBuf) -> EngineResult<LoadedLlama> {
+    let backend = global_backend(entry)?;
     let (job_tx, job_rx) = mpsc::channel::<EmbedJob>();
     let (ready_tx, ready_rx) = mpsc::channel::<EngineResult<()>>();
     let worker_entry = *entry;
     std::thread::Builder::new()
         .name(format!("zg-llama-{}", entry.model))
-        .spawn(move || worker_main(worker_entry, model_path, job_rx, ready_tx))
+        .spawn(move || worker_main(worker_entry, model_path, job_rx, ready_tx, backend))
         .map_err(|err| embed_failed(entry, format_args!("start embedding worker: {err}")))?;
     ready_rx
         .recv()
@@ -257,29 +291,20 @@ fn spawn_worker(entry: &LlamaCppEntry, model_path: PathBuf) -> EngineResult<Load
         .map(|()| LoadedLlama { worker: job_tx })
 }
 
-/// Worker entry point: backend, model, and context live here as plain
-/// locals for the thread's whole life (nested lifetimes, no
-/// self-reference), serving one batch at a time until every handle
-/// drops and the channel closes.
+/// Worker entry point: model and context live here as plain locals for the
+/// thread's whole life (nested lifetimes, no self-reference), serving one
+/// batch at a time until every handle drops and the channel closes. The
+/// backend is the shared process-wide handle, borrowed for the thread's
+/// life (`&'static` is `Send`).
 fn worker_main(
     entry: LlamaCppEntry,
     model_path: PathBuf,
     jobs: mpsc::Receiver<EmbedJob>,
     ready: mpsc::Sender<EngineResult<()>>,
+    backend: &'static LlamaBackend,
 ) {
     use llama_cpp_2::context::params::LlamaContextParams;
-    use llama_cpp_2::llama_backend::LlamaBackend;
-    let backend = match LlamaBackend::init() {
-        Ok(backend) => backend,
-        Err(err) => {
-            let _ = ready.send(Err(embed_failed(
-                &entry,
-                format_args!("init llama backend: {err}"),
-            )));
-            return;
-        }
-    };
-    let model = match load_model_on_worker(&backend, &model_path, &entry) {
+    let model = match load_model_on_worker(backend, &model_path, &entry) {
         Ok(model) => model,
         Err(err) => {
             let _ = ready.send(Err(err));
@@ -288,11 +313,17 @@ fn worker_main(
     };
     // Unspecified pooling resolves inside llama.cpp exactly like the TS
     // backend, which passes no pooling option either; thread counts stay
-    // at their automatic defaults like the TS CPU path.
+    // at their automatic defaults like the TS CPU path. Batch capacities
+    // cover the full context (decodes stream in `DECODE_CHUNK_TOKENS`
+    // slices, but headroom costs nothing and keeps single-shot unit tests
+    // well inside the limits).
+    let ctx_tokens = entry.context_size.max(1) as u32;
     let params = LlamaContextParams::default()
-        .with_n_ctx(NonZeroU32::new(entry.context_size as u32))
+        .with_n_ctx(NonZeroU32::new(ctx_tokens))
+        .with_n_batch(ctx_tokens)
+        .with_n_ubatch(ctx_tokens)
         .with_embeddings(true);
-    let mut context = match model.new_context(&backend, params) {
+    let mut context = match model.new_context(backend, params) {
         Ok(context) => context,
         Err(err) => {
             let _ = ready.send(Err(embed_failed(
@@ -314,7 +345,7 @@ fn worker_main(
 /// Loads the model on the worker thread; split out so the handshake
 /// reports load failures before the serve loop starts.
 fn load_model_on_worker(
-    backend: &llama_cpp_2::llama_backend::LlamaBackend,
+    backend: &LlamaBackend,
     model_path: &Path,
     entry: &LlamaCppEntry,
 ) -> EngineResult<llama_cpp_2::model::LlamaModel> {
@@ -327,11 +358,16 @@ fn load_model_on_worker(
     .map_err(|err| embed_failed(entry, format_args!("load gguf model: {err}")))
 }
 
+/// Physical decode width: node-llama-cpp caps batches at 512
+/// (`getDefaultContextBatchSize`), so long sequences stream through
+/// successive decodes. Mirrored here for identical SWA behavior.
+const DECODE_CHUNK_TOKENS: usize = 512;
+
 /// Embeds one batch on the worker's reused context, mirroring upstream's
 /// `embeddings` example: tokenize, truncate, one sequence per batch,
-/// `clear_kv_cache` → `decode` → pooled sequence embedding. Vectors are
-/// raw like the TS backend (no L2 normalization); output validation runs
-/// in [`embed_validated`](crate::models::embeddings::embed_validated).
+/// `clear_kv_cache` → chunked `decode` → pooled sequence embedding.
+/// Vectors are raw like the TS backend (no L2 normalization); output
+/// validation runs in [`embed_validated`](crate::models::embeddings::embed_validated).
 fn embed_texts(
     entry: &LlamaCppEntry,
     model: &llama_cpp_2::model::LlamaModel,
@@ -347,30 +383,54 @@ fn embed_texts(
     let mut vectors = Vec::with_capacity(texts.len());
     let mut truncated = Vec::new();
     for (index, text) in texts.iter().enumerate() {
-        let tokens = model
+        let mut kept = model
             .str_to_token(text, AddBos::Always)
             .map_err(|err| embed_failed(entry, format_args!("tokenize: {err}")))?;
-        // Over-long inputs keep the first `limit - 4` tokens and are
-        // flagged. Token ids feed the batch directly instead of
-        // detokenizing first — observably identical ids without the text
-        // round-trip.
-        let kept = if tokens.len() > limit {
+        // Over-long inputs are flagged and shortened, mirroring
+        // `truncateToContextSize` (`tokens.slice(0, limit - 4)`). TS counts
+        // content ids (its `model.tokenize` adds neither BOS nor EOS) while
+        // ours carry both, hence `+ 2` on the trigger and `- 3` on the
+        // slice: BOS plus `limit - 4` content ids. TS then detokenizes the
+        // head and re-embeds that text, so the truncated sequence re-enters
+        // through the normal tokenize path and carries the trailing EOS
+        // `getEmbeddingFor` appends to every input. Feeding sliced ids
+        // directly drops that EOS and the pooled vector diverges (parity
+        // 0.84 on long inputs), so mirror the round-trip: decode the head
+        // to text and tokenize it again.
+        if kept.len() > limit.saturating_add(2) {
             truncated.push(index);
-            // `end` is clamped to `tokens.len()`, so the `get` below only
-            // fails if the length changed concurrently (it cannot: local).
-            let end = limit.saturating_sub(4).max(1).min(tokens.len());
-            tokens.get(..end).map_or_else(Vec::new, <[_]>::to_vec)
-        } else {
-            tokens
-        };
-        let mut batch = LlamaBatch::new(kept.len().max(1), 1);
-        batch
-            .add_sequence(&kept, 0, false)
-            .map_err(|err| embed_failed(entry, format_args!("fill batch: {err}")))?;
+            let end = limit.saturating_sub(3).max(1).min(kept.len());
+            kept.truncate(end);
+            kept = detokenize_and_retokenize(model, entry, &kept)?;
+        }
+        // Decode in `DECODE_CHUNK_TOKENS` slices with explicit positions,
+        // mirroring node-llama-cpp (`getDefaultContextBatchSize` caps
+        // physical batches at 512): one `sequence.evaluate` streams the
+        // whole sequence through successive decodes sharing the KV cache.
+        // A single full-width decode takes a different sliding-window path
+        // and diverges on SWA models (gemma parity 0.92 vs 0.999).
         context.clear_kv_cache();
-        context
-            .decode(&mut batch)
-            .map_err(|err| embed_failed(entry, format_args!("decode: {err}")))?;
+        // Upstream `embed_validated` rejects empty text and BOS is always
+        // present, so there is at least one token to decode.
+        debug_assert!(!kept.is_empty());
+        let mut batch = LlamaBatch::new(DECODE_CHUNK_TOKENS, 1);
+        let total = kept.len();
+        for (chunk_index, chunk) in kept.chunks(DECODE_CHUNK_TOKENS).enumerate() {
+            batch.clear();
+            let base = chunk_index.saturating_mul(DECODE_CHUNK_TOKENS);
+            for (i, token) in chunk.iter().enumerate() {
+                let pos = i32::try_from(base.saturating_add(i)).map_err(|err| {
+                    embed_failed(entry, format_args!("fill batch: {err}"))
+                })?;
+                let is_last = base.saturating_add(i).saturating_add(1) == total;
+                batch
+                    .add(*token, pos, &[0], is_last)
+                    .map_err(|err| embed_failed(entry, format_args!("fill batch: {err}")))?;
+            }
+            context
+                .decode(&mut batch)
+                .map_err(|err| embed_failed(entry, format_args!("decode: {err}")))?;
+        }
         let embedding = context
             .embeddings_seq_ith(0)
             .map_err(|err| embed_failed(entry, format_args!("read sequence embedding: {err}")))?;
@@ -378,6 +438,49 @@ fn embed_texts(
     }
     truncated.sort_unstable();
     Ok(EmbeddingResult { vectors, truncated })
+}
+
+/// Detokenizes truncated head ids back to text and tokenizes that text
+/// again, mirroring `truncateToContextSize` + `getEmbeddingFor`: the
+/// re-tokenized sequence carries the trailing EOS every other input has.
+/// Built on `token_to_piece_bytes` (not the deprecated `tokens_to_str`)
+/// with a single UTF-8 decode over the concatenated pieces.
+fn detokenize_and_retokenize(
+    model: &llama_cpp_2::model::LlamaModel,
+    entry: &LlamaCppEntry,
+    head: &[llama_cpp_2::token::LlamaToken],
+) -> EngineResult<Vec<llama_cpp_2::token::LlamaToken>> {
+    use llama_cpp_2::model::AddBos;
+    use llama_cpp_2::TokenToStringError;
+    let mut bytes = Vec::with_capacity(head.len() * 4);
+    for id in head {
+        // Special pieces (BOS) carry no text: TS `detokenize` skips them,
+        // so skip them here too instead of failing.
+        match model.token_to_piece_bytes(*id, 8, false, None) {
+            Ok(mut piece) => bytes.append(&mut piece),
+            Err(TokenToStringError::UnknownTokenType) => {}
+            Err(TokenToStringError::InsufficientBufferSpace(need)) => {
+                let size = need
+                    .checked_abs()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .ok_or_else(|| {
+                        embed_failed(entry, format_args!("detokenize truncation: oversized piece"))
+                    })?;
+                let mut piece = model
+                    .token_to_piece_bytes(*id, size, false, None)
+                    .map_err(|err| embed_failed(entry, format_args!("detokenize truncation: {err}")))?;
+                bytes.append(&mut piece);
+            }
+            Err(err) => {
+                return Err(embed_failed(entry, format_args!("detokenize truncation: {err}")));
+            }
+        }
+    }
+    let text = String::from_utf8(bytes)
+        .map_err(|err| embed_failed(entry, format_args!("detokenize truncation: {err}")))?;
+    model
+        .str_to_token(&text, AddBos::Always)
+        .map_err(|err| embed_failed(entry, format_args!("retokenize truncation: {err}")))
 }
 
 /// File name of the `hf:<repo>/<file>` model URI.
@@ -389,15 +492,16 @@ fn gguf_file_name(entry: &LlamaCppEntry) -> &str {
 }
 
 /// Splits `hf:<org>/<model>/<file>` into the `org/model` repo and the
-/// remote file path (the last segment), mirroring node-llama-cpp's
-/// `resolveModelFile` URI handling.
+/// single file name (no subdirectories), mirroring node-llama-cpp's
+/// `resolveModelFile` URI handling. Nested paths return `None`.
 fn split_hf_uri(uri: &str) -> Option<(&str, &str)> {
     let rest = uri.strip_prefix("hf:")?;
-    let (repo, file) = rest.rsplit_once('/')?;
-    if repo.is_empty() || file.is_empty() || file.contains('/') {
+    let (org, remainder) = rest.split_once('/')?;
+    let (model, file) = remainder.split_once('/')?;
+    if org.is_empty() || model.is_empty() || file.is_empty() || file.contains('/') {
         return None;
     }
-    Some((repo, file))
+    Some((&rest[..org.len() + 1 + model.len()], file))
 }
 
 /// Formats one text per model format, mirroring `formatTextForEmbedding`

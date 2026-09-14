@@ -572,10 +572,7 @@ pub fn base64_decode(text: &str) -> Result<Vec<u8>, String> {
         return Err("excess padding".to_owned());
     }
     let mut out = Vec::with_capacity(sextets.len() / 4 * 3);
-    for quad in sextets.chunks_exact(4) {
-        let &[q0, q1, q2, q3] = quad else {
-            return Err("truncated input".to_owned());
-        };
+    for &[q0, q1, q2, q3] in sextets.as_chunks::<4>().0 {
         let triple =
             (u32::from(q0) << 18) | (u32::from(q1) << 12) | (u32::from(q2) << 6) | u32::from(q3);
         out.push((triple >> 16) as u8);

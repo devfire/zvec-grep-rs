@@ -100,7 +100,7 @@ impl Drop for Guard {
 ///
 /// # Errors
 ///
-/// Returns [`EngineError`] with [`codes::lock_busy()`] when another owner holds the lock after stale reclamation, or [`local_codes::lock_unavailable()`] when a lock directory cannot be created.
+/// Returns [`EngineError`] with [`codes::lock_busy()`] when another owner holds the lock after stale reclamation, or `LOCK.UNAVAILABLE` when a lock directory cannot be created.
 pub fn acquire_read_write_lock(
     lock_path: &Path,
     mode: LockMode,

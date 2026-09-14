@@ -346,18 +346,12 @@ fn read_static_embedding_table(
     }
     let mut data = Vec::with_capacity(value_count);
     if view.dtype() == Dtype::F16 {
-        for chunk in raw.chunks_exact(2) {
-            let pair: [u8; 2] = chunk
-                .try_into()
-                .map_err(|_| load_failed(format!("tensor '{tensor_name}' has invalid offsets")))?;
-            data.push(half::f16::from_bits(u16::from_le_bytes(pair)).to_f32());
+        for pair in raw.as_chunks::<2>().0 {
+            data.push(half::f16::from_bits(u16::from_le_bytes(*pair)).to_f32());
         }
     } else {
-        for chunk in raw.chunks_exact(4) {
-            let quad: [u8; 4] = chunk
-                .try_into()
-                .map_err(|_| load_failed(format!("tensor '{tensor_name}' has invalid offsets")))?;
-            data.push(f32::from_le_bytes(quad));
+        for quad in raw.as_chunks::<4>().0 {
+            data.push(f32::from_le_bytes(*quad));
         }
     }
     Ok(EmbeddingTable {
