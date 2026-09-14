@@ -10,10 +10,11 @@ pub const ENGINE_ERROR_CODE_PREFIX: &str = "ZVEC_GREP.ENGINE";
 /// Fully-qualified engine error code, e.g. `ZVEC_GREP.ENGINE.CONFIG.INVALID`.
 ///
 /// The wire string is the contract and never changes; the representation is
-/// a `&'static str` suffix so codes are `Copy`, allocation-free, and
-/// exhaustiveness-checkable at the call site. There is no constructor taking
-/// a runtime string, so assembling a code from one is impossible by
-/// construction — every code in the tree is a literal.
+/// a `&'static str` suffix so codes are `Copy` and allocation-free. There is
+/// no constructor taking a runtime string, so assembling a code from one is
+/// impossible by construction — every code in the tree is a literal.
+/// (Codes are not exhaustiveness-checkable in a `match` until the planned
+/// `#[non_exhaustive]` enum conversion lands; see R6.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct EngineErrorCode(&'static str);
 
