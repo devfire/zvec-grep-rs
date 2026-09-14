@@ -62,6 +62,10 @@ fn report(error: CliError, debug: bool) -> ! {
     std::process::exit(1);
 }
 
-fn color_stderr() -> bool {
-    std::env::var("NO_COLOR").is_err() && std::io::IsTerminal::is_terminal(&std::io::stderr())
+fn color_stderr() -> format::Color {
+    if std::env::var("NO_COLOR").is_err() && std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+        format::Color::Always
+    } else {
+        format::Color::Never
+    }
 }

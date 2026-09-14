@@ -45,7 +45,7 @@ async fn run_status_direct(args: &StatusArgs, absolute: &Path) -> Result<String,
         args.device,
     ));
     let info = service.workspace_info(Some(absolute))?;
-    let state = print_workspace_info(&info, color);
+    let state = print_workspace_info(&info, color.enabled());
     Ok(state.as_str().to_owned())
 }
 

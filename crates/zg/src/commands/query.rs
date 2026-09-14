@@ -21,7 +21,7 @@ use crate::client::{
     resolve_direct_search_policy, resolve_server_search_policy, resolve_server_url, route_by_mode,
 };
 use crate::error::CliError;
-use crate::format::{print_context_result, print_context_warnings, use_color};
+use crate::format::{Rendering, print_context_result, print_context_warnings, use_color};
 
 pub(crate) async fn run_query(args: QueryArgs) -> Result<(), CliError> {
     let queries: Vec<String> = args
@@ -148,7 +148,7 @@ async fn run_query_direct(args: &QueryArgs, queries: &[String]) -> Result<(), Cl
         let fallback = direct_context_options(args, queries, true)?;
         result = service.context(&fallback)?;
     }
-    print_context_result(&result, args.human, color);
+    print_context_result(&result, Rendering::from(args.human), color);
     print_context_warnings(&result);
     if result.source == ContextSource::Index && !result.items.is_empty() && args.debug {
         eprintln!(

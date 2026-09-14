@@ -17,14 +17,41 @@ pub(crate) const RED: &str = "\x1b[31m";
 /// ANSI cyan.
 pub(crate) const CYAN: &str = "\x1b[36m";
 
-/// True when color output is enabled: `always`, or `auto` on a terminal.
-pub fn use_color(mode: Option<ColorMode>, no_color: bool) -> bool {
+/// Resolved color verdict for printers: `use_color` settles `auto` once so
+/// call sites cannot transpose a `(human, color)` bool pair (defensive
+/// #10) — printers take this, never a bare `bool`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Color {
+    /// Emit ANSI escapes.
+    Always,
+    /// Plain output.
+    Never,
+}
+
+impl Color {
+    /// True for [`Color::Always`].
+    #[must_use]
+    pub fn enabled(self) -> bool {
+        matches!(self, Self::Always)
+    }
+}
+
+/// Settles the color verdict: explicit `--color` wins, `NO_COLOR` (or
+/// `--no-color`) always disables, otherwise `auto` follows the terminal.
+#[must_use]
+pub fn use_color(mode: Option<ColorMode>, no_color: bool) -> Color {
     if no_color || std::env::var("NO_COLOR").is_ok() {
-        return false;
+        return Color::Never;
     }
     match mode {
-        Some(ColorMode::Always) => true,
-        Some(ColorMode::Never) => false,
-        Some(ColorMode::Auto) | None => std::io::IsTerminal::is_terminal(&std::io::stdout()),
+        Some(ColorMode::Always) => Color::Always,
+        Some(ColorMode::Never) => Color::Never,
+        Some(ColorMode::Auto) | None => {
+            if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+                Color::Always
+            } else {
+                Color::Never
+            }
+        }
     }
 }

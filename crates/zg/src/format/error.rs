@@ -5,12 +5,12 @@
 
 use crate::error::CliError;
 
-use super::color::{DIM, RED, RESET};
+use super::color::{Color, DIM, RED, RESET};
 
 /// Prints a CLI error like `printError`: red `error:` prefix on color
 /// terminals, the message, and the wire code with `--debug`.
-pub fn print_error(error: &CliError, color: bool, debug: bool) {
-    if color {
+pub fn print_error(error: &CliError, color: Color, debug: bool) {
+    if color.enabled() {
         eprintln!("{RED}error:{RESET} {error}");
     } else {
         eprintln!("error: {error}");

@@ -82,7 +82,7 @@ async fn run_server_on(args: ServerArgs) -> Result<(), CliError> {
     let home = daemon_home(&args);
     let status = zg_server::server_controller::server_status(home.as_deref()).await;
     if status.ready {
-        print_control_status(true, true, status.pid, status.server_url.as_deref());
+        print_control_status(&status);
         return Ok(());
     }
     let program =
@@ -117,12 +117,7 @@ async fn run_server_on(args: ServerArgs) -> Result<(), CliError> {
         std::time::Duration::from_secs(30),
     )
     .await?;
-    print_control_status(
-        status.running,
-        status.ready,
-        status.pid,
-        status.server_url.as_deref(),
-    );
+    print_control_status(&status);
     Ok(())
 }
 
@@ -134,12 +129,7 @@ async fn run_server_off(args: ServerArgs) -> Result<(), CliError> {
         args.token_file.clone(),
     )
     .await?;
-    print_control_status(
-        status.running,
-        status.ready,
-        status.pid,
-        status.server_url.as_deref(),
-    );
+    print_control_status(&status);
     Ok(())
 }
 
@@ -149,12 +139,7 @@ async fn run_server_status(
 ) -> Result<(), CliError> {
     let home = daemon_home(args);
     let status = zg_server::server_controller::server_status(home.as_deref()).await;
-    print_control_status(
-        status.running,
-        status.ready,
-        status.pid,
-        status.server_url.as_deref(),
-    );
+    print_control_status(&status);
     if status_args.check_ready && !status.ready {
         return Err(CliError::NotReady {
             message: "zvec-grep server is not ready".to_owned(),
