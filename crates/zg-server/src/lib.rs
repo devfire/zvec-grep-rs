@@ -28,5 +28,6 @@ pub mod read_session_cache;
 pub mod root_runtime;
 pub mod runtime_manager;
 pub mod server_controller;
+pub mod sync;
 pub mod trace;
 pub mod watch_manager;

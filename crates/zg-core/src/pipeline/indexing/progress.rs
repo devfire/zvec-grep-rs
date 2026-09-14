@@ -97,7 +97,12 @@ pub(crate) fn report(ctx: &IndexContext<'_>, progress: IndexProgress) {
 }
 
 pub(crate) fn lock_stats(stats: &Arc<Mutex<IndexStats>>) -> IndexStats {
-    stats.lock().map(|guard| guard.clone()).unwrap_or_default()
+    // Same poison policy as `lock_stats_mut`: read through instead of
+    // silently zeroing progress.
+    stats
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
 }
 
 pub(crate) fn lock_stats_mut(

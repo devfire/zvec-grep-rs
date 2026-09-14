@@ -28,6 +28,7 @@ use super::types::{
 };
 use crate::error::{EngineError, EngineResult};
 use crate::types::UnixMillis;
+use crate::utils::hash::to_hex;
 use crate::utils::json_io::{SECURE_MODES, write_json_file};
 use crate::utils::lock::{LockMode, LockOptions, acquire_read_write_lock};
 
@@ -39,15 +40,6 @@ pub const GRANT_FILE: &str = "authorization.json";
 pub const SIGNING_KEY_ENV_VAR: &str = "ZVEC_GREP_AUTHORIZATION_KEY_FILE";
 
 type HmacSha256 = Hmac<Sha256>;
-
-/// Lowercase hex of bytes (grant signatures, key files).
-fn to_hex(bytes: &[u8]) -> String {
-    let mut hex = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        hex.push_str(&format!("{byte:02x}"));
-    }
-    hex
-}
 
 fn from_hex(hex: &str) -> Option<Vec<u8>> {
     if !hex.len().is_multiple_of(2) {

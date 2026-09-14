@@ -28,6 +28,7 @@ use crate::config::is_loopback_host;
 use crate::errors::DaemonError;
 use crate::mcp::http_transport::{McpHttpEndpoint, McpHttpEndpointOptions};
 use crate::mcp::toolset::McpToolset;
+use crate::sync::MutexExt;
 
 /// Maximum MCP request body: 1 MiB, mirroring TS `MAX_REQUEST_BYTES`.
 pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
@@ -127,7 +128,7 @@ impl DaemonHttpServer {
     /// Returns [`DaemonError::AddressInUse`] when the port is taken, or
     /// [`DaemonError::IndexFailed`] when binding or reading the bound address fails.
     pub async fn start(&self) -> Result<SocketAddr, DaemonError> {
-        if let Some(address) = lock(&self.bound).as_ref().copied() {
+        if let Some(address) = self.bound.lock_ignore_poison().as_ref().copied() {
             return Ok(address);
         }
         let listener = tokio::net::TcpListener::bind((self.host.as_str(), self.port))
@@ -156,14 +157,14 @@ impl DaemonHttpServer {
                 .await
                 .ok();
         });
-        *lock(&self.bound) = Some(address);
-        *lock(&self.task) = Some(task);
+        *self.bound.lock_ignore_poison() = Some(address);
+        *self.task.lock_ignore_poison() = Some(task);
         Ok(address)
     }
 
     /// Bound address, if started.
     pub fn bound_address(&self) -> Option<SocketAddr> {
-        *lock(&self.bound)
+        *self.bound.lock_ignore_poison()
     }
 
     /// Stops the listener, closes the backend (actors, in-flight work,
@@ -171,11 +172,11 @@ impl DaemonHttpServer {
     pub async fn close(&self) {
         self.state.shutdown.cancel();
         self.state.backend.close().await;
-        let task = lock(&self.task).take();
+        let task = self.task.lock_ignore_poison().take();
         if let Some(task) = task {
             let _ = task.await;
         }
-        *lock(&self.bound) = None;
+        *self.bound.lock_ignore_poison() = None;
     }
 }
 
@@ -366,12 +367,6 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
         .zip(right.iter())
         .fold(0u8, |acc, (left, right)| acc | (left ^ right))
         == 0
-}
-
-fn lock<T>(state: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    state
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(test)]

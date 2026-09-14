@@ -17,6 +17,7 @@ use zg_core::models::EmbeddingModel;
 use zg_core::types::UnixMillis;
 
 use crate::logger::DaemonLogger;
+use crate::sync::MutexExt;
 
 use super::error::LoadError;
 use super::request::CreateModelFn;
@@ -41,9 +42,7 @@ impl Loading {
     /// Outcome slot. Single poison policy for the whole pool: a poisoned
     /// mutex yields its inner value rather than failing the checkout.
     pub(crate) fn lock_result(&self) -> MutexGuard<'_, Option<Result<(), LoadError>>> {
-        self.result
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.result.lock_ignore_poison()
     }
 }
 
@@ -115,12 +114,4 @@ pub(crate) enum NextAction {
     Checkout,
     Load(Arc<Loading>),
     Wait(Arc<Loading>),
-}
-
-/// Pool state lock. Single poison policy: a poisoned mutex yields its inner
-/// value rather than failing the checkout.
-pub(crate) fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
-    state
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }

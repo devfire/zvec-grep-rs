@@ -22,6 +22,7 @@ use zg_core::service::facade::ZvecGrepService;
 use crate::backend::{BackendError, BackendShared, RootCommand, RootHandle, spawn_root_actor};
 use crate::errors::DaemonError;
 use crate::root_runtime::{RootKey, resolve_requested_root};
+use crate::sync::MutexExt;
 
 /// Idle TTL before a quiet actor exits itself; mirrors TS `runtimeIdleTtlMs`.
 pub const DEFAULT_RUNTIME_IDLE_TTL: Duration = Duration::from_secs(30 * 60);
@@ -107,7 +108,8 @@ impl RuntimeManager {
     /// Handle for a live actor, if any.
     #[must_use]
     pub fn get(&self, key: &RootKey) -> Option<RootHandle> {
-        lock(&self.inner)
+        self.inner
+            .lock_ignore_poison()
             .actors
             .get(key.as_str())
             .map(|entry| entry.handle.clone())
@@ -116,14 +118,14 @@ impl RuntimeManager {
     /// Live actor count (for server status).
     #[must_use]
     pub fn actor_count(&self) -> usize {
-        lock(&self.inner).actors.len()
+        self.inner.lock_ignore_poison().actors.len()
     }
 
     /// Removes a key without stopping anything (actor-initiated exit).
     /// Returns the join handle when the manager still owned the entry.
     #[must_use]
     pub fn unregister(&self, key: &RootKey) -> Option<JoinHandle<()>> {
-        let mut inner = lock(&self.inner);
+        let mut inner = self.inner.lock_ignore_poison();
         let entry = inner.actors.remove(key.as_str())?;
         inner.aliases.retain(|_, target| target != key.as_str());
         entry.join
@@ -131,14 +133,15 @@ impl RuntimeManager {
 
     /// Stops and removes one actor, awaiting its teardown.
     pub async fn evict(&self, key: &RootKey) {
-        let entry = lock(&self.inner).actors.remove(key.as_str());
+        let entry = self.inner.lock_ignore_poison().actors.remove(key.as_str());
         if let Some(entry) = entry {
             let _ = entry.handle.tx.send(RootCommand::Shutdown);
             if let Some(join) = entry.join {
                 let _ = join.await;
             }
         }
-        lock(&self.inner)
+        self.inner
+            .lock_ignore_poison()
             .aliases
             .retain(|_, target| target != key.as_str());
     }
@@ -147,12 +150,14 @@ impl RuntimeManager {
     /// blocking work per M6) and the model pool.
     pub async fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
-        let entries: Vec<ActorEntry> = lock(&self.inner)
+        let entries: Vec<ActorEntry> = self
+            .inner
+            .lock_ignore_poison()
             .actors
             .drain()
             .map(|(_, entry)| entry)
             .collect();
-        lock(&self.inner).aliases.clear();
+        self.inner.lock_ignore_poison().aliases.clear();
         for entry in &entries {
             let _ = entry.handle.tx.send(RootCommand::Shutdown);
         }
@@ -168,7 +173,7 @@ impl RuntimeManager {
     }
 
     fn get_or_spawn(&self, canonical: RootKey) -> RootHandle {
-        let inner = lock(&self.inner);
+        let inner = self.inner.lock_ignore_poison();
         let resolved = inner
             .aliases
             .get(canonical.as_str())
@@ -189,7 +194,7 @@ impl RuntimeManager {
         let join = tokio::spawn(async move {
             spawn_root_actor(slf.shared.clone(), slf.clone(), key, tx.clone(), rx).await;
         });
-        let mut inner = lock(&self.inner);
+        let mut inner = self.inner.lock_ignore_poison();
         inner
             .aliases
             .insert(canonical.to_string(), resolved.clone());
@@ -220,10 +225,4 @@ pub(crate) fn send_command(
 ) -> Result<(), BackendError> {
     tx.send(command)
         .map_err(|_| BackendError::Daemon(DaemonError::ShuttingDown))
-}
-
-fn lock(state: &Mutex<Inner>) -> std::sync::MutexGuard<'_, Inner> {
-    state
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }

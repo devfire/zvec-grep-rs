@@ -199,11 +199,9 @@ pub fn opaque_identity(value: &str) -> String {
 }
 
 fn sha_hex16(value: &str) -> String {
-    let digest = Sha256::digest(value.as_bytes());
-    let mut hex = String::with_capacity(16);
-    for byte in digest.iter().take(8) {
-        hex.push_str(&format!("{byte:02x}"));
-    }
+    // First 8 digest bytes as 16 hex chars; `truncate` on an ASCII boundary.
+    let mut hex = zg_core::utils::hash::to_hex(Sha256::digest(value.as_bytes()).as_ref());
+    hex.truncate(16);
     hex
 }
 

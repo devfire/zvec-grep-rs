@@ -651,12 +651,7 @@ fn is_retryable_zvec_open_error(message: &str, lock_writable: bool) -> bool {
 }
 
 fn zvec_open_retry_delay_ms(attempt: u32) -> u64 {
-    100u64
+    ZVEC_OPEN_RETRY_BASE_DELAY_MS
         .saturating_mul(1u64 << attempt)
         .min(ZVEC_OPEN_RETRY_MAX_DELAY_MS)
-}
-
-#[allow(dead_code)]
-fn zvec_base_delay_ms() -> u64 {
-    ZVEC_OPEN_RETRY_BASE_DELAY_MS
 }

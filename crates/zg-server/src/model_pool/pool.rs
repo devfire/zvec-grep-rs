@@ -10,6 +10,7 @@ use zg_core::error::EngineError;
 use zg_core::models::EmbeddingModel;
 
 use crate::logger::{LogField, opaque_identity};
+use crate::sync::MutexExt;
 
 use super::error::{AcquireError, LoadError};
 use super::lease::ModelLease;
@@ -17,7 +18,7 @@ use super::options::{
     DEFAULT_MAX_LOADED_MODELS, DEFAULT_MODEL_IDLE_TTL, EmbeddingModelPoolOptions, ModelPoolSnapshot,
 };
 use super::request::{ModelLoadRequest, default_create_model};
-use super::state::{Entry, Loading, NextAction, Shared, State, lock};
+use super::state::{Entry, Loading, NextAction, Shared, State};
 
 /// LRU embedding-model cache. `Clone` shares one pool.
 #[derive(Clone)]
@@ -82,7 +83,7 @@ impl EmbeddingModelPool {
         let key = request.key();
         loop {
             let action = {
-                let mut state = lock(&self.shared.state);
+                let mut state = self.shared.state.lock_ignore_poison();
                 let entry = state
                     .entries
                     .entry(key.clone())
@@ -105,7 +106,7 @@ impl EmbeddingModelPool {
             };
             match action {
                 NextAction::Checkout => {
-                    let mut state = lock(&self.shared.state);
+                    let mut state = self.shared.state.lock_ignore_poison();
                     let Some(entry) = state.entries.get_mut(&key) else {
                         continue;
                     };
@@ -176,7 +177,7 @@ impl EmbeddingModelPool {
             Err(error) => Err(LoadError::dehydrate(error)),
         });
         loading.notify.notify_waiters();
-        let mut state = lock(&self.shared.state);
+        let mut state = self.shared.state.lock_ignore_poison();
         match outcome {
             Ok(model) => {
                 if self.shared.closed.load(Ordering::SeqCst) {
@@ -209,7 +210,7 @@ impl EmbeddingModelPool {
     /// Current load.
     #[must_use]
     pub fn snapshot(&self) -> ModelPoolSnapshot {
-        let state = lock(&self.shared.state);
+        let state = self.shared.state.lock_ignore_poison();
         ModelPoolSnapshot {
             loaded: state.loaded_count(),
             active_leases: state.active_leases(),
@@ -221,7 +222,10 @@ impl EmbeddingModelPool {
     pub async fn close(&self) {
         self.shared.closed.store(true, Ordering::SeqCst);
         loop {
-            let loadings: Vec<Arc<Loading>> = lock(&self.shared.state)
+            let loadings: Vec<Arc<Loading>> = self
+                .shared
+                .state
+                .lock_ignore_poison()
                 .entries
                 .values()
                 .filter_map(|entry| entry.loading.clone())
@@ -233,16 +237,20 @@ impl EmbeddingModelPool {
                 loading.notify.notified().await;
             }
         }
-        lock(&self.shared.state).entries.retain(|_, entry| {
-            entry.retired = true;
-            entry.leases > 0
-        });
+        self.shared
+            .state
+            .lock_ignore_poison()
+            .entries
+            .retain(|_, entry| {
+                entry.retired = true;
+                entry.leases > 0
+            });
     }
 
     fn trim_idle(&self, except_key: &str) {
         let mut victims: Vec<String> = Vec::new();
         {
-            let state = lock(&self.shared.state);
+            let state = self.shared.state.lock_ignore_poison();
             let loaded_count = state.loaded_count();
             if loaded_count <= self.shared.max_loaded {
                 return;
@@ -271,7 +279,7 @@ impl EmbeddingModelPool {
     }
 
     fn evict(&self, key: &str) {
-        let removed = lock(&self.shared.state).entries.remove(key);
+        let removed = self.shared.state.lock_ignore_poison().entries.remove(key);
         if let Some(entry) = removed {
             self.log(
                 "model.evicted",
@@ -285,7 +293,7 @@ impl EmbeddingModelPool {
 
     pub(crate) fn release_key(&self, key: &str) {
         let (empty, ttl, seq, used) = {
-            let mut state = lock(&self.shared.state);
+            let mut state = self.shared.state.lock_ignore_poison();
             let Some(entry) = state.entries.get_mut(key) else {
                 return;
             };
@@ -316,7 +324,7 @@ impl EmbeddingModelPool {
         tokio::spawn(async move {
             tokio::time::sleep(ttl).await;
             let stale = {
-                let state = lock(&slf.shared.state);
+                let state = slf.shared.state.lock_ignore_poison();
                 state.entries.get(&owned_key).is_some_and(|entry| {
                     entry.leases == 0 && entry.last_used_ms == used && entry.idle_seq == seq
                 })

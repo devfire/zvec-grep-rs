@@ -7,7 +7,7 @@
 //! would be strictly worse.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::Mutex;
 
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -83,12 +83,6 @@ pub(crate) struct Shared {
     pub(crate) max_attempts: u32,
     pub(crate) retry_base_delay_ms: u64,
     pub(crate) logger: Option<DaemonLogger>,
-}
-
-pub(crate) fn lock(state: &Mutex<Inner>) -> MutexGuard<'_, Inner> {
-    state
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 pub(crate) fn create_job(state: &mut Inner, input: SubmitIndexJob) -> JobId {

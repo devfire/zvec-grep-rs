@@ -7,11 +7,8 @@
 
 use std::collections::BTreeMap;
 
-use tokio_util::sync::CancellationToken;
-
 use super::error::BackendError;
 use crate::errors::DaemonError;
-use crate::job_scheduler::bridge_cancellation;
 use crate::logger::{DaemonLogger, LogField};
 
 pub(crate) fn log_event(logger: &Option<DaemonLogger>, name: &str, fields: [(&str, LogField); 2]) {
@@ -37,13 +34,4 @@ pub(crate) fn join_backend_error(error: tokio::task::JoinError) -> BackendError 
             message: format!("blocking task panicked: {error}"),
         })
     }
-}
-
-/// Keeps `bridge_cancellation` referenced at the M6 seam: index runs cross
-/// cancellation as an owned abort probe (see `run_blocking_index`), while
-/// leaf sync helpers that take a [`CancelFlag`](zg_core::pipeline::indexing::scanner::CancelFlag)
-/// adapt tokens through [`bridge_cancellation`].
-#[allow(dead_code)]
-fn cancel_flag_for(token: &CancellationToken) -> zg_core::pipeline::indexing::scanner::CancelFlag {
-    bridge_cancellation(token)
 }

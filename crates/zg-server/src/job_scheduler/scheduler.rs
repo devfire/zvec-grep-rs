@@ -12,6 +12,7 @@ use tokio::sync::watch;
 
 use crate::errors::DaemonError;
 use crate::logger::LogField;
+use crate::sync::MutexExt;
 
 use super::edge::{on_progress_clone, safe_report};
 use super::id::JobId;
@@ -19,7 +20,7 @@ use super::snapshot::{
     DEFAULT_MAX_ATTEMPTS, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_SCHEDULER_CONCURRENCY,
     IndexJobSnapshot, JobSchedulerOptions, SchedulerLoad, SubmitIndexJob, SubmitIndexJobResult,
 };
-use super::state::{Inner, Shared, lock, snapshot_missing};
+use super::state::{Inner, Shared, snapshot_missing};
 use zg_core::index_status::IndexJobState;
 use zg_core::pipeline::indexing::IndexProgressSink;
 
@@ -59,7 +60,7 @@ impl JobScheduler {
     ///
     /// Returns [`DaemonError::ShuttingDown`] when the scheduler is closed.
     pub fn submit(&self, input: SubmitIndexJob) -> Result<SubmitIndexJobResult, DaemonError> {
-        let mut state = lock(&self.shared.state);
+        let mut state = self.shared.state.lock_ignore_poison();
         if state.closed {
             return Err(DaemonError::ShuttingDown);
         }
@@ -89,7 +90,7 @@ impl JobScheduler {
 
     /// Latest snapshot for a root, if any.
     pub fn get_by_root(&self, canonical_root: &str) -> Option<IndexJobSnapshot> {
-        let state = lock(&self.shared.state);
+        let state = self.shared.state.lock_ignore_poison();
         state
             .latest_by_root
             .get(canonical_root)
@@ -100,14 +101,18 @@ impl JobScheduler {
     /// True while a job for the root is queued or running.
     #[must_use]
     pub fn has_active_root(&self, canonical_root: &str) -> bool {
-        lock(&self.shared.state)
+        self.shared
+            .state
+            .lock_ignore_poison()
             .active_by_root
             .contains_key(canonical_root)
     }
 
     /// Snapshot by job id.
     pub fn get(&self, id: &JobId) -> Option<IndexJobSnapshot> {
-        lock(&self.shared.state)
+        self.shared
+            .state
+            .lock_ignore_poison()
             .jobs
             .get(id)
             .map(super::state::JobRecord::snapshot)
@@ -127,7 +132,7 @@ impl JobScheduler {
         on_progress: Option<IndexProgressSink>,
     ) -> Result<IndexJobSnapshot, DaemonError> {
         let (receiver, replay) = {
-            let mut state = lock(&self.shared.state);
+            let mut state = self.shared.state.lock_ignore_poison();
             let Some(job) = state.jobs.get_mut(id) else {
                 return Err(DaemonError::UnknownJob { id: id.to_string() });
             };
@@ -141,7 +146,7 @@ impl JobScheduler {
         }
         let result = self.await_terminal(receiver).await;
         if on_progress.is_some() {
-            let mut state = lock(&self.shared.state);
+            let mut state = self.shared.state.lock_ignore_poison();
             if let Some(job) = state.jobs.get_mut(id) {
                 job.listeners
                     .retain(|listener| !Arc::ptr_eq(listener, &on_progress_clone(&on_progress)));
@@ -155,7 +160,7 @@ impl JobScheduler {
     pub async fn wait_for_root_idle(&self, canonical_root: &str) {
         loop {
             let receiver = {
-                let state = lock(&self.shared.state);
+                let state = self.shared.state.lock_ignore_poison();
                 let Some(id) = state.active_by_root.get(canonical_root).cloned() else {
                     return;
                 };
@@ -170,7 +175,10 @@ impl JobScheduler {
     /// Cancels the active job for a root. Returns false when idle.
     #[must_use]
     pub fn cancel_root(&self, canonical_root: &str) -> bool {
-        let id = lock(&self.shared.state)
+        let id = self
+            .shared
+            .state
+            .lock_ignore_poison()
             .active_by_root
             .get(canonical_root)
             .cloned();
@@ -185,7 +193,7 @@ impl JobScheduler {
     /// Current queue depth.
     #[must_use]
     pub fn load(&self) -> SchedulerLoad {
-        let state = lock(&self.shared.state);
+        let state = self.shared.state.lock_ignore_poison();
         SchedulerLoad {
             queued: state
                 .jobs
@@ -201,14 +209,21 @@ impl JobScheduler {
     /// be awaited rather than orphaned.
     pub async fn close(&self) {
         {
-            let mut state = lock(&self.shared.state);
+            let mut state = self.shared.state.lock_ignore_poison();
             if state.closed {
                 return;
             }
             state.closed = true;
             state.queue.clear();
         }
-        let ids: Vec<JobId> = lock(&self.shared.state).jobs.keys().cloned().collect();
+        let ids: Vec<JobId> = self
+            .shared
+            .state
+            .lock_ignore_poison()
+            .jobs
+            .keys()
+            .cloned()
+            .collect();
         for id in &ids {
             self.cancel_job(
                 id,
@@ -216,7 +231,7 @@ impl JobScheduler {
             );
         }
         loop {
-            let running = lock(&self.shared.state).running;
+            let running = self.shared.state.lock_ignore_poison().running;
             if running == 0 {
                 return;
             }

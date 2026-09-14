@@ -22,6 +22,7 @@ use sha2::{Digest, Sha256};
 use zg_core::types::UnixMillis;
 
 use crate::mcp::error::McpError;
+use crate::sync::MutexExt;
 
 /// Request-state signing key length (32 bytes).
 pub const REQUEST_STATE_KEY_BYTES: usize = 32;
@@ -88,13 +89,7 @@ pub fn fingerprint(value: &serde_json::Value) -> String {
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(*HEX.get((byte >> 4) as usize).unwrap_or(&b'0') as char);
-        out.push(*HEX.get((byte & 0x0f) as usize).unwrap_or(&b'0') as char);
-    }
-    out
+    zg_core::utils::hash::to_hex(bytes)
 }
 
 fn stable_json(value: &serde_json::Value) -> String {
@@ -167,7 +162,7 @@ impl InMemoryRequestStateReplayGuard {
     /// Consumes a nonce: false when already seen or the table is full.
     pub fn consume(&self, state: &RemoteEmbeddingRequestState) -> bool {
         let now = SystemTime::now();
-        let mut consumed = lock(&self.consumed);
+        let mut consumed = self.consumed.lock_ignore_poison();
         consumed.retain(|_, consumed_at| {
             // Fail closed: when the clock is unreadable every entry is kept,
             // so a replay still hits the table (or the fail-closed-when-full
@@ -340,12 +335,6 @@ pub fn random_state_key() -> [u8; REQUEST_STATE_KEY_BYTES] {
     let mut key = [0u8; REQUEST_STATE_KEY_BYTES];
     rand::rng().fill_bytes(&mut key);
     key
-}
-
-fn lock<T>(state: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    state
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(test)]

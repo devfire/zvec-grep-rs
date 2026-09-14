@@ -70,14 +70,9 @@ pub fn scan_file_path(
     for configured in matching_root_paths(root_paths, absolute_path) {
         throw_if_cancelled(options.cancel.as_ref())?;
         let root = normalize_root_path(&configured);
-        let target = std::fs::symlink_metadata(absolute_path).ok();
-        let followed = match (&target, root.follow.unwrap_or(false)) {
-            (Some(meta), true) if meta.file_type().is_symlink() => {
-                std::fs::metadata(absolute_path).ok()
-            }
-            _ => target,
+        let Some(meta) = follow_symlink_target(&root, absolute_path) else {
+            continue;
         };
-        let Some(meta) = followed else { continue };
         if !meta.is_file() {
             continue;
         }
@@ -192,14 +187,9 @@ pub fn scan_directory_path(
         if !root.recursive && absolute_path != root.absolute_path {
             continue;
         }
-        let target = std::fs::symlink_metadata(absolute_path).ok();
-        let followed = match (&target, root.follow.unwrap_or(false)) {
-            (Some(meta), true) if meta.file_type().is_symlink() => {
-                std::fs::metadata(absolute_path).ok()
-            }
-            _ => target,
+        let Some(meta) = follow_symlink_target(&root, absolute_path) else {
+            continue;
         };
-        let Some(meta) = followed else { continue };
         if !meta.is_dir() {
             continue;
         }
@@ -247,6 +237,19 @@ fn real_path_of(path: &str) -> String {
     std::fs::canonicalize(path)
         .map(|real| to_display_path(&real))
         .unwrap_or_else(|_| path.to_owned())
+}
+
+/// Resolves `absolute_path` metadata honoring `root.follow`: a symlink is
+/// followed to its target only when following is enabled, otherwise the
+/// link itself is reported (or `None` when nothing exists).
+fn follow_symlink_target(root: &RootPath, absolute_path: &str) -> Option<std::fs::Metadata> {
+    let target = std::fs::symlink_metadata(absolute_path).ok();
+    match (&target, root.follow.unwrap_or(false)) {
+        (Some(meta), true) if meta.file_type().is_symlink() => {
+            std::fs::metadata(absolute_path).ok()
+        }
+        _ => target,
+    }
 }
 
 fn root_file_selection(root: &RootPath) -> EngineResult<FileSelection> {

@@ -16,6 +16,7 @@ use crate::change_set::{ChangeSet, ChangeSetOptions, ChangeSetSnapshot, MaxChang
 use crate::errors::DaemonError;
 use crate::job_scheduler::{JobReason, JobRun, JobScheduler, SubmitIndexJob, SubmitIndexJobResult};
 use crate::root_runtime::{Generation, RootRuntime};
+use crate::sync::MutexExt;
 
 /// Proof returned by an index run: whether a full reconciliation happened
 /// and at which epoch. The actor applies it via
@@ -93,7 +94,7 @@ impl IndexCoordinator {
     /// an empty run that would bump the dirty revision for nothing.
     #[must_use]
     pub fn has_pending(&self) -> bool {
-        !lock(&self.pending).set.is_empty()
+        !self.pending.lock_ignore_poison().set.is_empty()
     }
 
     /// Merges `changes`, bumps the runtime dirty revision, and submits
@@ -118,7 +119,7 @@ impl IndexCoordinator {
         let handoff: Arc<Mutex<Option<(ChangeSetSnapshot, Generation)>>> =
             Arc::new(Mutex::new(None));
         {
-            let mut pending = lock(&self.pending);
+            let mut pending = self.pending.lock_ignore_poison();
             pending.set.merge(changes);
             pending.target = runtime.mark_dirty();
         }
@@ -126,11 +127,11 @@ impl IndexCoordinator {
         let root = self.root.clone();
         let budget = self.budget;
         let take: TakePending = Arc::new(move || {
-            let mut handoff = lock(&handoff);
+            let mut handoff = handoff.lock_ignore_poison();
             if let Some(pair) = handoff.clone() {
                 return pair;
             }
-            let mut pending = lock(&pending);
+            let mut pending = pending.lock_ignore_poison();
             let snapshot = pending.set.snapshot();
             let pair = (snapshot, pending.target);
             pending.set = ChangeSet::new(ChangeSetOptions {
@@ -148,12 +149,6 @@ impl IndexCoordinator {
             followup_if_running: true,
         })
     }
-}
-
-fn lock<T>(state: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    state
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(test)]

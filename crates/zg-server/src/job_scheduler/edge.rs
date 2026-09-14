@@ -18,7 +18,7 @@ use crate::logger::LogField;
 
 use super::id::JobId;
 use super::scheduler::JobScheduler;
-use super::state::lock;
+use crate::sync::MutexExt;
 
 /// Bridges async cancellation into the sync index body. Returns a
 /// [`CancelFlag`] the blocking code polls; a background task trips it the
@@ -45,14 +45,14 @@ pub(crate) fn progress_reporter(scheduler: &JobScheduler, id: &JobId) -> IndexPr
     let slf = scheduler.clone();
     let job_id = id.clone();
     Arc::new(move |progress: IndexProgress| {
-        let mut state = lock(&slf.shared.state);
+        let mut state = slf.shared.state.lock_ignore_poison();
         if let Some(job) = state.jobs.get_mut(&job_id) {
             job.progress = Some(progress.clone());
             job.publish();
             for listener in job.listeners.clone() {
                 drop(state);
                 safe_report(&Some(listener), &progress);
-                state = lock(&slf.shared.state);
+                state = slf.shared.state.lock_ignore_poison();
                 if !state.jobs.contains_key(&job_id) {
                     return;
                 }

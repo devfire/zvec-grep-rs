@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
+use crate::utils::hash::sha256_text;
 
 use super::error::AuthError;
 use super::types::{RemoteEmbeddingTarget, TargetFingerprint, WorkspaceFingerprint};
@@ -39,21 +39,11 @@ pub fn canonicalize_workspace_roots(roots: &[String]) -> Vec<String> {
     canonical
 }
 
-/// SHA-256 hex of one string value.
-fn sha256_hex(value: &str) -> String {
-    let digest = Sha256::digest(value.as_bytes());
-    let mut hex = String::with_capacity(64);
-    for byte in digest {
-        hex.push_str(&format!("{byte:02x}"));
-    }
-    hex
-}
-
 /// Fingerprint over the canonical roots: `sha256(JSON.stringify(roots))`.
 #[must_use]
 pub fn workspace_fingerprint(roots: &[String]) -> WorkspaceFingerprint {
     let json = serde_json::to_string(roots).unwrap_or_else(|_| "[]".to_owned());
-    WorkspaceFingerprint::from_hex(sha256_hex(&json))
+    WorkspaceFingerprint::from_hex(sha256_text(&json))
 }
 
 /// Fingerprint over `[workspaceFingerprint, provider, model, endpoint]`.
@@ -66,7 +56,7 @@ pub fn remote_embedding_target_fingerprint(
 ) -> TargetFingerprint {
     let json = serde_json::to_string(&[workspace.as_str(), provider, model, endpoint])
         .unwrap_or_else(|_| "[]".to_owned());
-    TargetFingerprint::from_hex(sha256_hex(&json))
+    TargetFingerprint::from_hex(sha256_text(&json))
 }
 
 /// Builds a [`RemoteEmbeddingTarget`] from raw roots plus provider identity.
@@ -119,7 +109,7 @@ mod tests {
         let workspace = workspace_fingerprint(&roots);
         assert_eq!(
             workspace.as_str(),
-            sha256_hex(&serde_json::to_string(&roots).expect("json"))
+            sha256_text(&serde_json::to_string(&roots).expect("json"))
         );
         assert_eq!(workspace.as_str().len(), 64);
         let target = remote_embedding_target_fingerprint(

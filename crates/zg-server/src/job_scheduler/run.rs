@@ -11,6 +11,7 @@ use zg_core::types::UnixMillis;
 
 use crate::errors::DaemonError;
 use crate::logger::{LogField, root_identity};
+use crate::sync::MutexExt;
 
 use super::edge::{fields, progress_reporter};
 use super::error_info::{error_info, is_retryable};
@@ -18,13 +19,13 @@ use super::failure::{JobFailure, JobOutcome};
 use super::id::JobId;
 use super::scheduler::JobScheduler;
 use super::snapshot::IndexJobError;
-use super::state::{activate, job_attempt, lock};
+use super::state::{activate, job_attempt};
 
 impl JobScheduler {
     pub(crate) fn pump(&self) {
         loop {
             let next = {
-                let mut state = lock(&self.shared.state);
+                let mut state = self.shared.state.lock_ignore_poison();
                 if state.closed || state.running >= self.shared.concurrency {
                     return;
                 }
@@ -69,7 +70,7 @@ impl JobScheduler {
 
     async fn run_job(&self, id: JobId) {
         let (run, reporter, cancel) = {
-            let state = lock(&self.shared.state);
+            let state = self.shared.state.lock_ignore_poison();
             let Some(job) = state.jobs.get(&id) else {
                 return;
             };
@@ -81,7 +82,7 @@ impl JobScheduler {
         };
         let outcome: JobOutcome = run(reporter, cancel.clone()).await;
         {
-            let mut state = lock(&self.shared.state);
+            let mut state = self.shared.state.lock_ignore_poison();
             let Some(job) = state.jobs.get_mut(&id) else {
                 return;
             };
@@ -141,7 +142,7 @@ impl JobScheduler {
                                     tokio::time::sleep(std::time::Duration::from_millis(delay))
                                         .await;
                                     let requeue = {
-                                        let mut state = lock(&slf.shared.state);
+                                        let mut state = slf.shared.state.lock_ignore_poison();
                                         if let Some(job) = state.jobs.get_mut(&retry_id) {
                                             if job.retry_pending
                                                 && job.state == IndexJobState::Queued
@@ -149,7 +150,7 @@ impl JobScheduler {
                                                 job.retry_pending = false;
                                                 job.publish();
                                                 state.queue.push(retry_id.clone());
-                                                Self::sort_queue(&mut state, &slf.shared);
+                                                Self::sort_queue(&mut state);
                                                 true
                                             } else {
                                                 false
@@ -183,7 +184,7 @@ impl JobScheduler {
             }
         }
         {
-            let mut state = lock(&self.shared.state);
+            let mut state = self.shared.state.lock_ignore_poison();
             state.running = state.running.saturating_sub(1);
         }
         self.pump();
@@ -195,7 +196,7 @@ impl JobScheduler {
             IndexJobState::Succeeded | IndexJobState::Failed | IndexJobState::Cancelled
         ));
         let followup = {
-            let mut guard = lock(&self.shared.state);
+            let mut guard = self.shared.state.lock_ignore_poison();
             let Some(job) = guard.jobs.get_mut(id) else {
                 return;
             };
@@ -249,7 +250,7 @@ impl JobScheduler {
         };
         if let Some(next) = followup {
             {
-                let mut guard = lock(&self.shared.state);
+                let mut guard = self.shared.state.lock_ignore_poison();
                 activate(&mut guard, &next);
             }
             self.pump();
@@ -261,7 +262,7 @@ impl JobScheduler {
         // state mutex on the same thread and deadlock.
         let mut chain = vec![id.clone()];
         {
-            let state = lock(&self.shared.state);
+            let state = self.shared.state.lock_ignore_poison();
             let mut current = id.clone();
             while let Some(next) = state
                 .jobs
@@ -273,7 +274,7 @@ impl JobScheduler {
             }
         }
         for member in &chain {
-            let mut state = lock(&self.shared.state);
+            let mut state = self.shared.state.lock_ignore_poison();
             let Some(job) = state.jobs.get_mut(member) else {
                 continue;
             };
@@ -290,12 +291,15 @@ impl JobScheduler {
         // Queued members finish synchronously; running members observe
         // their token and finish from the run task.
         for member in &chain {
-            let queued = lock(&self.shared.state)
+            let queued = self
+                .shared
+                .state
+                .lock_ignore_poison()
                 .jobs
                 .get(member)
                 .is_some_and(|job| job.state == IndexJobState::Queued);
             if queued {
-                if let Some(job) = lock(&self.shared.state).jobs.get_mut(member) {
+                if let Some(job) = self.shared.state.lock_ignore_poison().jobs.get_mut(member) {
                     job.error = Some(IndexJobError {
                         code: DaemonError::IndexCancelled.code().to_owned(),
                         message: zg_core::error::redact_error_text(message, 512),

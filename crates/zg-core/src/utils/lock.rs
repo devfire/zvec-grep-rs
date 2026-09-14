@@ -8,7 +8,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 
@@ -404,9 +404,6 @@ mod local_codes {
         EngineErrorCode::from_static("LOCK.UNAVAILABLE")
     }
 }
-
-#[allow(unused)]
-fn unused_time_guard(_: SystemTime) {}
 
 #[cfg(test)]
 mod tests {

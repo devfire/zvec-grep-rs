@@ -11,7 +11,7 @@ use super::id::JobId;
 use super::reason::JobReason;
 use super::scheduler::JobScheduler;
 use super::snapshot::SubmitIndexJob;
-use super::state::{Inner, JobRecord, Shared, activate, create_job};
+use super::state::{Inner, JobRecord, activate, create_job};
 
 impl JobScheduler {
     // `canonical_root: _` below is intentional, not `..`: a new
@@ -58,7 +58,7 @@ impl JobScheduler {
                     job.reason = incoming_reason;
                 }
             }
-            Self::sort_queue(state, &self.shared);
+            Self::sort_queue(state);
             if let Some(job) = state.jobs.get(active_id) {
                 job.publish();
             }
@@ -107,7 +107,7 @@ impl JobScheduler {
         id
     }
 
-    pub(crate) fn sort_queue(state: &mut Inner, #[allow(unused_variables)] shared: &Shared) {
+    pub(crate) fn sort_queue(state: &mut Inner) {
         let jobs = &state.jobs;
         state.queue.sort_by(|left, right| {
             let left_job = jobs.get(left);
