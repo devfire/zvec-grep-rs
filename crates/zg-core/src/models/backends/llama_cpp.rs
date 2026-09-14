@@ -268,7 +268,10 @@ fn global_backend(entry: &LlamaCppEntry) -> EngineResult<&'static LlamaBackend> 
                 std::thread::yield_now();
             }
         }
-        Err(err) => Err(embed_failed(entry, format_args!("init llama backend: {err}"))),
+        Err(err) => Err(embed_failed(
+            entry,
+            format_args!("init llama backend: {err}"),
+        )),
     }
 }
 
@@ -419,9 +422,8 @@ fn embed_texts(
             batch.clear();
             let base = chunk_index.saturating_mul(DECODE_CHUNK_TOKENS);
             for (i, token) in chunk.iter().enumerate() {
-                let pos = i32::try_from(base.saturating_add(i)).map_err(|err| {
-                    embed_failed(entry, format_args!("fill batch: {err}"))
-                })?;
+                let pos = i32::try_from(base.saturating_add(i))
+                    .map_err(|err| embed_failed(entry, format_args!("fill batch: {err}")))?;
                 let is_last = base.saturating_add(i).saturating_add(1) == total;
                 batch
                     .add(*token, pos, &[0], is_last)
@@ -450,8 +452,8 @@ fn detokenize_and_retokenize(
     entry: &LlamaCppEntry,
     head: &[llama_cpp_2::token::LlamaToken],
 ) -> EngineResult<Vec<llama_cpp_2::token::LlamaToken>> {
-    use llama_cpp_2::model::AddBos;
     use llama_cpp_2::TokenToStringError;
+    use llama_cpp_2::model::AddBos;
     let mut bytes = Vec::with_capacity(head.len() * 4);
     for id in head {
         // Special pieces (BOS) carry no text: TS `detokenize` skips them,
@@ -464,15 +466,24 @@ fn detokenize_and_retokenize(
                     .checked_abs()
                     .and_then(|n| usize::try_from(n).ok())
                     .ok_or_else(|| {
-                        embed_failed(entry, format_args!("detokenize truncation: oversized piece"))
+                        embed_failed(
+                            entry,
+                            format_args!("detokenize truncation: oversized piece"),
+                        )
                     })?;
-                let mut piece = model
-                    .token_to_piece_bytes(*id, size, false, None)
-                    .map_err(|err| embed_failed(entry, format_args!("detokenize truncation: {err}")))?;
+                let mut piece =
+                    model
+                        .token_to_piece_bytes(*id, size, false, None)
+                        .map_err(|err| {
+                            embed_failed(entry, format_args!("detokenize truncation: {err}"))
+                        })?;
                 bytes.append(&mut piece);
             }
             Err(err) => {
-                return Err(embed_failed(entry, format_args!("detokenize truncation: {err}")));
+                return Err(embed_failed(
+                    entry,
+                    format_args!("detokenize truncation: {err}"),
+                ));
             }
         }
     }
