@@ -190,10 +190,10 @@ fn bare_query_is_hybrid_without_fts_crutch() {
         serde_json::to_string_pretty(&found.items).expect("json")
     );
     assert!(
-        found.items.iter().any(|item| matches!(
-            item.matched_by.as_deref(),
-            Some("fts") | Some("fts+vector")
-        )),
+        found
+            .items
+            .iter()
+            .any(|item| matches!(item.matched_by.as_deref(), Some("fts") | Some("fts+vector"))),
         "bare query must run the lexical leg"
     );
     let groups = found.group_results.expect("groups");
@@ -201,10 +201,10 @@ fn bare_query_is_hybrid_without_fts_crutch() {
     assert_eq!(groups[0].id, "Q1");
     assert_eq!(groups[0].role, Some(GroupRole::Primary));
     assert!(
-        found.items.iter().all(|item| item
-            .query_groups
+        found
+            .items
             .iter()
-            .any(|group| group.id == "Q1")),
+            .all(|item| item.query_groups.iter().any(|group| group.id == "Q1")),
         "every item links to its group"
     );
 }
@@ -247,9 +247,11 @@ fn fuse_collapses_two_primary_queries() {
     assert_eq!(split_groups.len(), 2);
     assert_eq!(split_groups[0].id, "Q1");
     assert_eq!(split_groups[1].id, "Q2");
-    assert!(split_groups
-        .iter()
-        .all(|group| group.role == Some(GroupRole::Primary)));
+    assert!(
+        split_groups
+            .iter()
+            .all(|group| group.role == Some(GroupRole::Primary))
+    );
     let fused = service.context(&options(true)).expect("fused");
     let fused_groups = fused.group_results.expect("groups");
     assert_eq!(fused_groups.len(), 1);
