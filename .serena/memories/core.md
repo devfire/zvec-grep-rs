@@ -8,6 +8,7 @@ Cargo workspace consisting of three primary crates:
 - `zg-core` (`crates/zg-core`): Core search engine, AST-based entity extraction (Tree-sitter), embedding pipelines, Zvec vector storage, lexical search, indexing state coordination, and hybrid retrieval fusion.
 - `zg-server` (`crates/zg-server`): Local HTTP daemon (Axum), MCP server (`rmcp`), authentication, and job scheduling.
 - `zg` (`crates/zg`): CLI application (`clap`) orchestrating local search, daemon management, and MCP client/server commands.
+- Local inference backends (`onnx`, `llama` features) are opt-in and off by default; gating rules: `mem:conventions`, versions: `mem:tech_stack`
 
 ## Key References
 - Language, build system, and dependencies: `mem:tech_stack`

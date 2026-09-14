@@ -17,3 +17,6 @@
   - `lexical/`: Grep-based search pipelines
   - `pipeline/`: Scanner, index scheduler, and search fusion
   - `service/`: High-level workspace index coordinator
+- Facade splits: oversized modules become `name/` dir + slim re-export facade (`cli.rs` → 93 LOC + 12 modules); moves are pure, zero behavior change
+- Feature-gated backends: `#[cfg(feature)]` backend modules + factory `BackendUnavailable` fallback; default build stays hermetic (no C++ toolchain)
+- Rustdoc: never link private items from public docs (deny warnings); use literal code spans
