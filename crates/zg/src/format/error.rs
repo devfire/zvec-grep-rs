@@ -16,11 +16,37 @@ pub fn print_error(error: &CliError, color: Color, debug: bool) {
         eprintln!("error: {error}");
     }
     if debug {
-        eprintln!("{DIM}code: {}{RESET}", error.code());
-        let mut source = std::error::Error::source(error);
-        while let Some(next) = source {
-            eprintln!("{DIM}caused by: {next}{RESET}");
-            source = std::error::Error::source(next);
+        for line in debug_lines(error) {
+            eprintln!("{DIM}{line}{RESET}");
         }
     }
+}
+
+/// `--debug` detail lines: the wire code, then one entry per cause.
+/// Transparent variants (`Engine`, `Daemon`) display identically to their
+/// inner error, so the walk starts *inside* the inner error — otherwise the
+/// first `caused by` would duplicate the `error:` line verbatim. The
+/// owned-variant arm spells every variant (no wildcard) so a new one
+/// forces a deliberate routing decision here.
+pub(crate) fn debug_lines(error: &CliError) -> Vec<String> {
+    let mut lines = vec![format!("code: {}", error.code())];
+    let mut source = match error {
+        CliError::Engine(inner) => std::error::Error::source(inner),
+        CliError::Daemon(inner) => std::error::Error::source(inner),
+        CliError::Usage { .. }
+        | CliError::ConfigInvalid { .. }
+        | CliError::AuthorizationDeclined { .. }
+        | CliError::AuthorizationRequired { .. }
+        | CliError::InstallRefused { .. }
+        | CliError::ServerIncompatible { .. }
+        | CliError::RgIncompatible { .. }
+        | CliError::DaemonUnavailable { .. }
+        | CliError::NotReady { .. }
+        | CliError::Io { .. } => std::error::Error::source(error),
+    };
+    while let Some(next) = source {
+        lines.push(format!("caused by: {next}"));
+        source = std::error::Error::source(next);
+    }
+    lines
 }

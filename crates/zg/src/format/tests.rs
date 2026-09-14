@@ -7,11 +7,13 @@
 
 use super::context_agent::format_context_agent;
 use super::context_human::format_context_human;
+use super::error::debug_lines;
 use super::index::format_index_result;
 use super::progress::format_green_progress_bar;
 use super::range::range_label;
 use super::text::{format_score, one_line, truncate};
 use super::workspace::{WorkspaceState, format_workspace_info, workspace_state};
+use crate::error::CliError;
 use zg_core::ids::EntityId;
 use zg_core::service::types::{
     ContentStatus, ContextCoverage, ContextDiagnostics, ContextFile, ContextItem, ContextItemKind,
@@ -91,6 +93,44 @@ fn human_golden_without_color() {
     assert!(text.contains("query: alpha"), "{text}");
     assert!(text.contains("file: a.rs:1-3"), "{text}");
     assert!(!text.contains("\x1b["), "{text}");
+}
+
+#[test]
+fn debug_chain_is_deep_and_non_duplicating() {
+    #[derive(Debug)]
+    struct Wrap(std::io::Error);
+    impl std::fmt::Display for Wrap {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "wrap: {}", self.0)
+        }
+    }
+    impl std::error::Error for Wrap {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+    let inner = std::io::Error::new(std::io::ErrorKind::NotFound, "gone");
+    let engine = zg_core::error::EngineError::new(
+        zg_core::error::EngineErrorCode::from_static("JSON.READ_FAILED"),
+        "failed to read x",
+    )
+    .with_source(Wrap(inner));
+    // Through the transparent `Engine` variant: code + two causes, and no
+    // line repeats (the skipped hop would duplicate the `error:` line).
+    let lines = debug_lines(&CliError::Engine(engine));
+    let [code, first, second] = lines.as_slice() else {
+        panic!("expected exactly 3 debug lines: {lines:?}");
+    };
+    assert!(
+        code.starts_with("code: ZVEC_GREP.ENGINE.JSON.READ_FAILED"),
+        "{lines:?}"
+    );
+    assert!(first.contains("wrap: gone"), "{lines:?}");
+    assert!(second.contains("gone"), "{lines:?}");
+    for pair in lines.windows(2) {
+        assert_eq!(pair.len(), 2);
+        assert_ne!(pair.first(), pair.get(1), "{lines:?}");
+    }
 }
 
 #[test]
