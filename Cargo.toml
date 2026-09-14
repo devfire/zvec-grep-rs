@@ -72,6 +72,7 @@ base64 = "0.22"
 url = "2"
 tempfile = "3"
 libc = "0.2"
+rustix = { version = "1", features = ["process"] }
 os_info = "3"
 # Heavy local-inference backends (M7): exact pins. `ort` is pinned to the
 # 2.x-rc line whose `Session::builder` / `inputs!` / `try_extract_tensor`

@@ -361,8 +361,11 @@ fn hostname_impl() -> String {
 ///
 /// On Linux this is a `/proc/<pid>` existence check (safe Rust, no signal
 /// needed: EPERM-style "exists but unpermitted" processes still have a
-/// `/proc` entry). Other Unix targets use `kill(pid, 0)`; that call is the
-/// sole `unsafe` in the crate, isolated here with a SAFETY justification.
+/// `/proc` entry). Other Unix targets use `kill(pid, 0)` via the safe
+/// `rustix::process::test_kill_process` wrapper, so the crate stays
+/// `unsafe_code = "forbid"` clean on every Unix. A permission-denied
+/// result means the pid exists but is unpermitted, hence alive — the same
+/// rule as the Linux `/proc` arm.
 #[must_use]
 pub fn process_is_alive(pid: u32) -> bool {
     if pid == 0 {
@@ -374,12 +377,18 @@ pub fn process_is_alive(pid: u32) -> bool {
     }
     #[cfg(all(unix, not(target_os = "linux")))]
     {
-        // SAFETY: `kill` with signal 0 performs no action and only reports
-        // whether the pid exists / is permitted; `pid > 0` is checked above
-        // and the return value plus errno are the only effects observed.
-        #[allow(unsafe_code)]
-        let result = unsafe { libc::kill(pid as i32, 0) };
-        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        // `pid > 0` is checked above; out-of-`i32` values cannot be live pids.
+        let Ok(raw) = i32::try_from(pid) else {
+            return false;
+        };
+        let Some(target) = rustix::process::Pid::from_raw(raw) else {
+            return false;
+        };
+        match rustix::process::test_kill_process(target) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => true,
+            Err(_) => false,
+        }
     }
     #[cfg(not(unix))]
     {
