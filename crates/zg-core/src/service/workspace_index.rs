@@ -116,7 +116,7 @@ impl WorkspaceIndex {
     pub fn index(&mut self, options: &IndexOptions) -> EngineResult<IndexResult> {
         if self.storage.read_only() {
             return Err(EngineError::new(
-                EngineErrorCode::from_static("WORKSPACE_INDEX.READ_ONLY"),
+                EngineErrorCode::WorkspaceIndexReadOnly,
                 "cannot update a read-only workspace index",
             )
             .with_context(workspace_index_operation_details(&self.info.name, "index")));
@@ -173,7 +173,7 @@ impl WorkspaceIndex {
     fn require_embedding_model(&self, operation: &str) -> EngineResult<Arc<dyn EmbeddingModel>> {
         self.embedding_model.clone().ok_or_else(|| {
             EngineError::new(
-                EngineErrorCode::from_static("WORKSPACE_INDEX.EMBEDDING_MODEL_REQUIRED"),
+                EngineErrorCode::WorkspaceIndexEmbeddingModelRequired,
                 "workspace index operation requires an embedding model",
             )
             .with_context(workspace_index_operation_details(
@@ -205,7 +205,7 @@ fn validate_index_version(info: &WorkspaceIndexInfo) -> EngineResult<()> {
     ])
     .unwrap_or_default();
     Err(EngineError::new(
-        EngineErrorCode::from_static("WORKSPACE_INDEX.VERSION_MISMATCH"),
+        EngineErrorCode::WorkspaceIndexVersionMismatch,
         "workspace index version is not supported",
     )
     .with_context(detail))
@@ -222,7 +222,7 @@ fn validate_embedding_schema(
         return Err(schema_mismatch(
             &info.name,
             "provider",
-            EngineErrorCode::from_static("WORKSPACE_INDEX.EMBEDDING_PROVIDER_MISMATCH"),
+            EngineErrorCode::WorkspaceIndexEmbeddingProviderMismatch,
             "workspace index embedding provider does not match current model",
             &expected.provider,
             &actual.provider,
@@ -232,7 +232,7 @@ fn validate_embedding_schema(
         return Err(schema_mismatch(
             &info.name,
             "model",
-            EngineErrorCode::from_static("WORKSPACE_INDEX.EMBEDDING_MODEL_MISMATCH"),
+            EngineErrorCode::WorkspaceIndexEmbeddingModelMismatch,
             "workspace index embedding model does not match current model",
             &expected.model,
             &actual.model,
@@ -242,7 +242,7 @@ fn validate_embedding_schema(
         return Err(schema_mismatch(
             &info.name,
             "dimension",
-            EngineErrorCode::from_static("WORKSPACE_INDEX.EMBEDDING_DIMENSION_MISMATCH"),
+            EngineErrorCode::WorkspaceIndexEmbeddingDimensionMismatch,
             "workspace index embedding dimension does not match current model",
             &expected.dimension.to_string(),
             &actual.dimension.to_string(),
@@ -252,7 +252,7 @@ fn validate_embedding_schema(
         return Err(schema_mismatch(
             &info.name,
             "metric",
-            EngineErrorCode::from_static("WORKSPACE_INDEX.EMBEDDING_METRIC_MISMATCH"),
+            EngineErrorCode::WorkspaceIndexEmbeddingMetricMismatch,
             "workspace index embedding metric does not match current model",
             &format!("{:?}", expected.metric),
             &format!("{:?}", actual.metric),
@@ -312,7 +312,7 @@ fn require_workspace_index_embedding(
     ])
     .unwrap_or_default();
     Err(EngineError::new(
-        EngineErrorCode::from_static("WORKSPACE_INDEX.MISSING"),
+        EngineErrorCode::WorkspaceIndexMissing,
         "workspace index has not been built",
     )
     .with_context(detail))

@@ -111,7 +111,7 @@ fn debug_chain_is_deep_and_non_duplicating() {
     }
     let inner = std::io::Error::new(std::io::ErrorKind::NotFound, "gone");
     let engine = zg_core::error::EngineError::new(
-        zg_core::error::EngineErrorCode::from_static("JSON.READ_FAILED"),
+        zg_core::error::EngineErrorCode::JsonReadFailed,
         "failed to read x",
     )
     .with_source(Wrap(inner));

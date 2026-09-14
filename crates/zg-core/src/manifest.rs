@@ -87,7 +87,7 @@ pub fn delete_workspace_manifest(home: &Path) -> EngineResult<()> {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(EngineError::new(
-            crate::error::EngineErrorCode::from_static("MANIFEST.DELETE_FAILED"),
+            crate::error::EngineErrorCode::ManifestDeleteFailed,
             format!("failed to delete {}", path.display()),
         )
         .with_context(format!("error={error}"))),

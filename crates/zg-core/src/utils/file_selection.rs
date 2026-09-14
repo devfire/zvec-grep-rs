@@ -250,11 +250,11 @@ mod codes {
     use crate::error::EngineErrorCode;
 
     pub fn file_types_unavailable() -> EngineErrorCode {
-        EngineErrorCode::from_static("FILE_SELECTION.TYPES_UNAVAILABLE")
+        EngineErrorCode::FileSelectionTypesUnavailable
     }
 
     pub fn unknown_file_type() -> EngineErrorCode {
-        EngineErrorCode::from_static("FILE_SELECTION.UNKNOWN_FILE_TYPE")
+        EngineErrorCode::FileSelectionUnknownFileType
     }
 }
 

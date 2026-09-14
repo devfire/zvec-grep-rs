@@ -352,13 +352,13 @@ impl ModelError {
     pub const fn code(&self) -> EngineErrorCode {
         match self {
             Self::CatalogModelNotFound { .. } => {
-                EngineErrorCode::from_static("MODELS.EMBEDDING_CATALOG_MODEL_NOT_FOUND")
+                EngineErrorCode::ModelsEmbeddingCatalogModelNotFound
             }
             Self::NotImplemented { .. } => {
-                EngineErrorCode::from_static("MODELS.EMBEDDING_MODEL_NOT_IMPLEMENTED")
+                EngineErrorCode::ModelsEmbeddingModelNotImplemented
             }
             Self::BackendUnavailable { .. } => {
-                EngineErrorCode::from_static("MODELS.EMBEDDING_BACKEND_UNAVAILABLE")
+                EngineErrorCode::ModelsEmbeddingBackendUnavailable
             }
             Self::QwenText { model, failure, .. } => model.code(*failure),
             Self::QwenVl { failure, .. } => qwen_vl_code(*failure),
@@ -370,74 +370,74 @@ impl ModelError {
                 QwenBackend::Text(model) => model.code(QwenTextFailure::MissingEndpoint),
                 QwenBackend::Vl => qwen_vl_code(QwenVlFailure::MissingEndpoint),
             },
-            Self::EmptyInput { .. } => EngineErrorCode::from_static("MODELS.EMBEDDING_EMPTY_INPUT"),
+            Self::EmptyInput { .. } => EngineErrorCode::ModelsEmbeddingEmptyInput,
             Self::BatchTooLarge { .. } => {
-                EngineErrorCode::from_static("MODELS.EMBEDDING_BATCH_TOO_LARGE")
+                EngineErrorCode::ModelsEmbeddingBatchTooLarge
             }
-            Self::EmptyText { .. } => EngineErrorCode::from_static("MODELS.EMBEDDING_EMPTY_TEXT"),
+            Self::EmptyText { .. } => EngineErrorCode::ModelsEmbeddingEmptyText,
             Self::UnsupportedImage { .. } => {
-                EngineErrorCode::from_static("MODELS.EMBEDDING_UNSUPPORTED_CONTENT")
+                EngineErrorCode::ModelsEmbeddingUnsupportedContent
             }
-            Self::EmptyImage { .. } => EngineErrorCode::from_static("MODELS.EMBEDDING_EMPTY_IMAGE"),
+            Self::EmptyImage { .. } => EngineErrorCode::ModelsEmbeddingEmptyImage,
             Self::ImageTooLarge { .. } => {
-                EngineErrorCode::from_static("MODELS.EMBEDDING_IMAGE_TOO_LARGE")
+                EngineErrorCode::ModelsEmbeddingImageTooLarge
             }
             Self::VectorCountMismatch { .. } => {
-                EngineErrorCode::from_static("MODELS.EMBEDDING_VECTOR_COUNT_MISMATCH")
+                EngineErrorCode::ModelsEmbeddingVectorCountMismatch
             }
             Self::DimensionMismatch { .. } => {
-                EngineErrorCode::from_static("MODELS.EMBEDDING_DIMENSION_MISMATCH")
+                EngineErrorCode::ModelsEmbeddingDimensionMismatch
             }
             Self::NonFiniteValue { .. } => {
-                EngineErrorCode::from_static("MODELS.EMBEDDING_NON_FINITE_VECTOR_VALUE")
+                EngineErrorCode::ModelsEmbeddingNonFiniteVectorValue
             }
             Self::InvalidTruncatedIndex { .. } => {
-                EngineErrorCode::from_static("MODELS.EMBEDDING_INVALID_TRUNCATED_INPUT_INDEX")
+                EngineErrorCode::ModelsEmbeddingInvalidTruncatedInputIndex
             }
             Self::Model2VecLoad { .. } => {
-                EngineErrorCode::from_static("MODELS.MODEL2VEC_LOAD_FAILED")
+                EngineErrorCode::ModelsModel2vecLoadFailed
             }
             Self::Model2VecDownload { .. } => {
-                EngineErrorCode::from_static("MODELS.MODEL2VEC_DOWNLOAD_FAILED")
+                EngineErrorCode::ModelsModel2vecDownloadFailed
             }
             Self::Model2VecEmbed { .. } => {
-                EngineErrorCode::from_static("MODELS.MODEL2VEC_EMBED_FAILED")
+                EngineErrorCode::ModelsModel2vecEmbedFailed
             }
             Self::Model2VecTokenize { .. } => {
-                EngineErrorCode::from_static("MODELS.MODEL2VEC_EMBED_FAILED")
+                EngineErrorCode::ModelsModel2vecEmbedFailed
             }
             Self::TokenOutOfRange { .. } => {
-                EngineErrorCode::from_static("MODELS.MODEL2VEC_EMBED_FAILED")
+                EngineErrorCode::ModelsModel2vecEmbedFailed
             }
             Self::WorkerFailed { .. } => {
-                EngineErrorCode::from_static("MODELS.MODEL2VEC_EMBED_FAILED")
+                EngineErrorCode::ModelsModel2vecEmbedFailed
             }
             Self::TransformersJsEmbed { .. } => {
-                EngineErrorCode::from_static("MODELS.TRANSFORMERS_JS_EMBED_FAILED")
+                EngineErrorCode::ModelsTransformersJsEmbedFailed
             }
             Self::TransformersJsTokenize { .. } => {
-                EngineErrorCode::from_static("MODELS.TRANSFORMERS_JS_TOKENIZATION_FAILED")
+                EngineErrorCode::ModelsTransformersJsTokenizationFailed
             }
             Self::TransformersJsInvalidTensor { .. } => {
-                EngineErrorCode::from_static("MODELS.TRANSFORMERS_JS_INVALID_TENSOR")
+                EngineErrorCode::ModelsTransformersJsInvalidTensor
             }
             Self::TransformersJsDisposed { .. } => {
-                EngineErrorCode::from_static("MODELS.TRANSFORMERS_JS_DISPOSED")
+                EngineErrorCode::ModelsTransformersJsDisposed
             }
             Self::LlamaCppEmbed { .. } => {
-                EngineErrorCode::from_static("MODELS.LLAMA_CPP_EMBED_FAILED")
+                EngineErrorCode::ModelsLlamaCppEmbedFailed
             }
             Self::LlamaCppDisposed { .. } => {
-                EngineErrorCode::from_static("MODELS.LLAMA_CPP_DISPOSED")
+                EngineErrorCode::ModelsLlamaCppDisposed
             }
             Self::LlamaCppInvalidGguf { .. } => {
-                EngineErrorCode::from_static("MODELS.LLAMA_CPP_INVALID_GGUF")
+                EngineErrorCode::ModelsLlamaCppInvalidGguf
             }
             Self::LlamaCppInvalidGgufHtml { .. } => {
-                EngineErrorCode::from_static("MODELS.LLAMA_CPP_INVALID_GGUF_HTML")
+                EngineErrorCode::ModelsLlamaCppInvalidGgufHtml
             }
             Self::DownloadFailed { .. } => {
-                EngineErrorCode::from_static("MODELS.MODEL_DOWNLOAD_FAILED")
+                EngineErrorCode::ModelsModelDownloadFailed
             }
         }
     }

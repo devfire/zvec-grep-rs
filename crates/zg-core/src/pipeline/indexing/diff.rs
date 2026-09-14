@@ -68,7 +68,7 @@ pub(crate) fn with_content_hash(file: &FileInfo) -> EngineResult<FileInfo> {
             Ok(hashed)
         }
         Err(err) => Err(EngineError::new(
-            EngineErrorCode::from_static("INDEXING.CONTENT_HASH_FAILED"),
+            EngineErrorCode::IndexingContentHashFailed,
             "indexing failed to compute file content hash",
         )
         .with_context(format!("{}\ndetail={err}", file_context(file)))),

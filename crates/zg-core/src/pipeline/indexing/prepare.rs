@@ -35,7 +35,7 @@ fn prepare_file_inner(file: &FileInfo, ctx: &IndexContext<'_>) -> EngineResult<P
     throw_if_index_cancelled(ctx)?;
     let bytes = std::fs::read(&file.absolute_path).map_err(|err| {
         EngineError::new(
-            EngineErrorCode::from_static("INDEXING.READ_SOURCE_FAILED"),
+            EngineErrorCode::IndexingReadSourceFailed,
             "indexing failed to read source file",
         )
         .with_context(format!("{}\ndetail={err}", file_context(file)))
@@ -94,7 +94,7 @@ fn image_format_of(file: &FileInfo) -> EngineResult<ImageFormat> {
         "webp" => Ok(ImageFormat::Webp),
         "gif" => Ok(ImageFormat::Gif),
         other => Err(EngineError::new(
-            EngineErrorCode::from_static("INDEXING.READ_SOURCE_FAILED"),
+            EngineErrorCode::IndexingReadSourceFailed,
             "indexing found an unsupported image format",
         )
         .with_context(format!("{}\nformat={other}", file_context(file)))),
@@ -119,7 +119,7 @@ pub(crate) fn commit_file(
     throw_if_index_cancelled(ctx)?;
     if !vectors.is_empty() && prepared.fragments.len() != vectors.len() {
         let error = EngineError::new(
-            EngineErrorCode::from_static("STORAGE.ENTITY_VECTOR_COUNT_MISMATCH"),
+            EngineErrorCode::StorageEntityVectorCountMismatch,
             "embedding returned mismatched entity/vector counts",
         )
         .with_context(format!(

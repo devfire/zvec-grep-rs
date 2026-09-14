@@ -141,28 +141,28 @@ impl CliError {
     /// engine/daemon errors, which keep their own codes.
     pub const fn own_code(&self) -> Option<EngineErrorCode> {
         match self {
-            Self::Usage { .. } => Some(EngineErrorCode::from_static("CLI.USAGE")),
-            Self::ConfigInvalid { .. } => Some(EngineErrorCode::from_static("CLI.CONFIG_INVALID")),
+            Self::Usage { .. } => Some(EngineErrorCode::CliUsage),
+            Self::ConfigInvalid { .. } => Some(EngineErrorCode::CliConfigInvalid),
             Self::AuthorizationDeclined { .. } => {
-                Some(EngineErrorCode::from_static("CLI.AUTHORIZATION_DECLINED"))
+                Some(EngineErrorCode::CliAuthorizationDeclined)
             }
             Self::AuthorizationRequired { .. } => {
-                Some(EngineErrorCode::from_static("CLI.AUTHORIZATION_REQUIRED"))
+                Some(EngineErrorCode::CliAuthorizationRequired)
             }
             Self::InstallRefused { .. } => {
-                Some(EngineErrorCode::from_static("CLI.INSTALL_REFUSED"))
+                Some(EngineErrorCode::CliInstallRefused)
             }
             Self::ServerIncompatible { .. } => {
-                Some(EngineErrorCode::from_static("CLI.SERVER_INCOMPATIBLE"))
+                Some(EngineErrorCode::CliServerIncompatible)
             }
             Self::RgIncompatible { .. } => {
-                Some(EngineErrorCode::from_static("CLI.RG_INCOMPATIBLE"))
+                Some(EngineErrorCode::CliRgIncompatible)
             }
             Self::DaemonUnavailable { .. } => {
-                Some(EngineErrorCode::from_static("CLI.DAEMON_UNAVAILABLE"))
+                Some(EngineErrorCode::CliDaemonUnavailable)
             }
-            Self::NotReady { .. } => Some(EngineErrorCode::from_static("CLI.NOT_READY")),
-            Self::Io { .. } => Some(EngineErrorCode::from_static("CLI.IO_FAILED")),
+            Self::NotReady { .. } => Some(EngineErrorCode::CliNotReady),
+            Self::Io { .. } => Some(EngineErrorCode::CliIoFailed),
             Self::Engine(_) | Self::Daemon(_) => None,
         }
     }

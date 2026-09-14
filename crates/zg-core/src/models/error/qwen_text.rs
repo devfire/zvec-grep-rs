@@ -66,85 +66,85 @@ impl QwenTextModel {
     pub const fn code(self, failure: QwenTextFailure) -> EngineErrorCode {
         match (self, failure) {
             (Self::V4, QwenTextFailure::RequestFailed) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_V4_REQUEST_FAILED")
+                EngineErrorCode::ModelsQwenTextEmbeddingV4RequestFailed
             }
             (Self::V4, QwenTextFailure::InvalidJson) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_V4_INVALID_JSON")
+                EngineErrorCode::ModelsQwenTextEmbeddingV4InvalidJson
             }
             (Self::V4, QwenTextFailure::ApiError) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_V4_API_ERROR")
+                EngineErrorCode::ModelsQwenTextEmbeddingV4ApiError
             }
             (Self::V4, QwenTextFailure::MissingData) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_V4_MISSING_DATA")
+                EngineErrorCode::ModelsQwenTextEmbeddingV4MissingData
             }
             (Self::V4, QwenTextFailure::InvalidIndex) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_V4_INVALID_INDEX")
+                EngineErrorCode::ModelsQwenTextEmbeddingV4InvalidIndex
             }
             (Self::V4, QwenTextFailure::IndexOutOfRange) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_V4_INDEX_OUT_OF_RANGE")
+                EngineErrorCode::ModelsQwenTextEmbeddingV4IndexOutOfRange
             }
             (Self::V4, QwenTextFailure::InvalidVector) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_V4_INVALID_VECTOR")
+                EngineErrorCode::ModelsQwenTextEmbeddingV4InvalidVector
             }
             (Self::V4, QwenTextFailure::MissingApiKey) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_V4_MISSING_API_KEY")
+                EngineErrorCode::ModelsQwenTextEmbeddingV4MissingApiKey
             }
             (Self::V4, QwenTextFailure::MissingEndpoint) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_V4_MISSING_ENDPOINT")
+                EngineErrorCode::ModelsQwenTextEmbeddingV4MissingEndpoint
             }
             (Self::V37, QwenTextFailure::RequestFailed) => {
-                EngineErrorCode::from_static("MODELS.QWEN37_TEXT_EMBEDDING_REQUEST_FAILED")
+                EngineErrorCode::ModelsQwen37TextEmbeddingRequestFailed
             }
             (Self::V37, QwenTextFailure::InvalidJson) => {
-                EngineErrorCode::from_static("MODELS.QWEN37_TEXT_EMBEDDING_INVALID_JSON")
+                EngineErrorCode::ModelsQwen37TextEmbeddingInvalidJson
             }
             (Self::V37, QwenTextFailure::ApiError) => {
-                EngineErrorCode::from_static("MODELS.QWEN37_TEXT_EMBEDDING_API_ERROR")
+                EngineErrorCode::ModelsQwen37TextEmbeddingApiError
             }
             (Self::V37, QwenTextFailure::MissingData) => {
-                EngineErrorCode::from_static("MODELS.QWEN37_TEXT_EMBEDDING_MISSING_DATA")
+                EngineErrorCode::ModelsQwen37TextEmbeddingMissingData
             }
             (Self::V37, QwenTextFailure::InvalidIndex) => {
-                EngineErrorCode::from_static("MODELS.QWEN37_TEXT_EMBEDDING_INVALID_INDEX")
+                EngineErrorCode::ModelsQwen37TextEmbeddingInvalidIndex
             }
             (Self::V37, QwenTextFailure::IndexOutOfRange) => {
-                EngineErrorCode::from_static("MODELS.QWEN37_TEXT_EMBEDDING_INDEX_OUT_OF_RANGE")
+                EngineErrorCode::ModelsQwen37TextEmbeddingIndexOutOfRange
             }
             (Self::V37, QwenTextFailure::InvalidVector) => {
-                EngineErrorCode::from_static("MODELS.QWEN37_TEXT_EMBEDDING_INVALID_VECTOR")
+                EngineErrorCode::ModelsQwen37TextEmbeddingInvalidVector
             }
             (Self::V37, QwenTextFailure::MissingApiKey) => {
-                EngineErrorCode::from_static("MODELS.QWEN37_TEXT_EMBEDDING_MISSING_API_KEY")
+                EngineErrorCode::ModelsQwen37TextEmbeddingMissingApiKey
             }
             (Self::V37, QwenTextFailure::MissingEndpoint) => {
-                EngineErrorCode::from_static("MODELS.QWEN37_TEXT_EMBEDDING_MISSING_ENDPOINT")
+                EngineErrorCode::ModelsQwen37TextEmbeddingMissingEndpoint
             }
             (Self::Other, QwenTextFailure::RequestFailed) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_REQUEST_FAILED")
+                EngineErrorCode::ModelsQwenTextEmbeddingRequestFailed
             }
             (Self::Other, QwenTextFailure::InvalidJson) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_INVALID_JSON")
+                EngineErrorCode::ModelsQwenTextEmbeddingInvalidJson
             }
             (Self::Other, QwenTextFailure::ApiError) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_API_ERROR")
+                EngineErrorCode::ModelsQwenTextEmbeddingApiError
             }
             (Self::Other, QwenTextFailure::MissingData) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_MISSING_DATA")
+                EngineErrorCode::ModelsQwenTextEmbeddingMissingData
             }
             (Self::Other, QwenTextFailure::InvalidIndex) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_INVALID_INDEX")
+                EngineErrorCode::ModelsQwenTextEmbeddingInvalidIndex
             }
             (Self::Other, QwenTextFailure::IndexOutOfRange) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_INDEX_OUT_OF_RANGE")
+                EngineErrorCode::ModelsQwenTextEmbeddingIndexOutOfRange
             }
             (Self::Other, QwenTextFailure::InvalidVector) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_INVALID_VECTOR")
+                EngineErrorCode::ModelsQwenTextEmbeddingInvalidVector
             }
             (Self::Other, QwenTextFailure::MissingApiKey) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_MISSING_API_KEY")
+                EngineErrorCode::ModelsQwenTextEmbeddingMissingApiKey
             }
             (Self::Other, QwenTextFailure::MissingEndpoint) => {
-                EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_MISSING_ENDPOINT")
+                EngineErrorCode::ModelsQwenTextEmbeddingMissingEndpoint
             }
         }
     }

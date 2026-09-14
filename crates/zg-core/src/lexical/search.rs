@@ -76,7 +76,7 @@ pub fn run_lexical_search(options: &LexicalSearchOptions) -> EngineResult<Lexica
     let all_patterns = load_patterns(&options.patterns, &options.pattern_files)?;
     if all_patterns.is_empty() {
         return Err(EngineError::new(
-            EngineErrorCode::from_static("LEXICAL.EMPTY_PATTERN"),
+            EngineErrorCode::LexicalEmptyPattern,
             "at least one search pattern is required",
         ));
     }
@@ -89,7 +89,7 @@ pub fn run_lexical_search(options: &LexicalSearchOptions) -> EngineResult<Lexica
     )
     .map_err(|error| {
         EngineError::new(
-            EngineErrorCode::from_static("LEXICAL.UNKNOWN_FILE_TYPE"),
+            EngineErrorCode::LexicalUnknownFileType,
             error.message().to_owned(),
         )
     })?;

@@ -135,7 +135,7 @@ pub(crate) fn build_ignore_matcher(
     for file in ignore_files {
         if let Some(error) = builder.add(file) {
             return Err(EngineError::new(
-                EngineErrorCode::from_static("LEXICAL.IGNORE_FILE_INVALID"),
+                EngineErrorCode::LexicalIgnoreFileInvalid,
                 format!("unable to read ignore file {}", file.display()),
             )
             .with_context(format!("error={error}")));
@@ -143,7 +143,7 @@ pub(crate) fn build_ignore_matcher(
     }
     builder.build().map(Some).map_err(|error| {
         EngineError::new(
-            EngineErrorCode::from_static("LEXICAL.IGNORE_FILE_INVALID"),
+            EngineErrorCode::LexicalIgnoreFileInvalid,
             "unable to compile ignore files",
         )
         .with_context(format!("error={error}"))

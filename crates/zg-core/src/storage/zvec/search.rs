@@ -30,15 +30,15 @@ pub fn search_fts(
     if topk == 0 {
         return Ok(Vec::new());
     }
-    let mut fts = Fts::new().map_err(|error| query_error("fts payload", &error.to_string()))?;
+    let mut fts = Fts::new().map_err(|error| query_error("fts payload", error))?;
     fts.set_match_string(query)
-        .map_err(|error| query_error("fts match string", &error.to_string()))?;
+        .map_err(|error| query_error("fts match string", error))?;
     let mut built = SearchQuery::fts(ENTITY_TEXT_FIELD, &fts, topk)
-        .map_err(|error| query_error("fts query", &error.to_string()))?;
+        .map_err(|error| query_error("fts query", error))?;
     apply_query_options(&mut built, filter, "fts")?;
     collection
         .query(&built)
-        .map_err(|error| query_error("fts query", &error.to_string()))
+        .map_err(|error| query_error("fts query", error))
 }
 
 /// Dense recall over the embedding vector field.
@@ -57,11 +57,11 @@ pub fn search_vector(
         return Ok(Vec::new());
     }
     let mut built = SearchQuery::new(ENTITY_VECTOR_FIELD, vector, topk)
-        .map_err(|error| query_error("vector query", &error.to_string()))?;
+        .map_err(|error| query_error("vector query", error))?;
     apply_query_options(&mut built, filter, "vector")?;
     collection
         .query(&built)
-        .map_err(|error| query_error("vector query", &error.to_string()))
+        .map_err(|error| query_error("vector query", error))
 }
 
 fn apply_query_options(
@@ -72,11 +72,11 @@ fn apply_query_options(
     if let Some(expression) = build_filter(filter) {
         query
             .set_filter(&expression)
-            .map_err(|error| query_error(kind, &error.to_string()))?;
+            .map_err(|error| query_error(kind, error))?;
     }
     query
         .set_include_vector(false)
-        .map_err(|error| query_error(kind, &error.to_string()))
+        .map_err(|error| query_error(kind, error))
 }
 
 fn clamp_topk(limit: usize) -> i32 {
@@ -86,10 +86,13 @@ fn clamp_topk(limit: usize) -> i32 {
     limit.min(ZVEC_MAX_QUERY_TOPK) as i32
 }
 
-fn query_error(kind: &str, detail: &str) -> EngineError {
+/// Recall failure with the typed zvec cause attached (see `doc_field_error`
+/// for the `with_context` / `with_source` split).
+fn query_error(kind: &str, error: zvec_rust::Error) -> EngineError {
     EngineError::new(
-        EngineErrorCode::from_static("STORAGE.ZVEC_QUERY_FAILED"),
+        EngineErrorCode::StorageZvecQueryFailed,
         "zvec recall query failed",
     )
-    .with_context(format!("kind={kind} error={detail}"))
+    .with_context(format!("kind={kind}"))
+    .with_source(error)
 }

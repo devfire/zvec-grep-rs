@@ -22,20 +22,16 @@ pub const ENTITY_TEXT_FIELD: &str = "text";
 pub fn create_entities_schema(
     embedding: &WorkspaceIndexEmbeddingSchema,
 ) -> EngineResult<CollectionSchema> {
-    let dimension: u32 = embedding.dimension.try_into().map_err(|_| {
+    let dimension: u32 = embedding.dimension.try_into().map_err(|error| {
         EngineError::new(
-            EngineErrorCode::from_static("STORAGE.INVALID_EMBEDDING_DIMENSION"),
+            EngineErrorCode::StorageInvalidEmbeddingDimension,
             "embedding dimension does not fit a u32",
         )
         .with_context(format!("dimension={}", embedding.dimension))
+        .with_source(error)
     })?;
-    let mut schema = CollectionSchema::new("zvec_grep_entities").map_err(|error| {
-        EngineError::new(
-            EngineErrorCode::from_static("STORAGE.SCHEMA_FAILED"),
-            "failed to create entity collection schema",
-        )
-        .with_context(format!("error={error}"))
-    })?;
+    let mut schema = CollectionSchema::new("zvec_grep_entities")
+        .map_err(|error| schema_error("zvec_grep_entities", error))?;
     indexed_string_field(&mut schema, "group", true)?;
     indexed_string_field(&mut schema, "file_id", false)?;
     plain_string_field(&mut schema, "content_kind", false)?;
@@ -83,15 +79,15 @@ fn indexed_string_field(
     nullable: bool,
 ) -> EngineResult<()> {
     let mut field = FieldSchema::new(name, DataType::String, nullable, 0)
-        .map_err(|error| schema_error(name, &error.to_string()))?;
+        .map_err(|error| schema_error(name, error))?;
     let params = IndexParams::invert(false, false)
-        .map_err(|error| schema_error(name, &error.to_string()))?;
+        .map_err(|error| schema_error(name, error))?;
     field
         .set_index_params(&params)
-        .map_err(|error| schema_error(name, &error.to_string()))?;
+        .map_err(|error| schema_error(name, error))?;
     schema
         .add_field(&field)
-        .map_err(|error| schema_error(name, &error.to_string()))
+        .map_err(|error| schema_error(name, error))
 }
 
 fn plain_string_field(
@@ -100,35 +96,35 @@ fn plain_string_field(
     nullable: bool,
 ) -> EngineResult<()> {
     let field = FieldSchema::new(name, DataType::String, nullable, 0)
-        .map_err(|error| schema_error(name, &error.to_string()))?;
+        .map_err(|error| schema_error(name, error))?;
     schema
         .add_field(&field)
-        .map_err(|error| schema_error(name, &error.to_string()))
+        .map_err(|error| schema_error(name, error))
 }
 
 fn int_field(schema: &mut CollectionSchema, name: &str, nullable: bool) -> EngineResult<()> {
     let field = FieldSchema::new(name, DataType::Int32, nullable, 0)
-        .map_err(|error| schema_error(name, &error.to_string()))?;
+        .map_err(|error| schema_error(name, error))?;
     schema
         .add_field(&field)
-        .map_err(|error| schema_error(name, &error.to_string()))
+        .map_err(|error| schema_error(name, error))
 }
 
 fn fts_text_field(schema: &mut CollectionSchema, name: &str) -> EngineResult<()> {
     let mut field = FieldSchema::new(name, DataType::String, false, 0)
-        .map_err(|error| schema_error(name, &error.to_string()))?;
+        .map_err(|error| schema_error(name, error))?;
     // Standalone choice, not a compat shim: the TS generation uses the
     // `jieba` tokenizer, but the two builds never share collections, so
     // this port uses `standard` and ships no dictionary (see
     // docs/ts-divergence.md).
     let params = IndexParams::fts(Some("standard"), Some(&["lowercase"]), None)
-        .map_err(|error| schema_error(name, &error.to_string()))?;
+        .map_err(|error| schema_error(name, error))?;
     field
         .set_index_params(&params)
-        .map_err(|error| schema_error(name, &error.to_string()))?;
+        .map_err(|error| schema_error(name, error))?;
     schema
         .add_field(&field)
-        .map_err(|error| schema_error(name, &error.to_string()))
+        .map_err(|error| schema_error(name, error))
 }
 
 fn vector_field(
@@ -138,21 +134,24 @@ fn vector_field(
     metric: MetricType,
 ) -> EngineResult<()> {
     let mut field = FieldSchema::new(name, DataType::VectorFp32, false, dimension)
-        .map_err(|error| schema_error(name, &error.to_string()))?;
+        .map_err(|error| schema_error(name, error))?;
     let params = IndexParams::hnsw(metric, 16, 200)
-        .map_err(|error| schema_error(name, &error.to_string()))?;
+        .map_err(|error| schema_error(name, error))?;
     field
         .set_index_params(&params)
-        .map_err(|error| schema_error(name, &error.to_string()))?;
+        .map_err(|error| schema_error(name, error))?;
     schema
         .add_field(&field)
-        .map_err(|error| schema_error(name, &error.to_string()))
+        .map_err(|error| schema_error(name, error))
 }
 
-fn schema_error(field: &str, detail: &str) -> EngineError {
+/// Schema-build failure with the typed zvec cause attached (see
+/// `doc_field_error` for the `with_context` / `with_source` split).
+fn schema_error(field: &str, error: zvec_rust::Error) -> EngineError {
     EngineError::new(
-        EngineErrorCode::from_static("STORAGE.SCHEMA_FAILED"),
+        EngineErrorCode::StorageSchemaFailed,
         "failed to build entity collection schema",
     )
-    .with_context(format!("field={field} error={detail}"))
+    .with_context(format!("field={field}"))
+    .with_source(error)
 }

@@ -42,7 +42,7 @@ pub fn validate_root_paths(roots: &[RootPath]) -> EngineResult<Vec<RootPath>> {
             };
             if scan_domains_overlap(left_domain, right_domain) {
                 return Err(EngineError::new(
-                    EngineErrorCode::from_static("SCANNER.OVERLAPPING_ROOT_PATHS"),
+                    EngineErrorCode::ScannerOverlappingRootPaths,
                     "workspace index root paths overlap",
                 )
                 .with_context(format!(
@@ -128,14 +128,14 @@ fn root_path_to_scan_domain(root: &RootPath) -> EngineResult<RootScanDomain> {
     let path = Path::new(&root.absolute_path);
     let info = std::fs::metadata(path).map_err(|err| {
         EngineError::new(
-            EngineErrorCode::from_static("SCANNER.ROOT_PATH_STAT_FAILED"),
+            EngineErrorCode::ScannerRootPathStatFailed,
             "workspace index root path could not be inspected",
         )
         .with_context(format!("rootPath={} detail={err}", root.absolute_path))
     })?;
     if !info.is_file() && !info.is_dir() {
         return Err(EngineError::new(
-            EngineErrorCode::from_static("SCANNER.UNSUPPORTED_ROOT_PATH"),
+            EngineErrorCode::ScannerUnsupportedRootPath,
             "workspace index root path must be a file or directory",
         )
         .with_context(format!("rootPath={}", root.absolute_path)));

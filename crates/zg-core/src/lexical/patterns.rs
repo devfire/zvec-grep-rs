@@ -26,7 +26,7 @@ pub(crate) fn load_patterns(
     for file in pattern_files {
         let text = fs::read_to_string(file).map_err(|error| {
             EngineError::new(
-                EngineErrorCode::from_static("LEXICAL.PATTERN_FILE_UNREADABLE"),
+                EngineErrorCode::LexicalPatternFileUnreadable,
                 format!("unable to read pattern file {}", file.display()),
             )
             .with_context(format!("error={error}"))
@@ -70,7 +70,7 @@ pub(crate) fn build_matcher(
         .build(&combined)
         .map_err(|error| {
             EngineError::new(
-                EngineErrorCode::from_static("LEXICAL.INVALID_PATTERN"),
+                EngineErrorCode::LexicalInvalidPattern,
                 "invalid search pattern",
             )
             .with_context(format!("error={error}"))

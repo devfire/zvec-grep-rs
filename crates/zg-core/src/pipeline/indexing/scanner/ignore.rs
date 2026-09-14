@@ -148,7 +148,7 @@ pub(crate) fn read_configured_ignore_rules(root: &RootPath) -> EngineResult<Vec<
         };
         let content = std::fs::read_to_string(&absolute).map_err(|err| {
             EngineError::new(
-                EngineErrorCode::from_static("SCANNER.CONFIGURED_IGNORE_READ_FAILED"),
+                EngineErrorCode::ScannerConfiguredIgnoreReadFailed,
                 "workspace index ignore file could not be read",
             )
             .with_context(format!("path={} detail={err}", absolute.display()))

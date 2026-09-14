@@ -35,7 +35,7 @@ pub fn resolve_zvec_grep_root(root: Option<&str>) -> EngineResult<String> {
         Some(root) => PathBuf::from(root),
         None => std::env::current_dir().map_err(|err| {
             crate::error::EngineError::new(
-                crate::error::EngineErrorCode::from_static("WORKSPACE.ROOT_UNAVAILABLE"),
+                crate::error::EngineErrorCode::WorkspaceRootUnavailable,
                 "workspace root directory is unavailable",
             )
             .with_context(format!("detail={err}"))

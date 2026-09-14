@@ -43,7 +43,7 @@ impl MatchSink<'_> {
 impl grep_searcher::SinkError for crate::error::EngineError {
     fn error_message<T: std::fmt::Display>(message: T) -> Self {
         crate::error::EngineError::new(
-            crate::error::EngineErrorCode::from_static("LEXICAL.SEARCH_FAILED"),
+            crate::error::EngineErrorCode::LexicalSearchFailed,
             message.to_string(),
         )
     }

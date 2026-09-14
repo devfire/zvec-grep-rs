@@ -401,7 +401,7 @@ mod local_codes {
     use crate::error::EngineErrorCode;
 
     pub fn lock_unavailable() -> EngineErrorCode {
-        EngineErrorCode::from_static("LOCK.UNAVAILABLE")
+        EngineErrorCode::LockUnavailable
     }
 }
 

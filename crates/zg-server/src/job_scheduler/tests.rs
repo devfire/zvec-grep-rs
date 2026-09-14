@@ -129,7 +129,7 @@ async fn lock_busy_retries_until_attempts_run_out() {
     let busy: JobRun = Arc::new(|_, _| {
         Box::pin(async {
             Err(JobFailure::Engine(EngineError::new(
-                zg_core::error::EngineErrorCode::from_static("LOCK.BUSY"),
+                zg_core::error::EngineErrorCode::LockBusy,
                 "locked",
             )))
         }) as BoxFuture<'static, JobOutcome>

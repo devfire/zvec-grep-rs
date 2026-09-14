@@ -38,7 +38,7 @@ pub fn index_workspace(ctx: &mut IndexContext<'_>) -> EngineResult<IndexResult> 
     index_workspace_inner(ctx).map_err(|error| {
         let context = workspace_index_context(&ctx.workspace_index);
         EngineError::new(
-            EngineErrorCode::from_static("INDEXING.WORKSPACE_FAILED"),
+            EngineErrorCode::IndexingWorkspaceFailed,
             "indexing workspace failed",
         )
         .with_context(format!("{context}\ncause={}", error_to_message(&error)))
@@ -58,7 +58,7 @@ pub fn index_workspace_paths(
     index_workspace_paths_inner(ctx, changed_paths).map_err(|error| {
         let context = workspace_index_context(&ctx.workspace_index);
         EngineError::new(
-            EngineErrorCode::from_static("INDEXING.WORKSPACE_FAILED"),
+            EngineErrorCode::IndexingWorkspaceFailed,
             "indexing changed paths failed",
         )
         .with_context(format!("{context}\ncause={}", error_to_message(&error)))
@@ -153,7 +153,7 @@ pub fn get_workspace_index_status(
     })()
     .map_err(|error: EngineError| {
         EngineError::new(
-            EngineErrorCode::from_static("INDEXING.STATUS_FAILED"),
+            EngineErrorCode::IndexingStatusFailed,
             "inspecting workspace index status failed",
         )
         .with_context(format!(
@@ -314,7 +314,7 @@ fn files_failed_error(
     ])
     .unwrap_or_default();
     EngineError::new(
-        EngineErrorCode::from_static("INDEXING.FILES_FAILED"),
+        EngineErrorCode::IndexingFilesFailed,
         format!(
             "Indexing completed with {} failed {}",
             result.files_failed,
@@ -458,7 +458,7 @@ fn run_diff_pass(
             throw_if_index_cancelled(ctx)?;
             ctx.storage.delete_file(&file.id).map_err(|error| {
                 EngineError::new(
-                    EngineErrorCode::from_static("INDEXING.DELETE_FILE_FAILED"),
+                    EngineErrorCode::IndexingDeleteFileFailed,
                     "indexing failed to delete stale file records",
                 )
                 .with_context(format!(
@@ -560,7 +560,7 @@ fn dedupe_by_id(files: Vec<FileInfo>) -> Vec<FileInfo> {
 fn optimize_storage(ctx: &mut IndexContext<'_>) -> EngineResult<()> {
     ctx.storage.finalize_writes().map_err(|error| {
         EngineError::new(
-            EngineErrorCode::from_static("INDEXING.OPTIMIZE_FAILED"),
+            EngineErrorCode::IndexingOptimizeFailed,
             "indexing failed to finalize storage",
         )
         .with_context(format!(

@@ -12,6 +12,12 @@ impl From<ModelError> for EngineError {
     fn from(error: ModelError) -> Self {
         let code = error.code();
         let message = error.to_string();
+        // The typed enum is the cause: io/serde/HTTP details are already
+        // stringified into `context` upstream (e.g. `download.rs`), so the
+        // chain `EngineError -> ModelError` stays walkable without
+        // re-threading every leaf. `Clone` (not a borrow) because the match
+        // below consumes `error` for the context rendering.
+        let source = error.clone();
         let context: Option<String> = match error {
             ModelError::CatalogModelNotFound { reference } => {
                 Some(format!("embedding={reference}"))
@@ -141,7 +147,7 @@ impl From<ModelError> for EngineError {
             }
             ModelError::DownloadFailed { context } => Some(context),
         };
-        let mut engine = EngineError::new(code, message);
+        let mut engine = EngineError::new(code, message).with_source(source);
         if let Some(context) = context {
             engine = engine.with_context(context);
         }

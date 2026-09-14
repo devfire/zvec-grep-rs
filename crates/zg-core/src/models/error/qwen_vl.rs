@@ -34,37 +34,37 @@ pub enum QwenVlFailure {
 pub const fn qwen_vl_code(failure: QwenVlFailure) -> EngineErrorCode {
     match failure {
         QwenVlFailure::RequestFailed => {
-            EngineErrorCode::from_static("MODELS.QWEN3_VL_EMBEDDING_REQUEST_FAILED")
+            EngineErrorCode::ModelsQwen3VlEmbeddingRequestFailed
         }
         QwenVlFailure::InvalidJson => {
-            EngineErrorCode::from_static("MODELS.QWEN3_VL_EMBEDDING_INVALID_JSON")
+            EngineErrorCode::ModelsQwen3VlEmbeddingInvalidJson
         }
         QwenVlFailure::ApiError => {
-            EngineErrorCode::from_static("MODELS.QWEN3_VL_EMBEDDING_API_ERROR")
+            EngineErrorCode::ModelsQwen3VlEmbeddingApiError
         }
         QwenVlFailure::MissingEmbeddings => {
-            EngineErrorCode::from_static("MODELS.QWEN3_VL_EMBEDDING_MISSING_EMBEDDINGS")
+            EngineErrorCode::ModelsQwen3VlEmbeddingMissingEmbeddings
         }
         QwenVlFailure::InvalidItem => {
-            EngineErrorCode::from_static("MODELS.QWEN3_VL_EMBEDDING_INVALID_ITEM")
+            EngineErrorCode::ModelsQwen3VlEmbeddingInvalidItem
         }
         QwenVlFailure::IndexOutOfRange => {
-            EngineErrorCode::from_static("MODELS.QWEN3_VL_EMBEDDING_INDEX_OUT_OF_RANGE")
+            EngineErrorCode::ModelsQwen3VlEmbeddingIndexOutOfRange
         }
         QwenVlFailure::InvalidVector => {
-            EngineErrorCode::from_static("MODELS.QWEN3_VL_EMBEDDING_INVALID_VECTOR")
+            EngineErrorCode::ModelsQwen3VlEmbeddingInvalidVector
         }
         QwenVlFailure::UnsupportedImageFormat => {
-            EngineErrorCode::from_static("MODELS.QWEN3_VL_EMBEDDING_UNSUPPORTED_IMAGE_FORMAT")
+            EngineErrorCode::ModelsQwen3VlEmbeddingUnsupportedImageFormat
         }
         QwenVlFailure::TooManyImages => {
-            EngineErrorCode::from_static("MODELS.QWEN3_VL_EMBEDDING_TOO_MANY_IMAGES")
+            EngineErrorCode::ModelsQwen3VlEmbeddingTooManyImages
         }
         QwenVlFailure::MissingApiKey => {
-            EngineErrorCode::from_static("MODELS.QWEN3_VL_EMBEDDING_MISSING_API_KEY")
+            EngineErrorCode::ModelsQwen3VlEmbeddingMissingApiKey
         }
         QwenVlFailure::MissingEndpoint => {
-            EngineErrorCode::from_static("MODELS.QWEN3_VL_EMBEDDING_MISSING_ENDPOINT")
+            EngineErrorCode::ModelsQwen3VlEmbeddingMissingEndpoint
         }
     }
 }

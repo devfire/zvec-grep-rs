@@ -17,7 +17,7 @@ use super::SearchContext;
 pub(crate) fn validate_search_plan(plan: &SearchPlan) -> EngineResult<ResolvedSearchPlan> {
     if plan.routes.is_empty() {
         return Err(EngineError::new(
-            EngineErrorCode::from_static("SEARCH_PLAN.EMPTY_ROUTES"),
+            EngineErrorCode::SearchPlanEmptyRoutes,
             "search plan requires at least one route",
         ));
     }
@@ -29,7 +29,7 @@ pub(crate) fn validate_search_plan(plan: &SearchPlan) -> EngineResult<ResolvedSe
         let id = make_default_route_id(route.mode, &mut counts, &used_ids);
         if query.is_empty() {
             return Err(EngineError::new(
-                EngineErrorCode::from_static("SEARCH_PLAN.EMPTY_ROUTE_QUERY"),
+                EngineErrorCode::SearchPlanEmptyRouteQuery,
                 "search plan route requires a non-empty query",
             )
             .with_context(format!("routeId={id}")));
@@ -47,7 +47,7 @@ pub(crate) fn validate_search_plan(plan: &SearchPlan) -> EngineResult<ResolvedSe
         && after.as_millis() > before.as_millis()
     {
         return Err(EngineError::new(
-            EngineErrorCode::from_static("SEARCH_PLAN.INVALID_MODIFIED_TIME_RANGE"),
+            EngineErrorCode::SearchPlanInvalidModifiedTimeRange,
             "search plan modified-after filter must not be later than modified-before",
         )
         .with_context(format!(
@@ -124,7 +124,7 @@ pub(crate) fn require_embedding_model<'a>(
         ])
         .unwrap_or_default();
         EngineError::new(
-            EngineErrorCode::from_static("SEARCH.EMBEDDING_MODEL_REQUIRED"),
+            EngineErrorCode::SearchEmbeddingModelRequired,
             "search operation requires an embedding model",
         )
         .with_context(detail)
@@ -136,7 +136,7 @@ fn normalize_path_filters(values: &[String], field: &str) -> EngineResult<Vec<St
     for (index, item) in values.iter().enumerate() {
         if item.trim().is_empty() {
             return Err(EngineError::new(
-                EngineErrorCode::from_static("SEARCH_PLAN.INVALID_PATH_FILTER"),
+                EngineErrorCode::SearchPlanInvalidPathFilter,
                 "search plan path filters must contain strings",
             )
             .with_context(format!("field={field} index={index}")));
@@ -154,7 +154,7 @@ fn normalize_string_filters(values: &[String], field: &str) -> EngineResult<Vec<
     for (index, item) in values.iter().enumerate() {
         if item.trim().is_empty() {
             return Err(EngineError::new(
-                EngineErrorCode::from_static("SEARCH_PLAN.INVALID_FILTER"),
+                EngineErrorCode::SearchPlanInvalidFilter,
                 "search plan filters must contain strings",
             )
             .with_context(format!("field={field} index={index}")));
@@ -172,7 +172,7 @@ fn normalize_modified_time(
         None => Ok(None),
         Some(time) if time.as_millis() >= 0 => Ok(Some(time)),
         Some(time) => Err(EngineError::new(
-            EngineErrorCode::from_static("SEARCH_PLAN.INVALID_MODIFIED_TIME_FILTER"),
+            EngineErrorCode::SearchPlanInvalidModifiedTimeFilter,
             "search plan modified time filters must be non-negative epoch milliseconds",
         )
         .with_context(format!("field={field} value={}", time.as_millis()))),

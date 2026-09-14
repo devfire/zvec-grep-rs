@@ -304,7 +304,7 @@ pub enum GroupRole {
 #[must_use]
 pub fn empty_query_error() -> crate::error::EngineError {
     crate::error::EngineError::new(
-        crate::error::EngineErrorCode::from_static("CONTEXT.EMPTY_QUERY"),
+        crate::error::EngineErrorCode::ContextEmptyQuery,
         "query is required",
     )
 }
@@ -313,7 +313,7 @@ pub fn empty_query_error() -> crate::error::EngineError {
 #[must_use]
 pub fn workspace_index_not_found(root: &str) -> crate::error::EngineError {
     crate::error::EngineError::new(
-        crate::error::EngineErrorCode::from_static("CONTEXT.WORKSPACE_INDEX_NOT_FOUND"),
+        crate::error::EngineErrorCode::ContextWorkspaceIndexNotFound,
         "workspace index not found",
     )
     .with_context(format!("root={root}"))
@@ -323,7 +323,7 @@ pub fn workspace_index_not_found(root: &str) -> crate::error::EngineError {
 #[must_use]
 pub fn workspace_index_disabled(root: &str) -> crate::error::EngineError {
     crate::error::EngineError::new(
-        crate::error::EngineErrorCode::from_static("CONTEXT.WORKSPACE_INDEX_DISABLED"),
+        crate::error::EngineErrorCode::ContextWorkspaceIndexDisabled,
         "workspace index is disabled",
     )
     .with_context(format!("root={root}"))

@@ -50,7 +50,7 @@ impl FileMetaStore {
     pub fn open(path: &Path, read_only: bool) -> EngineResult<Self> {
         if read_only && !path.exists() {
             return Err(EngineError::new(
-                EngineErrorCode::from_static("STORAGE.ZVEC_FILE_META_MISSING"),
+                EngineErrorCode::StorageZvecFileMetaMissing,
                 "zvec file metadata storage does not exist",
             )
             .with_context(format!("path={}", path.display())));
@@ -108,7 +108,7 @@ impl FileMetaStore {
     fn assert_writable(&self, operation: &str) -> EngineResult<()> {
         if self.read_only {
             return Err(EngineError::new(
-                EngineErrorCode::from_static("STORAGE.FILE_META_READ_ONLY"),
+                EngineErrorCode::StorageFileMetaReadOnly,
                 "cannot update read-only file metadata storage",
             )
             .with_context(format!(

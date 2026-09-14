@@ -183,7 +183,7 @@ pub(crate) fn index_files(
                         outcomes.push((
                             unit.clone(),
                             UnitOutcome::Failed(EngineError::new(
-                                EngineErrorCode::from_static("INDEXING.EMBEDDING_THREAD_FAILED"),
+                                EngineErrorCode::IndexingEmbeddingThreadFailed,
                                 "embedding worker thread failed",
                             )),
                         ));
@@ -577,7 +577,7 @@ fn embed_fragment_batch_one_by_one(
                     return Err(error);
                 }
                 return Err(EngineError::new(
-                    EngineErrorCode::from_static("INDEXING.EMBEDDING_FRAGMENT_FAILED"),
+                    EngineErrorCode::IndexingEmbeddingFragmentFailed,
                     "embedding entity fragment failed after one-by-one fallback",
                 )
                 .with_context(format!(

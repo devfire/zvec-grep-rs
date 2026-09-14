@@ -102,7 +102,7 @@ pub(crate) const PERMANENT_REMOTE_MODEL_PROVIDER_CODES: &[&str] = &[
 pub(crate) fn throw_if_index_cancelled(ctx: &IndexContext<'_>) -> EngineResult<()> {
     if ctx.cancel.as_ref().is_some_and(CancelFlag::is_cancelled) {
         return Err(EngineError::new(
-            EngineErrorCode::from_static("INDEXING.CANCELLED"),
+            EngineErrorCode::IndexingCancelled,
             "indexing was cancelled",
         )
         .with_context(workspace_index_context(&ctx.workspace_index)));
@@ -168,7 +168,7 @@ pub(crate) fn throw_if_aborted(
 ) -> EngineResult<()> {
     if abort.load(Ordering::Relaxed) || cancel.is_some_and(CancelFlag::is_cancelled) {
         return Err(EngineError::new(
-            EngineErrorCode::from_static("INDEXING.CANCELLED"),
+            EngineErrorCode::IndexingCancelled,
             "embedding was cancelled",
         ));
     }

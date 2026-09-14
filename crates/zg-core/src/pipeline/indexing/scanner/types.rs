@@ -128,7 +128,7 @@ impl CancelFlag {
 pub(crate) fn throw_if_cancelled(cancel: Option<&CancelFlag>) -> EngineResult<()> {
     if cancel.is_some_and(CancelFlag::is_cancelled) {
         return Err(EngineError::new(
-            EngineErrorCode::from_static("INDEXING.CANCELLED"),
+            EngineErrorCode::IndexingCancelled,
             "indexing was cancelled",
         ));
     }

@@ -251,7 +251,7 @@ impl EmbeddingScheduler {
     fn acquire(&self, abort: &AtomicBool, cancel: Option<&CancelFlag>) -> EngineResult<()> {
         let mut state = self.state.lock().map_err(|_| {
             EngineError::new(
-                EngineErrorCode::from_static("INDEXING.SCHEDULER_FAILED"),
+                EngineErrorCode::IndexingSchedulerFailed,
                 "embedding scheduler lock failed",
             )
         })?;
@@ -266,7 +266,7 @@ impl EmbeddingScheduler {
                 .wait_timeout(state, Duration::from_millis(50))
                 .map_err(|_| {
                     EngineError::new(
-                        EngineErrorCode::from_static("INDEXING.SCHEDULER_FAILED"),
+                        EngineErrorCode::IndexingSchedulerFailed,
                         "embedding scheduler lock failed",
                     )
                 })?
@@ -578,7 +578,7 @@ mod tests {
                 _inputs: &[EmbeddingInput<'_>],
             ) -> EngineResult<EmbeddingResult> {
                 Err(EngineError::new(
-                    EngineErrorCode::from_static("MODELS.QWEN_TEXT_EMBEDDING_REQUEST_FAILED"),
+                    EngineErrorCode::ModelsQwenTextEmbeddingRequestFailed,
                     "request failed",
                 )
                 .with_context("status=503"))

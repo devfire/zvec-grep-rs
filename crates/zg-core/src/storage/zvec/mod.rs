@@ -76,13 +76,11 @@ impl ZvecWorkspaceIndexStorage {
         if !read_only {
             std::fs::create_dir_all(&paths.storage_path).map_err(|error| {
                 EngineError::new(
-                    EngineErrorCode::from_static("STORAGE.CREATE_FAILED"),
+                    EngineErrorCode::StorageCreateFailed,
                     "failed to create workspace index storage directory",
                 )
-                .with_context(format!(
-                    "path={} error={error}",
-                    paths.storage_path.display()
-                ))
+                .with_context(format!("path={}", paths.storage_path.display()))
+                .with_source(error)
             })?;
         }
         let lock_mode = if read_only {
@@ -97,7 +95,7 @@ impl ZvecWorkspaceIndexStorage {
         )?;
         if paths.files_path.exists() {
             return Err(EngineError::new(
-                EngineErrorCode::from_static("STORAGE.FOREIGN_TS_INDEX_PRESENT"),
+                EngineErrorCode::StorageForeignTsIndexPresent,
                 "storage directory holds a TypeScript-generation files.zvec",
             )
             .with_context(format!(
@@ -116,23 +114,23 @@ impl ZvecWorkspaceIndexStorage {
         let index_path = paths.index_path.to_string_lossy().into_owned();
         let collection = if paths.index_path.exists() {
             let mut open_options =
-                CollectionOptions::new().map_err(|error| zvec_error_open(&error.to_string()))?;
+                CollectionOptions::new().map_err(zvec_error_open)?;
             open_options
                 .set_read_only(read_only)
-                .map_err(|error| zvec_error_open(&error.to_string()))?;
+                .map_err(zvec_error_open)?;
             open_zvec_collection(&index_path, read_only, "open", || {
                 Collection::open(&index_path, Some(&open_options))
             })?
         } else if read_only {
             return Err(EngineError::new(
-                EngineErrorCode::from_static("STORAGE.ZVEC_COLLECTION_MISSING"),
+                EngineErrorCode::StorageZvecCollectionMissing,
                 "zvec collection storage does not exist",
             )
             .with_context(format!("path={index_path}")));
         } else {
             let embedding = embedding.ok_or_else(|| {
                 EngineError::new(
-                    EngineErrorCode::from_static("STORAGE.MISSING_EMBEDDING_SCHEMA"),
+                    EngineErrorCode::StorageMissingEmbeddingSchema,
                     "embedding schema is required to create workspace index storage",
                 )
                 .with_context(format!("path={index_path}"))
@@ -155,7 +153,7 @@ impl ZvecWorkspaceIndexStorage {
     fn require_collection(&self, operation: &str) -> EngineResult<&Collection> {
         self.collection.as_ref().ok_or_else(|| {
             EngineError::new(
-                EngineErrorCode::from_static("STORAGE.COLLECTION_CLOSED"),
+                EngineErrorCode::StorageCollectionClosed,
                 "workspace index storage is closed",
             )
             .with_context(format!("operation={operation}"))
@@ -165,7 +163,7 @@ impl ZvecWorkspaceIndexStorage {
     fn assert_writable(&self, operation: &str) -> EngineResult<()> {
         if self.read_only {
             return Err(EngineError::new(
-                EngineErrorCode::from_static("STORAGE.READ_ONLY"),
+                EngineErrorCode::StorageReadOnly,
                 "cannot update read-only workspace index storage",
             )
             .with_context(format!("operation={operation}")));
@@ -186,10 +184,11 @@ impl ZvecWorkspaceIndexStorage {
         let docs = collection
             .fetch_with_options(&[pk], None, false)
             .map_err(|error| {
-                zvec_error(
-                    EngineErrorCode::from_static("STORAGE.ZVEC_FETCH_FAILED"),
+                zvec_error_with_source(
+                    EngineErrorCode::StorageZvecFetchFailed,
                     "zvec fetch failed",
-                    format!("fragmentId={pk} error={error}"),
+                    format!("fragmentId={pk}"),
+                    error,
                 )
             })?;
         let doc = docs
@@ -209,10 +208,11 @@ impl ZvecWorkspaceIndexStorage {
                     let docs = collection
                         .fetch_with_options(&[group_id.as_str()], None, false)
                         .map_err(|error| {
-                            zvec_error(
-                                EngineErrorCode::from_static("STORAGE.ZVEC_FETCH_FAILED"),
+                            zvec_error_with_source(
+                                EngineErrorCode::StorageZvecFetchFailed,
                                 "zvec fetch failed",
-                                format!("fragmentId={group_id} error={error}"),
+                                format!("fragmentId={group_id}"),
+                                error,
                             )
                         })?;
                     let major = docs
@@ -251,10 +251,11 @@ impl ZvecWorkspaceIndexStorage {
                 quote_filter_string(file_id.as_str())
             ))
             .map_err(|error| {
-                zvec_error(
-                    EngineErrorCode::from_static("STORAGE.ZVEC_DELETE_FAILED"),
+                zvec_error_with_source(
+                    EngineErrorCode::StorageZvecDeleteFailed,
                     "zvec delete by filter failed",
-                    format!("fileId={} error={error}", file_id.as_str()),
+                    format!("fileId={}", file_id.as_str()),
+                    error,
                 )
             })?;
         self.needs_optimize = true;
@@ -266,17 +267,18 @@ impl ZvecWorkspaceIndexStorage {
         for (batch_index, batch) in docs.chunks(ZVEC_UPSERT_BATCH_SIZE).enumerate() {
             let refs: Vec<&Doc> = batch.iter().collect();
             let result = collection.upsert(&refs).map_err(|error| {
-                zvec_error(
-                    EngineErrorCode::from_static("STORAGE.ZVEC_UPSERT_FAILED"),
+                zvec_error_with_source(
+                    EngineErrorCode::StorageZvecUpsertFailed,
                     "zvec failed to upsert entity documents",
-                    format!("fileId={} error={error}", file_id.as_str()),
+                    format!("fileId={}", file_id.as_str()),
+                    error,
                 )
             })?;
             let failed = result.results.iter().find(|status| !status.is_success());
             match failed {
                 Some(status) => {
                     return Err(zvec_error(
-                        EngineErrorCode::from_static("STORAGE.ZVEC_UPSERT_FAILED"),
+                        EngineErrorCode::StorageZvecUpsertFailed,
                         "zvec failed to upsert entity documents",
                         format!(
                             "fileId={} batchStart={} batchSize={} code={} message={}",
@@ -290,7 +292,7 @@ impl ZvecWorkspaceIndexStorage {
                 }
                 None if result.error_count > 0 => {
                     return Err(zvec_error(
-                        EngineErrorCode::from_static("STORAGE.ZVEC_UPSERT_FAILED"),
+                        EngineErrorCode::StorageZvecUpsertFailed,
                         "zvec failed to upsert entity documents",
                         format!(
                             "fileId={} batchStart={} batchSize={} errorCount={}",
@@ -475,12 +477,13 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
         if !entries.is_empty() {
             let mut docs = Vec::with_capacity(entries.len());
             for (index, entry) in entries.iter().enumerate() {
-                let fragment_index = i32::try_from(index).map_err(|_| {
+                let fragment_index = i32::try_from(index).map_err(|error| {
                     EngineError::new(
-                        EngineErrorCode::from_static("STORAGE.DOC_ENCODE_FAILED"),
+                        EngineErrorCode::StorageDocEncodeFailed,
                         "fragment index does not fit an i32",
                     )
                     .with_context(format!("fileId={}", file.id.as_str()))
+                    .with_source(error)
                 })?;
                 docs.push(fragment_to_doc(
                     &indexed.info,
@@ -536,10 +539,11 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
         if self.needs_optimize {
             let collection = self.require_collection("finalizeWrites")?;
             collection.optimize().map_err(|error| {
-                zvec_error(
-                    EngineErrorCode::from_static("STORAGE.ZVEC_OPTIMIZE_FAILED"),
+                zvec_error_with_source(
+                    EngineErrorCode::StorageZvecOptimizeFailed,
                     "zvec optimize failed",
-                    format!("error={error}"),
+                    "operation=finalizeWrites".to_owned(),
+                    error,
                 )
             })?;
             self.needs_optimize = false;
@@ -564,12 +568,28 @@ fn zvec_error(code: EngineErrorCode, message: &str, detail: String) -> EngineErr
     EngineError::new(code, message).with_context(detail)
 }
 
-fn zvec_error_open(detail: &str) -> EngineError {
-    zvec_error(
-        EngineErrorCode::from_static("STORAGE.ZVEC_OPEN_FAILED"),
+/// `zvec_error` with the typed zvec cause attached: `detail` keeps the
+/// `key=value` context (without `error=`, which the chain now carries).
+fn zvec_error_with_source(
+    code: EngineErrorCode,
+    message: &str,
+    detail: String,
+    source: zvec_rust::Error,
+) -> EngineError {
+    EngineError::new(code, message)
+        .with_context(detail)
+        .with_source(source)
+}
+
+/// Collection-open preparation failure with the typed zvec cause attached:
+/// the zvec `Display` (`code: message`) is the whole detail, so there is no
+/// separate `key=value` context block.
+fn zvec_error_open(error: zvec_rust::Error) -> EngineError {
+    EngineError::new(
+        EngineErrorCode::StorageZvecOpenFailed,
         "failed to prepare zvec collection open",
-        detail.to_owned(),
     )
+    .with_source(error)
 }
 
 static ZVEC_INIT_MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
@@ -578,7 +598,7 @@ fn initialize_zvec() -> EngineResult<()> {
     let mutex = ZVEC_INIT_MUTEX.get_or_init(|| std::sync::Mutex::new(()));
     let _held = mutex.lock().map_err(|_| {
         EngineError::new(
-            EngineErrorCode::from_static("STORAGE.ZVEC_INIT_FAILED"),
+            EngineErrorCode::StorageZvecInitFailed,
             "zvec initialization lock was poisoned",
         )
     })?;
@@ -586,11 +606,11 @@ fn initialize_zvec() -> EngineResult<()> {
         return Ok(());
     }
     zvec_rust::initialize(None).map_err(|error| {
-        zvec_error(
-            EngineErrorCode::from_static("STORAGE.ZVEC_INIT_FAILED"),
+        EngineError::new(
+            EngineErrorCode::StorageZvecInitFailed,
             "failed to initialize zvec",
-            error.to_string(),
         )
+        .with_source(error)
     })
 }
 
@@ -602,27 +622,42 @@ fn open_zvec_collection(
 ) -> EngineResult<Collection> {
     let lock_writable = can_touch_zvec_lock(Path::new(zvec_path));
     let mut last_error = String::new();
+    let mut last_source: Option<zvec_rust::Error> = None;
     for attempt in 0..ZVEC_OPEN_RETRY_ATTEMPTS {
         match open() {
             Ok(collection) => return Ok(collection),
             Err(error) => {
                 last_error = error.to_string();
-                if attempt + 1 >= ZVEC_OPEN_RETRY_ATTEMPTS
-                    || !is_retryable_zvec_open_error(&last_error, lock_writable)
-                {
+                // Predicate before the move: `last_source` keeps the typed
+                // cause for the terminal error below.
+                let retryable = attempt + 1 < ZVEC_OPEN_RETRY_ATTEMPTS
+                    && is_retryable_zvec_open_error(&last_error, lock_writable);
+                last_source = Some(error);
+                if !retryable {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(zvec_open_retry_delay_ms(attempt)));
             }
         }
     }
-    Err(zvec_error(
-        EngineErrorCode::from_static("STORAGE.ZVEC_OPEN_FAILED"),
-        "failed to open zvec collection storage",
-        format!(
-            "path={zvec_path} action={action} readOnly={read_only} attempts={ZVEC_OPEN_RETRY_ATTEMPTS} error={last_error}"
-        ),
-    ))
+    let detail = format!(
+        "path={zvec_path} action={action} readOnly={read_only} attempts={ZVEC_OPEN_RETRY_ATTEMPTS}"
+    );
+    match last_source {
+        Some(source) => Err(zvec_error_with_source(
+            EngineErrorCode::StorageZvecOpenFailed,
+            "failed to open zvec collection storage",
+            detail,
+            source,
+        )),
+        // Only when `ZVEC_OPEN_RETRY_ATTEMPTS` is 0 (today 8): no typed
+        // cause exists, so the flattened message is the whole chain.
+        None => Err(zvec_error(
+            EngineErrorCode::StorageZvecOpenFailed,
+            "failed to open zvec collection storage",
+            format!("{detail} error={last_error}"),
+        )),
+    }
 }
 
 fn can_touch_zvec_lock(zvec_path: &Path) -> bool {

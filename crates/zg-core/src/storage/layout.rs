@@ -65,7 +65,7 @@ pub fn delete_workspace_index_storage(storage_path: &Path) -> EngineResult<()> {
             .is_some_and(|parent| parent == paths.storage_path);
         if !inside {
             return Err(EngineError::new(
-                EngineErrorCode::from_static("STORAGE.INVALID_STORAGE_PATH"),
+                EngineErrorCode::StorageInvalidStoragePath,
                 "workspace index data must be inside its storage path",
             )
             .with_context(format!("path={}", target.display())));
@@ -88,7 +88,7 @@ pub fn delete_workspace_index_storage(storage_path: &Path) -> EngineResult<()> {
             })
             .map_err(|error| {
                 EngineError::new(
-                    EngineErrorCode::from_static("STORAGE.DELETE_FAILED"),
+                    EngineErrorCode::StorageDeleteFailed,
                     "failed to delete workspace index storage",
                 )
                 .with_context(format!("path={} error={error}", target.display()))

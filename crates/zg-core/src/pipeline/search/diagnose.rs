@@ -31,7 +31,7 @@ pub fn diagnose_entity_search(
 ) -> EngineResult<EntitySearchDiagnosis> {
     let Some(stored) = ctx.storage.get_entity(entity_id) else {
         return Err(EngineError::new(
-            EngineErrorCode::from_static("SEARCH.ENTITY_NOT_FOUND"),
+            EngineErrorCode::SearchEntityNotFound,
             "entity not found",
         )
         .with_context(format!("entityId={}", entity_id.as_str())));
@@ -59,7 +59,7 @@ pub fn diagnose_entity_search(
         entity: stored.entity,
         search: serde_json::to_value(&search).map_err(|err| {
             EngineError::new(
-                EngineErrorCode::from_static("SEARCH.DIAGNOSIS_ENCODE_FAILED"),
+                EngineErrorCode::SearchDiagnosisEncodeFailed,
                 "search diagnosis could not be encoded",
             )
             .with_context(format!("detail={err}"))
