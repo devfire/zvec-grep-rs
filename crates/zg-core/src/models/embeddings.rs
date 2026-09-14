@@ -303,7 +303,7 @@ pub struct RankingModelInfo {
 
 /// A loaded reranking model: scores candidates against a query.
 ///
-/// Intentionally **un**sealed (same policy as [`EmbeddingModel`](super::EmbeddingModel)):
+/// Intentionally **un**sealed (same policy as [`EmbeddingModel`]:
 /// reranking backends are a supported third-party extension point, so new
 /// methods must carry default bodies.
 pub trait RankingModel: Send + Sync {

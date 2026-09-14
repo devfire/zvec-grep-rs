@@ -7,640 +7,226 @@ use std::fmt;
 /// Prefix shared by every engine error code.
 pub const ENGINE_ERROR_CODE_PREFIX: &str = "ZVEC_GREP.ENGINE";
 
-/// Fully-qualified engine error code, e.g. `ZVEC_GREP.ENGINE.CONFIG.INVALID`.
+/// Declares [`EngineErrorCode`] and its wire table in one place.
 ///
-/// A closed `#[non_exhaustive]` enum: codes are genuinely matchable, there is
-/// exactly one literal per variant (in [`EngineErrorCode::suffix`]), and no public
-/// constructor takes a runtime string — assembling a code from one is impossible
-/// by construction. The wire string is the contract and never changes.
-/// `Copy`, allocation-free.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum EngineErrorCode {
-    AuthInvalidTarget,
-    AuthRemoteEmbeddingRequired,
-    AuthStoreFailed,
-    CliAuthorizationDeclined,
-    CliAuthorizationRequired,
-    CliConfigInvalid,
-    CliDaemonUnavailable,
-    CliInstallRefused,
-    CliIoFailed,
-    CliNotReady,
-    CliRgIncompatible,
-    CliServerIncompatible,
-    CliUsage,
-    ConfigEmbeddingEnvironmentInvalid,
-    ConfigInvalid,
-    ConfigInvalidEmbeddingRuntime,
-    ContextEmptyQuery,
-    ContextWorkspaceIndexDisabled,
-    ContextWorkspaceIndexNotFound,
-    DaemonBlockingJoinFailed,
-    DaemonLeaseActive,
-    ExtractorsCodeInvalidChunkOverlap,
-    ExtractorsCodeInvalidChunkSize,
-    ExtractorsEmptyAbsolutePath,
-    ExtractorsEmptyFileId,
-    ExtractorsEmptyRelativePath,
-    ExtractorsImageEmptyData,
-    ExtractorsMarkdownInvalidChunkOverlap,
-    ExtractorsMarkdownInvalidChunkSize,
-    ExtractorsTextInvalidChunkOverlap,
-    ExtractorsTextInvalidChunkSize,
-    FileSelectionTypesUnavailable,
-    FileSelectionUnknownFileType,
-    IndexingCancelled,
-    IndexingContentHashFailed,
-    IndexingDeleteFileFailed,
-    IndexingEmbeddingFragmentFailed,
-    IndexingEmbeddingThreadFailed,
-    IndexingFilesFailed,
-    IndexingOptimizeFailed,
-    IndexingReadSourceFailed,
-    IndexingSchedulerFailed,
-    IndexingStatusFailed,
-    IndexingWorkspaceFailed,
-    JsonReadFailed,
-    JsonWriteFailed,
-    LexicalEmptyPattern,
-    LexicalIgnoreFileInvalid,
-    LexicalInvalidPattern,
-    LexicalPatternFileUnreadable,
-    LexicalSearchFailed,
-    LexicalUnknownFileType,
-    LockBusy,
-    LockUnavailable,
-    ManifestDeleteFailed,
-    ManifestInvalid,
-    ModelsEmbeddingBackendUnavailable,
-    ModelsEmbeddingBatchTooLarge,
-    ModelsEmbeddingCatalogModelNotFound,
-    ModelsEmbeddingDimensionMismatch,
-    ModelsEmbeddingEmptyImage,
-    ModelsEmbeddingEmptyInput,
-    ModelsEmbeddingEmptyText,
-    ModelsEmbeddingImageTooLarge,
-    ModelsEmbeddingInvalidTruncatedInputIndex,
-    ModelsEmbeddingModelNotImplemented,
-    ModelsEmbeddingNonFiniteVectorValue,
-    ModelsEmbeddingUnsupportedContent,
-    ModelsEmbeddingVectorCountMismatch,
-    ModelsLlamaCppDisposed,
-    ModelsLlamaCppEmbedFailed,
-    ModelsLlamaCppInvalidGguf,
-    ModelsLlamaCppInvalidGgufHtml,
-    ModelsModel2vecDownloadFailed,
-    ModelsModel2vecEmbedFailed,
-    ModelsModel2vecLoadFailed,
-    ModelsModelDownloadFailed,
-    ModelsQwen37TextEmbeddingApiError,
-    ModelsQwen37TextEmbeddingIndexOutOfRange,
-    ModelsQwen37TextEmbeddingInvalidIndex,
-    ModelsQwen37TextEmbeddingInvalidJson,
-    ModelsQwen37TextEmbeddingInvalidVector,
-    ModelsQwen37TextEmbeddingMissingApiKey,
-    ModelsQwen37TextEmbeddingMissingData,
-    ModelsQwen37TextEmbeddingMissingEndpoint,
-    ModelsQwen37TextEmbeddingRequestFailed,
-    ModelsQwen3VlEmbeddingApiError,
-    ModelsQwen3VlEmbeddingIndexOutOfRange,
-    ModelsQwen3VlEmbeddingInvalidItem,
-    ModelsQwen3VlEmbeddingInvalidJson,
-    ModelsQwen3VlEmbeddingInvalidVector,
-    ModelsQwen3VlEmbeddingMissingApiKey,
-    ModelsQwen3VlEmbeddingMissingEmbeddings,
-    ModelsQwen3VlEmbeddingMissingEndpoint,
-    ModelsQwen3VlEmbeddingRequestFailed,
-    ModelsQwen3VlEmbeddingTooManyImages,
-    ModelsQwen3VlEmbeddingUnsupportedImageFormat,
-    ModelsQwenTextEmbeddingApiError,
-    ModelsQwenTextEmbeddingIndexOutOfRange,
-    ModelsQwenTextEmbeddingInvalidIndex,
-    ModelsQwenTextEmbeddingInvalidJson,
-    ModelsQwenTextEmbeddingInvalidVector,
-    ModelsQwenTextEmbeddingMissingApiKey,
-    ModelsQwenTextEmbeddingMissingData,
-    ModelsQwenTextEmbeddingMissingEndpoint,
-    ModelsQwenTextEmbeddingRequestFailed,
-    ModelsQwenTextEmbeddingV4ApiError,
-    ModelsQwenTextEmbeddingV4IndexOutOfRange,
-    ModelsQwenTextEmbeddingV4InvalidIndex,
-    ModelsQwenTextEmbeddingV4InvalidJson,
-    ModelsQwenTextEmbeddingV4InvalidVector,
-    ModelsQwenTextEmbeddingV4MissingApiKey,
-    ModelsQwenTextEmbeddingV4MissingData,
-    ModelsQwenTextEmbeddingV4MissingEndpoint,
-    ModelsQwenTextEmbeddingV4RequestFailed,
-    ModelsTransformersJsDisposed,
-    ModelsTransformersJsEmbedFailed,
-    ModelsTransformersJsInvalidTensor,
-    ModelsTransformersJsTokenizationFailed,
-    ScannerConfiguredIgnoreReadFailed,
-    ScannerOverlappingRootPaths,
-    ScannerRootPathStatFailed,
-    ScannerUnsupportedRootPath,
-    SearchDiagnosisEncodeFailed,
-    SearchEmbeddingModelRequired,
-    SearchEntityNotFound,
-    SearchPlanEmptyRoutes,
-    SearchPlanEmptyRouteQuery,
-    SearchPlanInvalidFilter,
-    SearchPlanInvalidModifiedTimeFilter,
-    SearchPlanInvalidModifiedTimeRange,
-    SearchPlanInvalidPathFilter,
-    ServiceReadSessionClosed,
-    StorageCollectionClosed,
-    StorageCreateFailed,
-    StorageDeleteFailed,
-    StorageDocDecodeFailed,
-    StorageDocEncodeFailed,
-    StorageDocFieldFailed,
-    StorageDuplicateFragmentId,
-    StorageEntityVectorCountMismatch,
-    StorageFileMetaReadOnly,
-    StorageForeignTsIndexPresent,
-    StorageFragmentFileMismatch,
-    StorageInvalidEmbeddingDimension,
-    StorageInvalidFragmentGroup,
-    StorageInvalidStoragePath,
-    StorageMissingEmbeddingSchema,
-    StorageReadOnly,
-    StorageSchemaFailed,
-    StorageUnsupportedStoredContentKind,
-    StorageZvecCollectionMissing,
-    StorageZvecDeleteFailed,
-    StorageZvecFetchFailed,
-    StorageZvecFileMetaMissing,
-    StorageZvecInitFailed,
-    StorageZvecOpenFailed,
-    StorageZvecOptimizeFailed,
-    StorageZvecQueryFailed,
-    StorageZvecUpsertFailed,
-    WorkspaceRootUnavailable,
-    WorkspaceIndexEmbeddingDimensionMismatch,
-    WorkspaceIndexEmbeddingMetricMismatch,
-    WorkspaceIndexEmbeddingModelMismatch,
-    WorkspaceIndexEmbeddingModelRequired,
-    WorkspaceIndexEmbeddingProviderMismatch,
-    WorkspaceIndexMissing,
-    WorkspaceIndexReadOnly,
-    WorkspaceIndexVersionMismatch,
+/// One macro arm per code generates the enum variant, its
+/// [`EngineErrorCode::suffix`] literal, and its [`EngineErrorCode::all_codes`]
+/// registration together, so the three can never drift: adding a code is one
+/// arm, and every use site keeps compiling by construction.
+macro_rules! define_engine_error_codes {
+    ($($variant:ident => $suffix:literal),* $(,)?) => {
+        /// Fully-qualified engine error code, e.g. `ZVEC_GREP.ENGINE.CONFIG.INVALID`.
+        ///
+        /// A closed `#[non_exhaustive]` enum: codes are genuinely matchable, there is
+        /// exactly one literal per variant (in [`EngineErrorCode::suffix`]), and no public
+        /// constructor takes a runtime string — assembling a code from one is impossible
+        /// by construction. The wire string is the contract and never changes.
+        /// `Copy`, allocation-free.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[non_exhaustive]
+        pub enum EngineErrorCode {
+            $($variant,)*
+        }
+
+        impl EngineErrorCode {
+            /// The dotted suffix without the `ZVEC_GREP.ENGINE.` prefix.
+            ///
+            /// `const` so domain error enums can map variants to codes in `const fn`.
+            #[must_use]
+            pub const fn suffix(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $suffix,)*
+                }
+            }
+
+            /// Every engine wire code, one per variant, for the golden registry test
+            /// (`tests/golden/error-codes.txt`). Emitted from the same arms as the
+            /// enum, so a new variant is registered here by construction.
+            #[must_use]
+            pub fn all_codes() -> Vec<Self> {
+                vec![$(Self::$variant,)*]
+            }
+        }
+    };
+}
+
+define_engine_error_codes! {
+    AuthInvalidTarget => "AUTH.INVALID_TARGET",
+    AuthRemoteEmbeddingRequired => "AUTH.REMOTE_EMBEDDING_REQUIRED",
+    AuthStoreFailed => "AUTH.STORE_FAILED",
+    CliAuthorizationDeclined => "CLI.AUTHORIZATION_DECLINED",
+    CliAuthorizationRequired => "CLI.AUTHORIZATION_REQUIRED",
+    CliConfigInvalid => "CLI.CONFIG_INVALID",
+    CliDaemonUnavailable => "CLI.DAEMON_UNAVAILABLE",
+    CliInstallRefused => "CLI.INSTALL_REFUSED",
+    CliIoFailed => "CLI.IO_FAILED",
+    CliNotReady => "CLI.NOT_READY",
+    CliRgIncompatible => "CLI.RG_INCOMPATIBLE",
+    CliServerIncompatible => "CLI.SERVER_INCOMPATIBLE",
+    CliUsage => "CLI.USAGE",
+    ConfigEmbeddingEnvironmentInvalid => "CONFIG.EMBEDDING_ENVIRONMENT_INVALID",
+    ConfigInvalid => "CONFIG.INVALID",
+    ConfigInvalidEmbeddingRuntime => "CONFIG.INVALID_EMBEDDING_RUNTIME",
+    ContextEmptyQuery => "CONTEXT.EMPTY_QUERY",
+    ContextWorkspaceIndexDisabled => "CONTEXT.WORKSPACE_INDEX_DISABLED",
+    ContextWorkspaceIndexNotFound => "CONTEXT.WORKSPACE_INDEX_NOT_FOUND",
+    DaemonBlockingJoinFailed => "DAEMON.BLOCKING_JOIN_FAILED",
+    DaemonLeaseActive => "DAEMON_LEASE_ACTIVE",
+    ExtractorsCodeInvalidChunkOverlap => "EXTRACTORS.CODE_INVALID_CHUNK_OVERLAP",
+    ExtractorsCodeInvalidChunkSize => "EXTRACTORS.CODE_INVALID_CHUNK_SIZE",
+    ExtractorsEmptyAbsolutePath => "EXTRACTORS.EMPTY_ABSOLUTE_PATH",
+    ExtractorsEmptyFileId => "EXTRACTORS.EMPTY_FILE_ID",
+    ExtractorsEmptyRelativePath => "EXTRACTORS.EMPTY_RELATIVE_PATH",
+    ExtractorsImageEmptyData => "EXTRACTORS.IMAGE_EMPTY_DATA",
+    ExtractorsMarkdownInvalidChunkOverlap => "EXTRACTORS.MARKDOWN_INVALID_CHUNK_OVERLAP",
+    ExtractorsMarkdownInvalidChunkSize => "EXTRACTORS.MARKDOWN_INVALID_CHUNK_SIZE",
+    ExtractorsTextInvalidChunkOverlap => "EXTRACTORS.TEXT_INVALID_CHUNK_OVERLAP",
+    ExtractorsTextInvalidChunkSize => "EXTRACTORS.TEXT_INVALID_CHUNK_SIZE",
+    FileSelectionTypesUnavailable => "FILE_SELECTION.TYPES_UNAVAILABLE",
+    FileSelectionUnknownFileType => "FILE_SELECTION.UNKNOWN_FILE_TYPE",
+    IndexingCancelled => "INDEXING.CANCELLED",
+    IndexingContentHashFailed => "INDEXING.CONTENT_HASH_FAILED",
+    IndexingDeleteFileFailed => "INDEXING.DELETE_FILE_FAILED",
+    IndexingEmbeddingFragmentFailed => "INDEXING.EMBEDDING_FRAGMENT_FAILED",
+    IndexingEmbeddingThreadFailed => "INDEXING.EMBEDDING_THREAD_FAILED",
+    IndexingFilesFailed => "INDEXING.FILES_FAILED",
+    IndexingOptimizeFailed => "INDEXING.OPTIMIZE_FAILED",
+    IndexingReadSourceFailed => "INDEXING.READ_SOURCE_FAILED",
+    IndexingSchedulerFailed => "INDEXING.SCHEDULER_FAILED",
+    IndexingStatusFailed => "INDEXING.STATUS_FAILED",
+    IndexingWorkspaceFailed => "INDEXING.WORKSPACE_FAILED",
+    JsonReadFailed => "JSON.READ_FAILED",
+    JsonWriteFailed => "JSON.WRITE_FAILED",
+    LexicalEmptyPattern => "LEXICAL.EMPTY_PATTERN",
+    LexicalIgnoreFileInvalid => "LEXICAL.IGNORE_FILE_INVALID",
+    LexicalInvalidPattern => "LEXICAL.INVALID_PATTERN",
+    LexicalPatternFileUnreadable => "LEXICAL.PATTERN_FILE_UNREADABLE",
+    LexicalSearchFailed => "LEXICAL.SEARCH_FAILED",
+    LexicalUnknownFileType => "LEXICAL.UNKNOWN_FILE_TYPE",
+    LockBusy => "LOCK.BUSY",
+    LockUnavailable => "LOCK.UNAVAILABLE",
+    ManifestDeleteFailed => "MANIFEST.DELETE_FAILED",
+    ManifestInvalid => "MANIFEST.INVALID",
+    ModelsEmbeddingBackendUnavailable => "MODELS.EMBEDDING_BACKEND_UNAVAILABLE",
+    ModelsEmbeddingBatchTooLarge => "MODELS.EMBEDDING_BATCH_TOO_LARGE",
+    ModelsEmbeddingCatalogModelNotFound => "MODELS.EMBEDDING_CATALOG_MODEL_NOT_FOUND",
+    ModelsEmbeddingDimensionMismatch => "MODELS.EMBEDDING_DIMENSION_MISMATCH",
+    ModelsEmbeddingEmptyImage => "MODELS.EMBEDDING_EMPTY_IMAGE",
+    ModelsEmbeddingEmptyInput => "MODELS.EMBEDDING_EMPTY_INPUT",
+    ModelsEmbeddingEmptyText => "MODELS.EMBEDDING_EMPTY_TEXT",
+    ModelsEmbeddingImageTooLarge => "MODELS.EMBEDDING_IMAGE_TOO_LARGE",
+    ModelsEmbeddingInvalidTruncatedInputIndex => "MODELS.EMBEDDING_INVALID_TRUNCATED_INPUT_INDEX",
+    ModelsEmbeddingModelNotImplemented => "MODELS.EMBEDDING_MODEL_NOT_IMPLEMENTED",
+    ModelsEmbeddingNonFiniteVectorValue => "MODELS.EMBEDDING_NON_FINITE_VECTOR_VALUE",
+    ModelsEmbeddingUnsupportedContent => "MODELS.EMBEDDING_UNSUPPORTED_CONTENT",
+    ModelsEmbeddingVectorCountMismatch => "MODELS.EMBEDDING_VECTOR_COUNT_MISMATCH",
+    ModelsLlamaCppDisposed => "MODELS.LLAMA_CPP_DISPOSED",
+    ModelsLlamaCppEmbedFailed => "MODELS.LLAMA_CPP_EMBED_FAILED",
+    ModelsLlamaCppInvalidGguf => "MODELS.LLAMA_CPP_INVALID_GGUF",
+    ModelsLlamaCppInvalidGgufHtml => "MODELS.LLAMA_CPP_INVALID_GGUF_HTML",
+    ModelsModel2vecDownloadFailed => "MODELS.MODEL2VEC_DOWNLOAD_FAILED",
+    ModelsModel2vecEmbedFailed => "MODELS.MODEL2VEC_EMBED_FAILED",
+    ModelsModel2vecLoadFailed => "MODELS.MODEL2VEC_LOAD_FAILED",
+    ModelsModelDownloadFailed => "MODELS.MODEL_DOWNLOAD_FAILED",
+    ModelsQwen37TextEmbeddingApiError => "MODELS.QWEN37_TEXT_EMBEDDING_API_ERROR",
+    ModelsQwen37TextEmbeddingIndexOutOfRange => "MODELS.QWEN37_TEXT_EMBEDDING_INDEX_OUT_OF_RANGE",
+    ModelsQwen37TextEmbeddingInvalidIndex => "MODELS.QWEN37_TEXT_EMBEDDING_INVALID_INDEX",
+    ModelsQwen37TextEmbeddingInvalidJson => "MODELS.QWEN37_TEXT_EMBEDDING_INVALID_JSON",
+    ModelsQwen37TextEmbeddingInvalidVector => "MODELS.QWEN37_TEXT_EMBEDDING_INVALID_VECTOR",
+    ModelsQwen37TextEmbeddingMissingApiKey => "MODELS.QWEN37_TEXT_EMBEDDING_MISSING_API_KEY",
+    ModelsQwen37TextEmbeddingMissingData => "MODELS.QWEN37_TEXT_EMBEDDING_MISSING_DATA",
+    ModelsQwen37TextEmbeddingMissingEndpoint => "MODELS.QWEN37_TEXT_EMBEDDING_MISSING_ENDPOINT",
+    ModelsQwen37TextEmbeddingRequestFailed => "MODELS.QWEN37_TEXT_EMBEDDING_REQUEST_FAILED",
+    ModelsQwen3VlEmbeddingApiError => "MODELS.QWEN3_VL_EMBEDDING_API_ERROR",
+    ModelsQwen3VlEmbeddingIndexOutOfRange => "MODELS.QWEN3_VL_EMBEDDING_INDEX_OUT_OF_RANGE",
+    ModelsQwen3VlEmbeddingInvalidItem => "MODELS.QWEN3_VL_EMBEDDING_INVALID_ITEM",
+    ModelsQwen3VlEmbeddingInvalidJson => "MODELS.QWEN3_VL_EMBEDDING_INVALID_JSON",
+    ModelsQwen3VlEmbeddingInvalidVector => "MODELS.QWEN3_VL_EMBEDDING_INVALID_VECTOR",
+    ModelsQwen3VlEmbeddingMissingApiKey => "MODELS.QWEN3_VL_EMBEDDING_MISSING_API_KEY",
+    ModelsQwen3VlEmbeddingMissingEmbeddings => "MODELS.QWEN3_VL_EMBEDDING_MISSING_EMBEDDINGS",
+    ModelsQwen3VlEmbeddingMissingEndpoint => "MODELS.QWEN3_VL_EMBEDDING_MISSING_ENDPOINT",
+    ModelsQwen3VlEmbeddingRequestFailed => "MODELS.QWEN3_VL_EMBEDDING_REQUEST_FAILED",
+    ModelsQwen3VlEmbeddingTooManyImages => "MODELS.QWEN3_VL_EMBEDDING_TOO_MANY_IMAGES",
+    ModelsQwen3VlEmbeddingUnsupportedImageFormat => "MODELS.QWEN3_VL_EMBEDDING_UNSUPPORTED_IMAGE_FORMAT",
+    ModelsQwenTextEmbeddingApiError => "MODELS.QWEN_TEXT_EMBEDDING_API_ERROR",
+    ModelsQwenTextEmbeddingIndexOutOfRange => "MODELS.QWEN_TEXT_EMBEDDING_INDEX_OUT_OF_RANGE",
+    ModelsQwenTextEmbeddingInvalidIndex => "MODELS.QWEN_TEXT_EMBEDDING_INVALID_INDEX",
+    ModelsQwenTextEmbeddingInvalidJson => "MODELS.QWEN_TEXT_EMBEDDING_INVALID_JSON",
+    ModelsQwenTextEmbeddingInvalidVector => "MODELS.QWEN_TEXT_EMBEDDING_INVALID_VECTOR",
+    ModelsQwenTextEmbeddingMissingApiKey => "MODELS.QWEN_TEXT_EMBEDDING_MISSING_API_KEY",
+    ModelsQwenTextEmbeddingMissingData => "MODELS.QWEN_TEXT_EMBEDDING_MISSING_DATA",
+    ModelsQwenTextEmbeddingMissingEndpoint => "MODELS.QWEN_TEXT_EMBEDDING_MISSING_ENDPOINT",
+    ModelsQwenTextEmbeddingRequestFailed => "MODELS.QWEN_TEXT_EMBEDDING_REQUEST_FAILED",
+    ModelsQwenTextEmbeddingV4ApiError => "MODELS.QWEN_TEXT_EMBEDDING_V4_API_ERROR",
+    ModelsQwenTextEmbeddingV4IndexOutOfRange => "MODELS.QWEN_TEXT_EMBEDDING_V4_INDEX_OUT_OF_RANGE",
+    ModelsQwenTextEmbeddingV4InvalidIndex => "MODELS.QWEN_TEXT_EMBEDDING_V4_INVALID_INDEX",
+    ModelsQwenTextEmbeddingV4InvalidJson => "MODELS.QWEN_TEXT_EMBEDDING_V4_INVALID_JSON",
+    ModelsQwenTextEmbeddingV4InvalidVector => "MODELS.QWEN_TEXT_EMBEDDING_V4_INVALID_VECTOR",
+    ModelsQwenTextEmbeddingV4MissingApiKey => "MODELS.QWEN_TEXT_EMBEDDING_V4_MISSING_API_KEY",
+    ModelsQwenTextEmbeddingV4MissingData => "MODELS.QWEN_TEXT_EMBEDDING_V4_MISSING_DATA",
+    ModelsQwenTextEmbeddingV4MissingEndpoint => "MODELS.QWEN_TEXT_EMBEDDING_V4_MISSING_ENDPOINT",
+    ModelsQwenTextEmbeddingV4RequestFailed => "MODELS.QWEN_TEXT_EMBEDDING_V4_REQUEST_FAILED",
+    ModelsTransformersJsDisposed => "MODELS.TRANSFORMERS_JS_DISPOSED",
+    ModelsTransformersJsEmbedFailed => "MODELS.TRANSFORMERS_JS_EMBED_FAILED",
+    ModelsTransformersJsInvalidTensor => "MODELS.TRANSFORMERS_JS_INVALID_TENSOR",
+    ModelsTransformersJsTokenizationFailed => "MODELS.TRANSFORMERS_JS_TOKENIZATION_FAILED",
+    ScannerConfiguredIgnoreReadFailed => "SCANNER.CONFIGURED_IGNORE_READ_FAILED",
+    ScannerOverlappingRootPaths => "SCANNER.OVERLAPPING_ROOT_PATHS",
+    ScannerRootPathStatFailed => "SCANNER.ROOT_PATH_STAT_FAILED",
+    ScannerUnsupportedRootPath => "SCANNER.UNSUPPORTED_ROOT_PATH",
+    SearchDiagnosisEncodeFailed => "SEARCH.DIAGNOSIS_ENCODE_FAILED",
+    SearchEmbeddingModelRequired => "SEARCH.EMBEDDING_MODEL_REQUIRED",
+    SearchEntityNotFound => "SEARCH.ENTITY_NOT_FOUND",
+    SearchPlanEmptyRoutes => "SEARCH_PLAN.EMPTY_ROUTES",
+    SearchPlanEmptyRouteQuery => "SEARCH_PLAN.EMPTY_ROUTE_QUERY",
+    SearchPlanInvalidFilter => "SEARCH_PLAN.INVALID_FILTER",
+    SearchPlanInvalidModifiedTimeFilter => "SEARCH_PLAN.INVALID_MODIFIED_TIME_FILTER",
+    SearchPlanInvalidModifiedTimeRange => "SEARCH_PLAN.INVALID_MODIFIED_TIME_RANGE",
+    SearchPlanInvalidPathFilter => "SEARCH_PLAN.INVALID_PATH_FILTER",
+    ServiceReadSessionClosed => "SERVICE.READ_SESSION_CLOSED",
+    StorageCollectionClosed => "STORAGE.COLLECTION_CLOSED",
+    StorageCreateFailed => "STORAGE.CREATE_FAILED",
+    StorageDeleteFailed => "STORAGE.DELETE_FAILED",
+    StorageDocDecodeFailed => "STORAGE.DOC_DECODE_FAILED",
+    StorageDocEncodeFailed => "STORAGE.DOC_ENCODE_FAILED",
+    StorageDocFieldFailed => "STORAGE.DOC_FIELD_FAILED",
+    StorageDuplicateFragmentId => "STORAGE.DUPLICATE_FRAGMENT_ID",
+    StorageEntityVectorCountMismatch => "STORAGE.ENTITY_VECTOR_COUNT_MISMATCH",
+    StorageFileMetaReadOnly => "STORAGE.FILE_META_READ_ONLY",
+    StorageForeignTsIndexPresent => "STORAGE.FOREIGN_TS_INDEX_PRESENT",
+    StorageFragmentFileMismatch => "STORAGE.FRAGMENT_FILE_MISMATCH",
+    StorageInvalidEmbeddingDimension => "STORAGE.INVALID_EMBEDDING_DIMENSION",
+    StorageInvalidFragmentGroup => "STORAGE.INVALID_FRAGMENT_GROUP",
+    StorageInvalidStoragePath => "STORAGE.INVALID_STORAGE_PATH",
+    StorageMissingEmbeddingSchema => "STORAGE.MISSING_EMBEDDING_SCHEMA",
+    StorageReadOnly => "STORAGE.READ_ONLY",
+    StorageSchemaFailed => "STORAGE.SCHEMA_FAILED",
+    StorageUnsupportedStoredContentKind => "STORAGE.UNSUPPORTED_STORED_CONTENT_KIND",
+    StorageZvecCollectionMissing => "STORAGE.ZVEC_COLLECTION_MISSING",
+    StorageZvecDeleteFailed => "STORAGE.ZVEC_DELETE_FAILED",
+    StorageZvecFetchFailed => "STORAGE.ZVEC_FETCH_FAILED",
+    StorageZvecFileMetaMissing => "STORAGE.ZVEC_FILE_META_MISSING",
+    StorageZvecInitFailed => "STORAGE.ZVEC_INIT_FAILED",
+    StorageZvecOpenFailed => "STORAGE.ZVEC_OPEN_FAILED",
+    StorageZvecOptimizeFailed => "STORAGE.ZVEC_OPTIMIZE_FAILED",
+    StorageZvecQueryFailed => "STORAGE.ZVEC_QUERY_FAILED",
+    StorageZvecUpsertFailed => "STORAGE.ZVEC_UPSERT_FAILED",
+    WorkspaceRootUnavailable => "WORKSPACE.ROOT_UNAVAILABLE",
+    WorkspaceIndexEmbeddingDimensionMismatch => "WORKSPACE_INDEX.EMBEDDING_DIMENSION_MISMATCH",
+    WorkspaceIndexEmbeddingMetricMismatch => "WORKSPACE_INDEX.EMBEDDING_METRIC_MISMATCH",
+    WorkspaceIndexEmbeddingModelMismatch => "WORKSPACE_INDEX.EMBEDDING_MODEL_MISMATCH",
+    WorkspaceIndexEmbeddingModelRequired => "WORKSPACE_INDEX.EMBEDDING_MODEL_REQUIRED",
+    WorkspaceIndexEmbeddingProviderMismatch => "WORKSPACE_INDEX.EMBEDDING_PROVIDER_MISMATCH",
+    WorkspaceIndexMissing => "WORKSPACE_INDEX.MISSING",
+    WorkspaceIndexReadOnly => "WORKSPACE_INDEX.READ_ONLY",
+    WorkspaceIndexVersionMismatch => "WORKSPACE_INDEX.VERSION_MISMATCH",
 }
 
 impl EngineErrorCode {
-    /// The dotted suffix without the `ZVEC_GREP.ENGINE.` prefix.
-    ///
-    /// `const` so domain error enums can map variants to codes in `const fn`.
-    #[must_use]
-    pub const fn suffix(self) -> &'static str {
-        match self {
-            Self::AuthInvalidTarget => "AUTH.INVALID_TARGET",
-            Self::AuthRemoteEmbeddingRequired => "AUTH.REMOTE_EMBEDDING_REQUIRED",
-            Self::AuthStoreFailed => "AUTH.STORE_FAILED",
-            Self::CliAuthorizationDeclined => "CLI.AUTHORIZATION_DECLINED",
-            Self::CliAuthorizationRequired => "CLI.AUTHORIZATION_REQUIRED",
-            Self::CliConfigInvalid => "CLI.CONFIG_INVALID",
-            Self::CliDaemonUnavailable => "CLI.DAEMON_UNAVAILABLE",
-            Self::CliInstallRefused => "CLI.INSTALL_REFUSED",
-            Self::CliIoFailed => "CLI.IO_FAILED",
-            Self::CliNotReady => "CLI.NOT_READY",
-            Self::CliRgIncompatible => "CLI.RG_INCOMPATIBLE",
-            Self::CliServerIncompatible => "CLI.SERVER_INCOMPATIBLE",
-            Self::CliUsage => "CLI.USAGE",
-            Self::ConfigEmbeddingEnvironmentInvalid => "CONFIG.EMBEDDING_ENVIRONMENT_INVALID",
-            Self::ConfigInvalid => "CONFIG.INVALID",
-            Self::ConfigInvalidEmbeddingRuntime => "CONFIG.INVALID_EMBEDDING_RUNTIME",
-            Self::ContextEmptyQuery => "CONTEXT.EMPTY_QUERY",
-            Self::ContextWorkspaceIndexDisabled => "CONTEXT.WORKSPACE_INDEX_DISABLED",
-            Self::ContextWorkspaceIndexNotFound => "CONTEXT.WORKSPACE_INDEX_NOT_FOUND",
-            Self::DaemonBlockingJoinFailed => "DAEMON.BLOCKING_JOIN_FAILED",
-            Self::DaemonLeaseActive => "DAEMON_LEASE_ACTIVE",
-            Self::ExtractorsCodeInvalidChunkOverlap => "EXTRACTORS.CODE_INVALID_CHUNK_OVERLAP",
-            Self::ExtractorsCodeInvalidChunkSize => "EXTRACTORS.CODE_INVALID_CHUNK_SIZE",
-            Self::ExtractorsEmptyAbsolutePath => "EXTRACTORS.EMPTY_ABSOLUTE_PATH",
-            Self::ExtractorsEmptyFileId => "EXTRACTORS.EMPTY_FILE_ID",
-            Self::ExtractorsEmptyRelativePath => "EXTRACTORS.EMPTY_RELATIVE_PATH",
-            Self::ExtractorsImageEmptyData => "EXTRACTORS.IMAGE_EMPTY_DATA",
-            Self::ExtractorsMarkdownInvalidChunkOverlap => {
-                "EXTRACTORS.MARKDOWN_INVALID_CHUNK_OVERLAP"
-            }
-            Self::ExtractorsMarkdownInvalidChunkSize => "EXTRACTORS.MARKDOWN_INVALID_CHUNK_SIZE",
-            Self::ExtractorsTextInvalidChunkOverlap => "EXTRACTORS.TEXT_INVALID_CHUNK_OVERLAP",
-            Self::ExtractorsTextInvalidChunkSize => "EXTRACTORS.TEXT_INVALID_CHUNK_SIZE",
-            Self::FileSelectionTypesUnavailable => "FILE_SELECTION.TYPES_UNAVAILABLE",
-            Self::FileSelectionUnknownFileType => "FILE_SELECTION.UNKNOWN_FILE_TYPE",
-            Self::IndexingCancelled => "INDEXING.CANCELLED",
-            Self::IndexingContentHashFailed => "INDEXING.CONTENT_HASH_FAILED",
-            Self::IndexingDeleteFileFailed => "INDEXING.DELETE_FILE_FAILED",
-            Self::IndexingEmbeddingFragmentFailed => "INDEXING.EMBEDDING_FRAGMENT_FAILED",
-            Self::IndexingEmbeddingThreadFailed => "INDEXING.EMBEDDING_THREAD_FAILED",
-            Self::IndexingFilesFailed => "INDEXING.FILES_FAILED",
-            Self::IndexingOptimizeFailed => "INDEXING.OPTIMIZE_FAILED",
-            Self::IndexingReadSourceFailed => "INDEXING.READ_SOURCE_FAILED",
-            Self::IndexingSchedulerFailed => "INDEXING.SCHEDULER_FAILED",
-            Self::IndexingStatusFailed => "INDEXING.STATUS_FAILED",
-            Self::IndexingWorkspaceFailed => "INDEXING.WORKSPACE_FAILED",
-            Self::JsonReadFailed => "JSON.READ_FAILED",
-            Self::JsonWriteFailed => "JSON.WRITE_FAILED",
-            Self::LexicalEmptyPattern => "LEXICAL.EMPTY_PATTERN",
-            Self::LexicalIgnoreFileInvalid => "LEXICAL.IGNORE_FILE_INVALID",
-            Self::LexicalInvalidPattern => "LEXICAL.INVALID_PATTERN",
-            Self::LexicalPatternFileUnreadable => "LEXICAL.PATTERN_FILE_UNREADABLE",
-            Self::LexicalSearchFailed => "LEXICAL.SEARCH_FAILED",
-            Self::LexicalUnknownFileType => "LEXICAL.UNKNOWN_FILE_TYPE",
-            Self::LockBusy => "LOCK.BUSY",
-            Self::LockUnavailable => "LOCK.UNAVAILABLE",
-            Self::ManifestDeleteFailed => "MANIFEST.DELETE_FAILED",
-            Self::ManifestInvalid => "MANIFEST.INVALID",
-            Self::ModelsEmbeddingBackendUnavailable => "MODELS.EMBEDDING_BACKEND_UNAVAILABLE",
-            Self::ModelsEmbeddingBatchTooLarge => "MODELS.EMBEDDING_BATCH_TOO_LARGE",
-            Self::ModelsEmbeddingCatalogModelNotFound => {
-                "MODELS.EMBEDDING_CATALOG_MODEL_NOT_FOUND"
-            }
-            Self::ModelsEmbeddingDimensionMismatch => "MODELS.EMBEDDING_DIMENSION_MISMATCH",
-            Self::ModelsEmbeddingEmptyImage => "MODELS.EMBEDDING_EMPTY_IMAGE",
-            Self::ModelsEmbeddingEmptyInput => "MODELS.EMBEDDING_EMPTY_INPUT",
-            Self::ModelsEmbeddingEmptyText => "MODELS.EMBEDDING_EMPTY_TEXT",
-            Self::ModelsEmbeddingImageTooLarge => "MODELS.EMBEDDING_IMAGE_TOO_LARGE",
-            Self::ModelsEmbeddingInvalidTruncatedInputIndex => {
-                "MODELS.EMBEDDING_INVALID_TRUNCATED_INPUT_INDEX"
-            }
-            Self::ModelsEmbeddingModelNotImplemented => "MODELS.EMBEDDING_MODEL_NOT_IMPLEMENTED",
-            Self::ModelsEmbeddingNonFiniteVectorValue => {
-                "MODELS.EMBEDDING_NON_FINITE_VECTOR_VALUE"
-            }
-            Self::ModelsEmbeddingUnsupportedContent => "MODELS.EMBEDDING_UNSUPPORTED_CONTENT",
-            Self::ModelsEmbeddingVectorCountMismatch => {
-                "MODELS.EMBEDDING_VECTOR_COUNT_MISMATCH"
-            }
-            Self::ModelsLlamaCppDisposed => "MODELS.LLAMA_CPP_DISPOSED",
-            Self::ModelsLlamaCppEmbedFailed => "MODELS.LLAMA_CPP_EMBED_FAILED",
-            Self::ModelsLlamaCppInvalidGguf => "MODELS.LLAMA_CPP_INVALID_GGUF",
-            Self::ModelsLlamaCppInvalidGgufHtml => "MODELS.LLAMA_CPP_INVALID_GGUF_HTML",
-            Self::ModelsModel2vecDownloadFailed => "MODELS.MODEL2VEC_DOWNLOAD_FAILED",
-            Self::ModelsModel2vecEmbedFailed => "MODELS.MODEL2VEC_EMBED_FAILED",
-            Self::ModelsModel2vecLoadFailed => "MODELS.MODEL2VEC_LOAD_FAILED",
-            Self::ModelsModelDownloadFailed => "MODELS.MODEL_DOWNLOAD_FAILED",
-            Self::ModelsQwen37TextEmbeddingApiError => "MODELS.QWEN37_TEXT_EMBEDDING_API_ERROR",
-            Self::ModelsQwen37TextEmbeddingIndexOutOfRange => {
-                "MODELS.QWEN37_TEXT_EMBEDDING_INDEX_OUT_OF_RANGE"
-            }
-            Self::ModelsQwen37TextEmbeddingInvalidIndex => {
-                "MODELS.QWEN37_TEXT_EMBEDDING_INVALID_INDEX"
-            }
-            Self::ModelsQwen37TextEmbeddingInvalidJson => {
-                "MODELS.QWEN37_TEXT_EMBEDDING_INVALID_JSON"
-            }
-            Self::ModelsQwen37TextEmbeddingInvalidVector => {
-                "MODELS.QWEN37_TEXT_EMBEDDING_INVALID_VECTOR"
-            }
-            Self::ModelsQwen37TextEmbeddingMissingApiKey => {
-                "MODELS.QWEN37_TEXT_EMBEDDING_MISSING_API_KEY"
-            }
-            Self::ModelsQwen37TextEmbeddingMissingData => {
-                "MODELS.QWEN37_TEXT_EMBEDDING_MISSING_DATA"
-            }
-            Self::ModelsQwen37TextEmbeddingMissingEndpoint => {
-                "MODELS.QWEN37_TEXT_EMBEDDING_MISSING_ENDPOINT"
-            }
-            Self::ModelsQwen37TextEmbeddingRequestFailed => {
-                "MODELS.QWEN37_TEXT_EMBEDDING_REQUEST_FAILED"
-            }
-            Self::ModelsQwen3VlEmbeddingApiError => "MODELS.QWEN3_VL_EMBEDDING_API_ERROR",
-            Self::ModelsQwen3VlEmbeddingIndexOutOfRange => {
-                "MODELS.QWEN3_VL_EMBEDDING_INDEX_OUT_OF_RANGE"
-            }
-            Self::ModelsQwen3VlEmbeddingInvalidItem => "MODELS.QWEN3_VL_EMBEDDING_INVALID_ITEM",
-            Self::ModelsQwen3VlEmbeddingInvalidJson => "MODELS.QWEN3_VL_EMBEDDING_INVALID_JSON",
-            Self::ModelsQwen3VlEmbeddingInvalidVector => {
-                "MODELS.QWEN3_VL_EMBEDDING_INVALID_VECTOR"
-            }
-            Self::ModelsQwen3VlEmbeddingMissingApiKey => {
-                "MODELS.QWEN3_VL_EMBEDDING_MISSING_API_KEY"
-            }
-            Self::ModelsQwen3VlEmbeddingMissingEmbeddings => {
-                "MODELS.QWEN3_VL_EMBEDDING_MISSING_EMBEDDINGS"
-            }
-            Self::ModelsQwen3VlEmbeddingMissingEndpoint => {
-                "MODELS.QWEN3_VL_EMBEDDING_MISSING_ENDPOINT"
-            }
-            Self::ModelsQwen3VlEmbeddingRequestFailed => {
-                "MODELS.QWEN3_VL_EMBEDDING_REQUEST_FAILED"
-            }
-            Self::ModelsQwen3VlEmbeddingTooManyImages => {
-                "MODELS.QWEN3_VL_EMBEDDING_TOO_MANY_IMAGES"
-            }
-            Self::ModelsQwen3VlEmbeddingUnsupportedImageFormat => {
-                "MODELS.QWEN3_VL_EMBEDDING_UNSUPPORTED_IMAGE_FORMAT"
-            }
-            Self::ModelsQwenTextEmbeddingApiError => "MODELS.QWEN_TEXT_EMBEDDING_API_ERROR",
-            Self::ModelsQwenTextEmbeddingIndexOutOfRange => {
-                "MODELS.QWEN_TEXT_EMBEDDING_INDEX_OUT_OF_RANGE"
-            }
-            Self::ModelsQwenTextEmbeddingInvalidIndex => {
-                "MODELS.QWEN_TEXT_EMBEDDING_INVALID_INDEX"
-            }
-            Self::ModelsQwenTextEmbeddingInvalidJson => {
-                "MODELS.QWEN_TEXT_EMBEDDING_INVALID_JSON"
-            }
-            Self::ModelsQwenTextEmbeddingInvalidVector => {
-                "MODELS.QWEN_TEXT_EMBEDDING_INVALID_VECTOR"
-            }
-            Self::ModelsQwenTextEmbeddingMissingApiKey => {
-                "MODELS.QWEN_TEXT_EMBEDDING_MISSING_API_KEY"
-            }
-            Self::ModelsQwenTextEmbeddingMissingData => {
-                "MODELS.QWEN_TEXT_EMBEDDING_MISSING_DATA"
-            }
-            Self::ModelsQwenTextEmbeddingMissingEndpoint => {
-                "MODELS.QWEN_TEXT_EMBEDDING_MISSING_ENDPOINT"
-            }
-            Self::ModelsQwenTextEmbeddingRequestFailed => {
-                "MODELS.QWEN_TEXT_EMBEDDING_REQUEST_FAILED"
-            }
-            Self::ModelsQwenTextEmbeddingV4ApiError => "MODELS.QWEN_TEXT_EMBEDDING_V4_API_ERROR",
-            Self::ModelsQwenTextEmbeddingV4IndexOutOfRange => {
-                "MODELS.QWEN_TEXT_EMBEDDING_V4_INDEX_OUT_OF_RANGE"
-            }
-            Self::ModelsQwenTextEmbeddingV4InvalidIndex => {
-                "MODELS.QWEN_TEXT_EMBEDDING_V4_INVALID_INDEX"
-            }
-            Self::ModelsQwenTextEmbeddingV4InvalidJson => {
-                "MODELS.QWEN_TEXT_EMBEDDING_V4_INVALID_JSON"
-            }
-            Self::ModelsQwenTextEmbeddingV4InvalidVector => {
-                "MODELS.QWEN_TEXT_EMBEDDING_V4_INVALID_VECTOR"
-            }
-            Self::ModelsQwenTextEmbeddingV4MissingApiKey => {
-                "MODELS.QWEN_TEXT_EMBEDDING_V4_MISSING_API_KEY"
-            }
-            Self::ModelsQwenTextEmbeddingV4MissingData => {
-                "MODELS.QWEN_TEXT_EMBEDDING_V4_MISSING_DATA"
-            }
-            Self::ModelsQwenTextEmbeddingV4MissingEndpoint => {
-                "MODELS.QWEN_TEXT_EMBEDDING_V4_MISSING_ENDPOINT"
-            }
-            Self::ModelsQwenTextEmbeddingV4RequestFailed => {
-                "MODELS.QWEN_TEXT_EMBEDDING_V4_REQUEST_FAILED"
-            }
-            Self::ModelsTransformersJsDisposed => "MODELS.TRANSFORMERS_JS_DISPOSED",
-            Self::ModelsTransformersJsEmbedFailed => "MODELS.TRANSFORMERS_JS_EMBED_FAILED",
-            Self::ModelsTransformersJsInvalidTensor => "MODELS.TRANSFORMERS_JS_INVALID_TENSOR",
-            Self::ModelsTransformersJsTokenizationFailed => {
-                "MODELS.TRANSFORMERS_JS_TOKENIZATION_FAILED"
-            }
-            Self::ScannerConfiguredIgnoreReadFailed => "SCANNER.CONFIGURED_IGNORE_READ_FAILED",
-            Self::ScannerOverlappingRootPaths => "SCANNER.OVERLAPPING_ROOT_PATHS",
-            Self::ScannerRootPathStatFailed => "SCANNER.ROOT_PATH_STAT_FAILED",
-            Self::ScannerUnsupportedRootPath => "SCANNER.UNSUPPORTED_ROOT_PATH",
-            Self::SearchDiagnosisEncodeFailed => "SEARCH.DIAGNOSIS_ENCODE_FAILED",
-            Self::SearchEmbeddingModelRequired => "SEARCH.EMBEDDING_MODEL_REQUIRED",
-            Self::SearchEntityNotFound => "SEARCH.ENTITY_NOT_FOUND",
-            Self::SearchPlanEmptyRoutes => "SEARCH_PLAN.EMPTY_ROUTES",
-            Self::SearchPlanEmptyRouteQuery => "SEARCH_PLAN.EMPTY_ROUTE_QUERY",
-            Self::SearchPlanInvalidFilter => "SEARCH_PLAN.INVALID_FILTER",
-            Self::SearchPlanInvalidModifiedTimeFilter => {
-                "SEARCH_PLAN.INVALID_MODIFIED_TIME_FILTER"
-            }
-            Self::SearchPlanInvalidModifiedTimeRange => {
-                "SEARCH_PLAN.INVALID_MODIFIED_TIME_RANGE"
-            }
-            Self::SearchPlanInvalidPathFilter => "SEARCH_PLAN.INVALID_PATH_FILTER",
-            Self::ServiceReadSessionClosed => "SERVICE.READ_SESSION_CLOSED",
-            Self::StorageCollectionClosed => "STORAGE.COLLECTION_CLOSED",
-            Self::StorageCreateFailed => "STORAGE.CREATE_FAILED",
-            Self::StorageDeleteFailed => "STORAGE.DELETE_FAILED",
-            Self::StorageDocDecodeFailed => "STORAGE.DOC_DECODE_FAILED",
-            Self::StorageDocEncodeFailed => "STORAGE.DOC_ENCODE_FAILED",
-            Self::StorageDocFieldFailed => "STORAGE.DOC_FIELD_FAILED",
-            Self::StorageDuplicateFragmentId => "STORAGE.DUPLICATE_FRAGMENT_ID",
-            Self::StorageEntityVectorCountMismatch => "STORAGE.ENTITY_VECTOR_COUNT_MISMATCH",
-            Self::StorageFileMetaReadOnly => "STORAGE.FILE_META_READ_ONLY",
-            Self::StorageForeignTsIndexPresent => "STORAGE.FOREIGN_TS_INDEX_PRESENT",
-            Self::StorageFragmentFileMismatch => "STORAGE.FRAGMENT_FILE_MISMATCH",
-            Self::StorageInvalidEmbeddingDimension => "STORAGE.INVALID_EMBEDDING_DIMENSION",
-            Self::StorageInvalidFragmentGroup => "STORAGE.INVALID_FRAGMENT_GROUP",
-            Self::StorageInvalidStoragePath => "STORAGE.INVALID_STORAGE_PATH",
-            Self::StorageMissingEmbeddingSchema => "STORAGE.MISSING_EMBEDDING_SCHEMA",
-            Self::StorageReadOnly => "STORAGE.READ_ONLY",
-            Self::StorageSchemaFailed => "STORAGE.SCHEMA_FAILED",
-            Self::StorageUnsupportedStoredContentKind => {
-                "STORAGE.UNSUPPORTED_STORED_CONTENT_KIND"
-            }
-            Self::StorageZvecCollectionMissing => "STORAGE.ZVEC_COLLECTION_MISSING",
-            Self::StorageZvecDeleteFailed => "STORAGE.ZVEC_DELETE_FAILED",
-            Self::StorageZvecFetchFailed => "STORAGE.ZVEC_FETCH_FAILED",
-            Self::StorageZvecFileMetaMissing => "STORAGE.ZVEC_FILE_META_MISSING",
-            Self::StorageZvecInitFailed => "STORAGE.ZVEC_INIT_FAILED",
-            Self::StorageZvecOpenFailed => "STORAGE.ZVEC_OPEN_FAILED",
-            Self::StorageZvecOptimizeFailed => "STORAGE.ZVEC_OPTIMIZE_FAILED",
-            Self::StorageZvecQueryFailed => "STORAGE.ZVEC_QUERY_FAILED",
-            Self::StorageZvecUpsertFailed => "STORAGE.ZVEC_UPSERT_FAILED",
-            Self::WorkspaceRootUnavailable => "WORKSPACE.ROOT_UNAVAILABLE",
-            Self::WorkspaceIndexEmbeddingDimensionMismatch => {
-                "WORKSPACE_INDEX.EMBEDDING_DIMENSION_MISMATCH"
-            }
-            Self::WorkspaceIndexEmbeddingMetricMismatch => {
-                "WORKSPACE_INDEX.EMBEDDING_METRIC_MISMATCH"
-            }
-            Self::WorkspaceIndexEmbeddingModelMismatch => {
-                "WORKSPACE_INDEX.EMBEDDING_MODEL_MISMATCH"
-            }
-            Self::WorkspaceIndexEmbeddingModelRequired => {
-                "WORKSPACE_INDEX.EMBEDDING_MODEL_REQUIRED"
-            }
-            Self::WorkspaceIndexEmbeddingProviderMismatch => {
-                "WORKSPACE_INDEX.EMBEDDING_PROVIDER_MISMATCH"
-            }
-            Self::WorkspaceIndexMissing => "WORKSPACE_INDEX.MISSING",
-            Self::WorkspaceIndexReadOnly => "WORKSPACE_INDEX.READ_ONLY",
-            Self::WorkspaceIndexVersionMismatch => "WORKSPACE_INDEX.VERSION_MISMATCH",
-        }
-    }
-
     /// The fully-qualified wire string, e.g. `ZVEC_GREP.ENGINE.CONFIG.INVALID`.
     #[must_use]
     pub fn qualified(self) -> String {
         format!("{ENGINE_ERROR_CODE_PREFIX}.{}", self.suffix())
-    }
-
-    /// Every engine wire code, one per variant, for the golden registry test
-    /// (`tests/golden/error-codes.txt`). Adding a variant without extending
-    /// this list fails that test by construction.
-    #[must_use]
-    pub fn all_codes() -> Vec<Self> {
-        vec![
-            Self::AuthInvalidTarget,
-            Self::AuthRemoteEmbeddingRequired,
-            Self::AuthStoreFailed,
-            Self::CliAuthorizationDeclined,
-            Self::CliAuthorizationRequired,
-            Self::CliConfigInvalid,
-            Self::CliDaemonUnavailable,
-            Self::CliInstallRefused,
-            Self::CliIoFailed,
-            Self::CliNotReady,
-            Self::CliRgIncompatible,
-            Self::CliServerIncompatible,
-            Self::CliUsage,
-            Self::ConfigEmbeddingEnvironmentInvalid,
-            Self::ConfigInvalid,
-            Self::ConfigInvalidEmbeddingRuntime,
-            Self::ContextEmptyQuery,
-            Self::ContextWorkspaceIndexDisabled,
-            Self::ContextWorkspaceIndexNotFound,
-            Self::DaemonBlockingJoinFailed,
-            Self::DaemonLeaseActive,
-            Self::ExtractorsCodeInvalidChunkOverlap,
-            Self::ExtractorsCodeInvalidChunkSize,
-            Self::ExtractorsEmptyAbsolutePath,
-            Self::ExtractorsEmptyFileId,
-            Self::ExtractorsEmptyRelativePath,
-            Self::ExtractorsImageEmptyData,
-            Self::ExtractorsMarkdownInvalidChunkOverlap,
-            Self::ExtractorsMarkdownInvalidChunkSize,
-            Self::ExtractorsTextInvalidChunkOverlap,
-            Self::ExtractorsTextInvalidChunkSize,
-            Self::FileSelectionTypesUnavailable,
-            Self::FileSelectionUnknownFileType,
-            Self::IndexingCancelled,
-            Self::IndexingContentHashFailed,
-            Self::IndexingDeleteFileFailed,
-            Self::IndexingEmbeddingFragmentFailed,
-            Self::IndexingEmbeddingThreadFailed,
-            Self::IndexingFilesFailed,
-            Self::IndexingOptimizeFailed,
-            Self::IndexingReadSourceFailed,
-            Self::IndexingSchedulerFailed,
-            Self::IndexingStatusFailed,
-            Self::IndexingWorkspaceFailed,
-            Self::JsonReadFailed,
-            Self::JsonWriteFailed,
-            Self::LexicalEmptyPattern,
-            Self::LexicalIgnoreFileInvalid,
-            Self::LexicalInvalidPattern,
-            Self::LexicalPatternFileUnreadable,
-            Self::LexicalSearchFailed,
-            Self::LexicalUnknownFileType,
-            Self::LockBusy,
-            Self::LockUnavailable,
-            Self::ManifestDeleteFailed,
-            Self::ManifestInvalid,
-            Self::ModelsEmbeddingBackendUnavailable,
-            Self::ModelsEmbeddingBatchTooLarge,
-            Self::ModelsEmbeddingCatalogModelNotFound,
-            Self::ModelsEmbeddingDimensionMismatch,
-            Self::ModelsEmbeddingEmptyImage,
-            Self::ModelsEmbeddingEmptyInput,
-            Self::ModelsEmbeddingEmptyText,
-            Self::ModelsEmbeddingImageTooLarge,
-            Self::ModelsEmbeddingInvalidTruncatedInputIndex,
-            Self::ModelsEmbeddingModelNotImplemented,
-            Self::ModelsEmbeddingNonFiniteVectorValue,
-            Self::ModelsEmbeddingUnsupportedContent,
-            Self::ModelsEmbeddingVectorCountMismatch,
-            Self::ModelsLlamaCppDisposed,
-            Self::ModelsLlamaCppEmbedFailed,
-            Self::ModelsLlamaCppInvalidGguf,
-            Self::ModelsLlamaCppInvalidGgufHtml,
-            Self::ModelsModel2vecDownloadFailed,
-            Self::ModelsModel2vecEmbedFailed,
-            Self::ModelsModel2vecLoadFailed,
-            Self::ModelsModelDownloadFailed,
-            Self::ModelsQwen37TextEmbeddingApiError,
-            Self::ModelsQwen37TextEmbeddingIndexOutOfRange,
-            Self::ModelsQwen37TextEmbeddingInvalidIndex,
-            Self::ModelsQwen37TextEmbeddingInvalidJson,
-            Self::ModelsQwen37TextEmbeddingInvalidVector,
-            Self::ModelsQwen37TextEmbeddingMissingApiKey,
-            Self::ModelsQwen37TextEmbeddingMissingData,
-            Self::ModelsQwen37TextEmbeddingMissingEndpoint,
-            Self::ModelsQwen37TextEmbeddingRequestFailed,
-            Self::ModelsQwen3VlEmbeddingApiError,
-            Self::ModelsQwen3VlEmbeddingIndexOutOfRange,
-            Self::ModelsQwen3VlEmbeddingInvalidItem,
-            Self::ModelsQwen3VlEmbeddingInvalidJson,
-            Self::ModelsQwen3VlEmbeddingInvalidVector,
-            Self::ModelsQwen3VlEmbeddingMissingApiKey,
-            Self::ModelsQwen3VlEmbeddingMissingEmbeddings,
-            Self::ModelsQwen3VlEmbeddingMissingEndpoint,
-            Self::ModelsQwen3VlEmbeddingRequestFailed,
-            Self::ModelsQwen3VlEmbeddingTooManyImages,
-            Self::ModelsQwen3VlEmbeddingUnsupportedImageFormat,
-            Self::ModelsQwenTextEmbeddingApiError,
-            Self::ModelsQwenTextEmbeddingIndexOutOfRange,
-            Self::ModelsQwenTextEmbeddingInvalidIndex,
-            Self::ModelsQwenTextEmbeddingInvalidJson,
-            Self::ModelsQwenTextEmbeddingInvalidVector,
-            Self::ModelsQwenTextEmbeddingMissingApiKey,
-            Self::ModelsQwenTextEmbeddingMissingData,
-            Self::ModelsQwenTextEmbeddingMissingEndpoint,
-            Self::ModelsQwenTextEmbeddingRequestFailed,
-            Self::ModelsQwenTextEmbeddingV4ApiError,
-            Self::ModelsQwenTextEmbeddingV4IndexOutOfRange,
-            Self::ModelsQwenTextEmbeddingV4InvalidIndex,
-            Self::ModelsQwenTextEmbeddingV4InvalidJson,
-            Self::ModelsQwenTextEmbeddingV4InvalidVector,
-            Self::ModelsQwenTextEmbeddingV4MissingApiKey,
-            Self::ModelsQwenTextEmbeddingV4MissingData,
-            Self::ModelsQwenTextEmbeddingV4MissingEndpoint,
-            Self::ModelsQwenTextEmbeddingV4RequestFailed,
-            Self::ModelsTransformersJsDisposed,
-            Self::ModelsTransformersJsEmbedFailed,
-            Self::ModelsTransformersJsInvalidTensor,
-            Self::ModelsTransformersJsTokenizationFailed,
-            Self::ScannerConfiguredIgnoreReadFailed,
-            Self::ScannerOverlappingRootPaths,
-            Self::ScannerRootPathStatFailed,
-            Self::ScannerUnsupportedRootPath,
-            Self::SearchDiagnosisEncodeFailed,
-            Self::SearchEmbeddingModelRequired,
-            Self::SearchEntityNotFound,
-            Self::SearchPlanEmptyRoutes,
-            Self::SearchPlanEmptyRouteQuery,
-            Self::SearchPlanInvalidFilter,
-            Self::SearchPlanInvalidModifiedTimeFilter,
-            Self::SearchPlanInvalidModifiedTimeRange,
-            Self::SearchPlanInvalidPathFilter,
-            Self::ServiceReadSessionClosed,
-            Self::StorageCollectionClosed,
-            Self::StorageCreateFailed,
-            Self::StorageDeleteFailed,
-            Self::StorageDocDecodeFailed,
-            Self::StorageDocEncodeFailed,
-            Self::StorageDocFieldFailed,
-            Self::StorageDuplicateFragmentId,
-            Self::StorageEntityVectorCountMismatch,
-            Self::StorageFileMetaReadOnly,
-            Self::StorageForeignTsIndexPresent,
-            Self::StorageFragmentFileMismatch,
-            Self::StorageInvalidEmbeddingDimension,
-            Self::StorageInvalidFragmentGroup,
-            Self::StorageInvalidStoragePath,
-            Self::StorageMissingEmbeddingSchema,
-            Self::StorageReadOnly,
-            Self::StorageSchemaFailed,
-            Self::StorageUnsupportedStoredContentKind,
-            Self::StorageZvecCollectionMissing,
-            Self::StorageZvecDeleteFailed,
-            Self::StorageZvecFetchFailed,
-            Self::StorageZvecFileMetaMissing,
-            Self::StorageZvecInitFailed,
-            Self::StorageZvecOpenFailed,
-            Self::StorageZvecOptimizeFailed,
-            Self::StorageZvecQueryFailed,
-            Self::StorageZvecUpsertFailed,
-            Self::WorkspaceRootUnavailable,
-            Self::WorkspaceIndexEmbeddingDimensionMismatch,
-            Self::WorkspaceIndexEmbeddingMetricMismatch,
-            Self::WorkspaceIndexEmbeddingModelMismatch,
-            Self::WorkspaceIndexEmbeddingModelRequired,
-            Self::WorkspaceIndexEmbeddingProviderMismatch,
-            Self::WorkspaceIndexMissing,
-            Self::WorkspaceIndexReadOnly,
-            Self::WorkspaceIndexVersionMismatch,
-        ]
     }
 }
 
@@ -1056,11 +642,8 @@ mod tests {
     #[test]
     fn source_chain_is_walkable() {
         let cause = std::io::Error::new(std::io::ErrorKind::NotFound, "gone");
-        let error = EngineError::new(
-            EngineErrorCode::JsonReadFailed,
-            "failed to read",
-        )
-        .with_source(cause);
+        let error =
+            EngineError::new(EngineErrorCode::JsonReadFailed, "failed to read").with_source(cause);
         assert!(std::error::Error::source(&error).is_some());
     }
 

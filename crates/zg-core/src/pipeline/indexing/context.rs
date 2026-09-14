@@ -101,11 +101,10 @@ pub(crate) const PERMANENT_REMOTE_MODEL_PROVIDER_CODES: &[&str] = &[
 
 pub(crate) fn throw_if_index_cancelled(ctx: &IndexContext<'_>) -> EngineResult<()> {
     if ctx.cancel.as_ref().is_some_and(CancelFlag::is_cancelled) {
-        return Err(EngineError::new(
-            EngineErrorCode::IndexingCancelled,
-            "indexing was cancelled",
-        )
-        .with_context(workspace_index_context(&ctx.workspace_index)));
+        return Err(
+            EngineError::new(EngineErrorCode::IndexingCancelled, "indexing was cancelled")
+                .with_context(workspace_index_context(&ctx.workspace_index)),
+        );
     }
     Ok(())
 }

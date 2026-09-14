@@ -113,8 +113,7 @@ impl ZvecWorkspaceIndexStorage {
         }
         let index_path = paths.index_path.to_string_lossy().into_owned();
         let collection = if paths.index_path.exists() {
-            let mut open_options =
-                CollectionOptions::new().map_err(zvec_error_open)?;
+            let mut open_options = CollectionOptions::new().map_err(zvec_error_open)?;
             open_options
                 .set_read_only(read_only)
                 .map_err(zvec_error_open)?;

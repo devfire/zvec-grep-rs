@@ -321,6 +321,13 @@ fn all_codes() -> Vec<String> {
         .code(),
     );
 
+    // Exhaustive variant walk: every wire code, compiler-pinned by
+    // `all_codes_covers_every_variant` plus the exhaustive `suffix()` match.
+    // Subsumes the `codes::*` aliases below (kept to pin the public names).
+    for code in zg_core::error::EngineErrorCode::all_codes() {
+        push(code);
+    }
+
     // Every `codes::*` constructor.
     push(codes::config_invalid());
     push(codes::config_invalid_embedding_runtime());

@@ -1,6 +1,6 @@
 //! Validation, shape-check, backend-artifact, and download failures.
 //!
-//! Owns the [`ModelError`] → [`EngineError`](crate::error::EngineError)
+//! Owns the [`ModelError`] → [`EngineError`]
 //! rendering: every variant's canonical `key=value` context block. The
 //! wire strings are unchanged from TypeScript; the context match is
 //! exhaustive, so a new variant without rendering fails to compile.

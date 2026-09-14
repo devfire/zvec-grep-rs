@@ -4,7 +4,7 @@
 //! across `.await` (see the state docs at each use); a poisoned mutex
 //! therefore yields its inner value instead of wedging the daemon — the
 //! panicking holder already records its own failure through its job outcome.
-//! [`MutexExt::lock_ignore_poison`] is the single spelling of that policy
+//! `MutexExt::lock_ignore_poison` is the single spelling of that policy
 //! (R3 collapsed the per-module `fn lock` copies here).
 
 use std::sync::{Mutex, MutexGuard};

@@ -33,39 +33,21 @@ pub enum QwenVlFailure {
 #[must_use]
 pub const fn qwen_vl_code(failure: QwenVlFailure) -> EngineErrorCode {
     match failure {
-        QwenVlFailure::RequestFailed => {
-            EngineErrorCode::ModelsQwen3VlEmbeddingRequestFailed
-        }
-        QwenVlFailure::InvalidJson => {
-            EngineErrorCode::ModelsQwen3VlEmbeddingInvalidJson
-        }
-        QwenVlFailure::ApiError => {
-            EngineErrorCode::ModelsQwen3VlEmbeddingApiError
-        }
+        QwenVlFailure::RequestFailed => EngineErrorCode::ModelsQwen3VlEmbeddingRequestFailed,
+        QwenVlFailure::InvalidJson => EngineErrorCode::ModelsQwen3VlEmbeddingInvalidJson,
+        QwenVlFailure::ApiError => EngineErrorCode::ModelsQwen3VlEmbeddingApiError,
         QwenVlFailure::MissingEmbeddings => {
             EngineErrorCode::ModelsQwen3VlEmbeddingMissingEmbeddings
         }
-        QwenVlFailure::InvalidItem => {
-            EngineErrorCode::ModelsQwen3VlEmbeddingInvalidItem
-        }
-        QwenVlFailure::IndexOutOfRange => {
-            EngineErrorCode::ModelsQwen3VlEmbeddingIndexOutOfRange
-        }
-        QwenVlFailure::InvalidVector => {
-            EngineErrorCode::ModelsQwen3VlEmbeddingInvalidVector
-        }
+        QwenVlFailure::InvalidItem => EngineErrorCode::ModelsQwen3VlEmbeddingInvalidItem,
+        QwenVlFailure::IndexOutOfRange => EngineErrorCode::ModelsQwen3VlEmbeddingIndexOutOfRange,
+        QwenVlFailure::InvalidVector => EngineErrorCode::ModelsQwen3VlEmbeddingInvalidVector,
         QwenVlFailure::UnsupportedImageFormat => {
             EngineErrorCode::ModelsQwen3VlEmbeddingUnsupportedImageFormat
         }
-        QwenVlFailure::TooManyImages => {
-            EngineErrorCode::ModelsQwen3VlEmbeddingTooManyImages
-        }
-        QwenVlFailure::MissingApiKey => {
-            EngineErrorCode::ModelsQwen3VlEmbeddingMissingApiKey
-        }
-        QwenVlFailure::MissingEndpoint => {
-            EngineErrorCode::ModelsQwen3VlEmbeddingMissingEndpoint
-        }
+        QwenVlFailure::TooManyImages => EngineErrorCode::ModelsQwen3VlEmbeddingTooManyImages,
+        QwenVlFailure::MissingApiKey => EngineErrorCode::ModelsQwen3VlEmbeddingMissingApiKey,
+        QwenVlFailure::MissingEndpoint => EngineErrorCode::ModelsQwen3VlEmbeddingMissingEndpoint,
     }
 }
 

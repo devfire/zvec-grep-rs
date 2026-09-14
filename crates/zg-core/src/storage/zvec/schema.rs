@@ -80,8 +80,7 @@ fn indexed_string_field(
 ) -> EngineResult<()> {
     let mut field = FieldSchema::new(name, DataType::String, nullable, 0)
         .map_err(|error| schema_error(name, error))?;
-    let params = IndexParams::invert(false, false)
-        .map_err(|error| schema_error(name, error))?;
+    let params = IndexParams::invert(false, false).map_err(|error| schema_error(name, error))?;
     field
         .set_index_params(&params)
         .map_err(|error| schema_error(name, error))?;
@@ -135,8 +134,7 @@ fn vector_field(
 ) -> EngineResult<()> {
     let mut field = FieldSchema::new(name, DataType::VectorFp32, false, dimension)
         .map_err(|error| schema_error(name, error))?;
-    let params = IndexParams::hnsw(metric, 16, 200)
-        .map_err(|error| schema_error(name, error))?;
+    let params = IndexParams::hnsw(metric, 16, 200).map_err(|error| schema_error(name, error))?;
     field
         .set_index_params(&params)
         .map_err(|error| schema_error(name, error))?;

@@ -52,9 +52,7 @@ impl AuthError {
     #[must_use]
     pub const fn code(&self) -> EngineErrorCode {
         match self {
-            Self::AuthorizationRequired { .. } => {
-                EngineErrorCode::AuthRemoteEmbeddingRequired
-            }
+            Self::AuthorizationRequired { .. } => EngineErrorCode::AuthRemoteEmbeddingRequired,
             Self::InvalidTarget { .. } => EngineErrorCode::AuthInvalidTarget,
             Self::StoreFailed { .. } => EngineErrorCode::AuthStoreFailed,
         }

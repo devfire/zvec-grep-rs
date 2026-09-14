@@ -30,11 +30,10 @@ pub fn diagnose_entity_search(
     ctx: &SearchContext<'_>,
 ) -> EngineResult<EntitySearchDiagnosis> {
     let Some(stored) = ctx.storage.get_entity(entity_id) else {
-        return Err(EngineError::new(
-            EngineErrorCode::SearchEntityNotFound,
-            "entity not found",
-        )
-        .with_context(format!("entityId={}", entity_id.as_str())));
+        return Err(
+            EngineError::new(EngineErrorCode::SearchEntityNotFound, "entity not found")
+                .with_context(format!("entityId={}", entity_id.as_str())),
+        );
     };
     let plan = SearchPlan {
         routes: vec![

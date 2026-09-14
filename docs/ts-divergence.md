@@ -175,9 +175,9 @@ under `--all-features` in CI, not here.
 - `ZvecGrepInfoResult` six-`Option` cluster stays until phase B, where the
   `ZvecGrepService` facade re-models it as `IndexState` with a serde wire
   adapter (M3).
-- `StorageError` / `IndexingError` enums stay until their refactors; until
-  then those layers construct `from_static` literals only (grep-gated), and
-  the golden registry pins the typed `ModelError` + `codes` set.
+- `StorageError` / `IndexingError` enums stay until their refactors; all
+  layers already use direct `EngineErrorCode` variants (R6, no runtime
+  construction possible), and the golden registry pins the full variant walk.
 
 ## Daemon (phase G)
 

@@ -46,9 +46,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Ban runtime-assembled error codes (M1)
-        run: |
-          test -z "$(grep -rnE 'from_static\((&)?format!' crates/ || true)"
       - run: cargo test -p zg-core --locked --test error_codes_golden
 
   fmt:

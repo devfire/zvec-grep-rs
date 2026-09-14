@@ -143,24 +143,12 @@ impl CliError {
         match self {
             Self::Usage { .. } => Some(EngineErrorCode::CliUsage),
             Self::ConfigInvalid { .. } => Some(EngineErrorCode::CliConfigInvalid),
-            Self::AuthorizationDeclined { .. } => {
-                Some(EngineErrorCode::CliAuthorizationDeclined)
-            }
-            Self::AuthorizationRequired { .. } => {
-                Some(EngineErrorCode::CliAuthorizationRequired)
-            }
-            Self::InstallRefused { .. } => {
-                Some(EngineErrorCode::CliInstallRefused)
-            }
-            Self::ServerIncompatible { .. } => {
-                Some(EngineErrorCode::CliServerIncompatible)
-            }
-            Self::RgIncompatible { .. } => {
-                Some(EngineErrorCode::CliRgIncompatible)
-            }
-            Self::DaemonUnavailable { .. } => {
-                Some(EngineErrorCode::CliDaemonUnavailable)
-            }
+            Self::AuthorizationDeclined { .. } => Some(EngineErrorCode::CliAuthorizationDeclined),
+            Self::AuthorizationRequired { .. } => Some(EngineErrorCode::CliAuthorizationRequired),
+            Self::InstallRefused { .. } => Some(EngineErrorCode::CliInstallRefused),
+            Self::ServerIncompatible { .. } => Some(EngineErrorCode::CliServerIncompatible),
+            Self::RgIncompatible { .. } => Some(EngineErrorCode::CliRgIncompatible),
+            Self::DaemonUnavailable { .. } => Some(EngineErrorCode::CliDaemonUnavailable),
             Self::NotReady { .. } => Some(EngineErrorCode::CliNotReady),
             Self::Io { .. } => Some(EngineErrorCode::CliIoFailed),
             Self::Engine(_) | Self::Daemon(_) => None,

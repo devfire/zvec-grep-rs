@@ -354,12 +354,8 @@ impl ModelError {
             Self::CatalogModelNotFound { .. } => {
                 EngineErrorCode::ModelsEmbeddingCatalogModelNotFound
             }
-            Self::NotImplemented { .. } => {
-                EngineErrorCode::ModelsEmbeddingModelNotImplemented
-            }
-            Self::BackendUnavailable { .. } => {
-                EngineErrorCode::ModelsEmbeddingBackendUnavailable
-            }
+            Self::NotImplemented { .. } => EngineErrorCode::ModelsEmbeddingModelNotImplemented,
+            Self::BackendUnavailable { .. } => EngineErrorCode::ModelsEmbeddingBackendUnavailable,
             Self::QwenText { model, failure, .. } => model.code(*failure),
             Self::QwenVl { failure, .. } => qwen_vl_code(*failure),
             Self::MissingApiKey { backend, .. } => match backend {
@@ -371,74 +367,36 @@ impl ModelError {
                 QwenBackend::Vl => qwen_vl_code(QwenVlFailure::MissingEndpoint),
             },
             Self::EmptyInput { .. } => EngineErrorCode::ModelsEmbeddingEmptyInput,
-            Self::BatchTooLarge { .. } => {
-                EngineErrorCode::ModelsEmbeddingBatchTooLarge
-            }
+            Self::BatchTooLarge { .. } => EngineErrorCode::ModelsEmbeddingBatchTooLarge,
             Self::EmptyText { .. } => EngineErrorCode::ModelsEmbeddingEmptyText,
-            Self::UnsupportedImage { .. } => {
-                EngineErrorCode::ModelsEmbeddingUnsupportedContent
-            }
+            Self::UnsupportedImage { .. } => EngineErrorCode::ModelsEmbeddingUnsupportedContent,
             Self::EmptyImage { .. } => EngineErrorCode::ModelsEmbeddingEmptyImage,
-            Self::ImageTooLarge { .. } => {
-                EngineErrorCode::ModelsEmbeddingImageTooLarge
-            }
-            Self::VectorCountMismatch { .. } => {
-                EngineErrorCode::ModelsEmbeddingVectorCountMismatch
-            }
-            Self::DimensionMismatch { .. } => {
-                EngineErrorCode::ModelsEmbeddingDimensionMismatch
-            }
-            Self::NonFiniteValue { .. } => {
-                EngineErrorCode::ModelsEmbeddingNonFiniteVectorValue
-            }
+            Self::ImageTooLarge { .. } => EngineErrorCode::ModelsEmbeddingImageTooLarge,
+            Self::VectorCountMismatch { .. } => EngineErrorCode::ModelsEmbeddingVectorCountMismatch,
+            Self::DimensionMismatch { .. } => EngineErrorCode::ModelsEmbeddingDimensionMismatch,
+            Self::NonFiniteValue { .. } => EngineErrorCode::ModelsEmbeddingNonFiniteVectorValue,
             Self::InvalidTruncatedIndex { .. } => {
                 EngineErrorCode::ModelsEmbeddingInvalidTruncatedInputIndex
             }
-            Self::Model2VecLoad { .. } => {
-                EngineErrorCode::ModelsModel2vecLoadFailed
-            }
-            Self::Model2VecDownload { .. } => {
-                EngineErrorCode::ModelsModel2vecDownloadFailed
-            }
-            Self::Model2VecEmbed { .. } => {
-                EngineErrorCode::ModelsModel2vecEmbedFailed
-            }
-            Self::Model2VecTokenize { .. } => {
-                EngineErrorCode::ModelsModel2vecEmbedFailed
-            }
-            Self::TokenOutOfRange { .. } => {
-                EngineErrorCode::ModelsModel2vecEmbedFailed
-            }
-            Self::WorkerFailed { .. } => {
-                EngineErrorCode::ModelsModel2vecEmbedFailed
-            }
-            Self::TransformersJsEmbed { .. } => {
-                EngineErrorCode::ModelsTransformersJsEmbedFailed
-            }
+            Self::Model2VecLoad { .. } => EngineErrorCode::ModelsModel2vecLoadFailed,
+            Self::Model2VecDownload { .. } => EngineErrorCode::ModelsModel2vecDownloadFailed,
+            Self::Model2VecEmbed { .. } => EngineErrorCode::ModelsModel2vecEmbedFailed,
+            Self::Model2VecTokenize { .. } => EngineErrorCode::ModelsModel2vecEmbedFailed,
+            Self::TokenOutOfRange { .. } => EngineErrorCode::ModelsModel2vecEmbedFailed,
+            Self::WorkerFailed { .. } => EngineErrorCode::ModelsModel2vecEmbedFailed,
+            Self::TransformersJsEmbed { .. } => EngineErrorCode::ModelsTransformersJsEmbedFailed,
             Self::TransformersJsTokenize { .. } => {
                 EngineErrorCode::ModelsTransformersJsTokenizationFailed
             }
             Self::TransformersJsInvalidTensor { .. } => {
                 EngineErrorCode::ModelsTransformersJsInvalidTensor
             }
-            Self::TransformersJsDisposed { .. } => {
-                EngineErrorCode::ModelsTransformersJsDisposed
-            }
-            Self::LlamaCppEmbed { .. } => {
-                EngineErrorCode::ModelsLlamaCppEmbedFailed
-            }
-            Self::LlamaCppDisposed { .. } => {
-                EngineErrorCode::ModelsLlamaCppDisposed
-            }
-            Self::LlamaCppInvalidGguf { .. } => {
-                EngineErrorCode::ModelsLlamaCppInvalidGguf
-            }
-            Self::LlamaCppInvalidGgufHtml { .. } => {
-                EngineErrorCode::ModelsLlamaCppInvalidGgufHtml
-            }
-            Self::DownloadFailed { .. } => {
-                EngineErrorCode::ModelsModelDownloadFailed
-            }
+            Self::TransformersJsDisposed { .. } => EngineErrorCode::ModelsTransformersJsDisposed,
+            Self::LlamaCppEmbed { .. } => EngineErrorCode::ModelsLlamaCppEmbedFailed,
+            Self::LlamaCppDisposed { .. } => EngineErrorCode::ModelsLlamaCppDisposed,
+            Self::LlamaCppInvalidGguf { .. } => EngineErrorCode::ModelsLlamaCppInvalidGguf,
+            Self::LlamaCppInvalidGgufHtml { .. } => EngineErrorCode::ModelsLlamaCppInvalidGgufHtml,
+            Self::DownloadFailed { .. } => EngineErrorCode::ModelsModelDownloadFailed,
         }
     }
 }
