@@ -2,6 +2,24 @@
 
 Rust port of [zvec-grep](https://github.com/zvec-ai/zvec-grep): local-first hybrid search (ripgrep + BM25 + vectors) for humans and agents. `unsafe` forbidden workspace-wide (`[workspace.lints]`, `unsafe_code = "forbid"`).
 
+## How it works
+
+Think of it as grep that understands meaning, not just exact text.
+
+You point it at a folder. It walks the files, cuts code into chunks (functions and such), turns each chunk into a number list called an embedding using a small local model, and saves those plus a regular keyword index on disk.
+
+When you ask a question, it looks things up two ways: plain keyword match and meaning match by comparing embeddings. It can also run ripgrep if you want exact strings. Then it merges all that and shows you the best hits with file names and line numbers.
+
+Two ways to run it: normally `zg query` talks to a little background daemon that keeps your repos indexed and watches for file changes. Or pass `--mode direct` and it just does everything right there in one go, no daemon.
+
+## How the AI bit works (MCP)
+
+If you use an AI coding assistant, it can search your code through zg instead of guessing.
+
+MCP is just the plug that lets the assistant call into zg. Run `zg install` once and it wires up your editor, or start the daemon with `zg server run --stdio`. After that your assistant gets a few tools: search code by meaning, run exact grep, check if the index is ready, kick off a reindex, that sort of thing.
+
+It all goes through the same daemon and the same index as the command line, so you and the agent see the same results.
+
 ## Crates
 
 - `zg-core` — engine: scan → tree-sitter extract → embed → index → hybrid search, exposed through the sync `ZvecGrepService` facade (`create_zvec_grep`). Typed errors (`ModelError`, `StorageError`, …) with golden-tested `ZVEC_GREP.ENGINE.*` wire codes; newtypes for domain concepts (`ModelReference`, `RootKey`, `Generation`, …).
