@@ -52,7 +52,14 @@ impl std::fmt::Display for AcquireError {
     }
 }
 
-impl std::error::Error for AcquireError {}
+impl std::error::Error for AcquireError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Closed => None,
+            Self::Load { error, .. } => Some(error),
+        }
+    }
+}
 
 /// Dehydrated load failure shared with waiting acquirers. The code is the
 /// `Copy` [`EngineErrorCode`], so it round-trips exactly; message and

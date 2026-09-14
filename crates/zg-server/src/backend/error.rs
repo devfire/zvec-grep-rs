@@ -40,7 +40,14 @@ impl std::fmt::Display for BackendError {
     }
 }
 
-impl std::error::Error for BackendError {}
+impl std::error::Error for BackendError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Daemon(error) => Some(error),
+            Self::Engine(error) => Some(error),
+        }
+    }
+}
 
 impl From<DaemonError> for BackendError {
     fn from(error: DaemonError) -> Self {

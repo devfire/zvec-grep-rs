@@ -51,7 +51,14 @@ impl std::fmt::Display for SessionError {
     }
 }
 
-impl std::error::Error for SessionError {}
+impl std::error::Error for SessionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Closed => None,
+            Self::Open(error) => Some(error),
+        }
+    }
+}
 
 /// How to open a fresh handle on a cold cache. Failures are already
 /// classified: a closed pool (or store) reports [`SessionError::Closed`]

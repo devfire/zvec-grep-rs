@@ -46,13 +46,18 @@ impl fmt::Display for EngineErrorCode {
     }
 }
 
-/// Engine error with a dotted code, message, and multi-line context detail.
+/// Engine error with a dotted code, message, multi-line context detail, and
+/// an optional typed cause.
+///
+/// The cause rides in an `Arc` (not a `Box`): `EngineError` is `Clone`
+/// (fail-fast paths clone the first failure), and `Arc` keeps that.
 #[derive(Debug, Clone)]
 pub struct EngineError {
     code: EngineErrorCode,
     message: String,
     /// Optional multi-line `key=value` context block.
     context: Option<String>,
+    source: Option<std::sync::Arc<dyn std::error::Error + Send + Sync>>,
 }
 
 impl EngineError {
@@ -61,11 +66,20 @@ impl EngineError {
             code,
             message: message.into(),
             context: None,
+            source: None,
         }
     }
 
     pub fn with_context(mut self, context: impl Into<String>) -> Self {
         self.context = Some(context.into());
+        self
+    }
+
+    /// Attaches the typed cause (an `io::Error`, `serde_json::Error`, …)
+    /// instead of flattening it into the context string. Prefer this at
+    /// conversion sites; keep `with_context` for the `key=value` detail.
+    pub fn with_source(mut self, source: impl std::error::Error + Send + Sync + 'static) -> Self {
+        self.source = Some(std::sync::Arc::new(source));
         self
     }
 
@@ -95,7 +109,11 @@ impl fmt::Display for EngineError {
     }
 }
 
-impl std::error::Error for EngineError {}
+impl std::error::Error for EngineError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source.as_deref().map(|cause| cause as _)
+    }
+}
 
 pub type EngineResult<T> = Result<T, EngineError>;
 
@@ -421,6 +439,17 @@ mod tests {
         let redacted = redact_error_text("abcdefghij", 5);
         assert_eq!(redacted.chars().count(), 5);
         assert!(redacted.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn source_chain_is_walkable() {
+        let cause = std::io::Error::new(std::io::ErrorKind::NotFound, "gone");
+        let error = EngineError::new(
+            EngineErrorCode::from_static("JSON.READ_FAILED"),
+            "failed to read",
+        )
+        .with_source(cause);
+        assert!(std::error::Error::source(&error).is_some());
     }
 
     #[test]

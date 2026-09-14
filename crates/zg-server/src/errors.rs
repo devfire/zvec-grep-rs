@@ -199,7 +199,13 @@ impl fmt::Display for DaemonError {
     }
 }
 
-impl std::error::Error for DaemonError {}
+impl std::error::Error for DaemonError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        // Payloads are plain data (roots, messages, statuses); typed causes
+        // converge one layer up in `BackendError::source`.
+        None
+    }
+}
 
 /// Every daemon wire code, one per enum variant, for the golden registry
 /// test (`tests/golden/daemon-error-codes.txt`). Adding a variant without

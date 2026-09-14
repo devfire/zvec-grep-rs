@@ -65,7 +65,16 @@ impl std::fmt::Display for McpError {
     }
 }
 
-impl std::error::Error for McpError {}
+impl std::error::Error for McpError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Backend(error) => Some(error),
+            Self::InvalidParams { .. }
+            | Self::AuthorizationRequired { .. }
+            | Self::Transport { .. } => None,
+        }
+    }
+}
 
 impl From<BackendError> for McpError {
     fn from(error: BackendError) -> Self {

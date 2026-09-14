@@ -42,13 +42,15 @@ pub fn read_json_file<T: DeserializeOwned>(path: &Path, fallback: T) -> EngineRe
                 format!("failed to parse {}", path.display()),
             )
             .with_context(format!("error={error}"))
+            .with_source(error)
         }),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(fallback),
         Err(error) => Err(crate::error::EngineError::new(
             crate::error::EngineErrorCode::from_static("JSON.READ_FAILED"),
             format!("failed to read {}", path.display()),
         )
-        .with_context(format!("error={error}"))),
+        .with_context(format!("error={error}"))
+        .with_source(error)),
     }
 }
 
@@ -70,6 +72,7 @@ pub fn write_json_file<T: Serialize>(
             format!("failed to create {}", parent.display()),
         )
         .with_context(format!("error={error}"))
+        .with_source(error)
     })?;
     #[cfg(unix)]
     if let Some(mode) = modes.directory_mode {
@@ -82,6 +85,7 @@ pub fn write_json_file<T: Serialize>(
             "failed to serialize JSON",
         )
         .with_context(format!("error={error}"))
+        .with_source(error)
     })?;
 
     let tmp = path.with_extension(format!(
@@ -107,7 +111,8 @@ pub fn write_json_file<T: Serialize>(
             crate::error::EngineErrorCode::from_static("JSON.WRITE_FAILED"),
             format!("failed to write {}", path.display()),
         )
-        .with_context(format!("error={error}")));
+        .with_context(format!("error={error}"))
+        .with_source(error));
     }
     Ok(())
 }
