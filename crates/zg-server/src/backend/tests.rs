@@ -30,7 +30,15 @@ fn fixture() -> tempfile::TempDir {
 }
 
 fn root(dir: &tempfile::TempDir) -> String {
-    dir.path().to_string_lossy().into_owned()
+    // Canonicalize: TempDir paths may contain symlinks (`/var` ->
+    // `/private/var` on macOS) while the backend normalizes roots via
+    // `std::fs::canonicalize` (TS `realpath` parity). Comparing the raw
+    // path would fail only on such platforms.
+    dir.path()
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[tokio::test]
