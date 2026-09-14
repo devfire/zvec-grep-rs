@@ -24,9 +24,9 @@ jobs:
         with:
           path: ~/.zvec-grep/models
           key: embedding-models-v1
-      - run: cargo test --workspace
-      - run: cargo test --workspace --all-features
-      - run: cargo test --workspace --no-default-features
+      - run: cargo test --workspace --locked
+      - run: cargo test --workspace --locked --all-features
+      - run: cargo test --workspace --locked --no-default-features
 
   clippy:
     strategy:
@@ -38,8 +38,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: cargo clippy --workspace --all-targets
-      - run: cargo clippy --workspace --all-targets --all-features
+      - run: cargo clippy --workspace --all-targets --locked
+      - run: cargo clippy --workspace --all-targets --locked --all-features
 
   error-codes:
     runs-on: ubuntu-latest
@@ -48,8 +48,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Ban runtime-assembled error codes (M1)
         run: |
-          test -z "$(grep -rn 'EngineErrorCode::new(&format!' crates/ || true)"
-      - run: cargo test -p zg-core --test error_codes_golden
+          test -z "$(grep -rnE 'from_static\((&)?format!' crates/ || true)"
+      - run: cargo test -p zg-core --locked --test error_codes_golden
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo fmt --all --check
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+      - run: cargo check --workspace --locked
 
   doc:
     runs-on: ubuntu-latest
