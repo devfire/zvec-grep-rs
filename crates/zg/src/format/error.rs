@@ -7,15 +7,33 @@ use crate::error::CliError;
 
 use super::color::{Color, DIM, RED, RESET};
 
+/// Error detail level for [`print_error`]: `--debug` selects `Debug`.
+/// A distinct type (not `bool`) so the flag cannot be transposed with
+/// [`Color`] at the call site (defensive #10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verbosity {
+    /// One-line `error:` only.
+    Normal,
+    /// Plus the wire code and the full cause chain.
+    Debug,
+}
+
+impl From<bool> for Verbosity {
+    /// `true` (i.e. `--debug`) maps to [`Verbosity::Debug`].
+    fn from(debug: bool) -> Self {
+        if debug { Self::Debug } else { Self::Normal }
+    }
+}
+
 /// Prints a CLI error like `printError`: red `error:` prefix on color
-/// terminals, the message, and the wire code with `--debug`.
-pub fn print_error(error: &CliError, color: Color, debug: bool) {
+/// terminals, the message, and the wire code with [`Verbosity::Debug`].
+pub fn print_error(error: &CliError, color: Color, verbosity: Verbosity) {
     if color.enabled() {
         eprintln!("{RED}error:{RESET} {error}");
     } else {
         eprintln!("error: {error}");
     }
-    if debug {
+    if verbosity == Verbosity::Debug {
         for line in debug_lines(error) {
             eprintln!("{DIM}{line}{RESET}");
         }

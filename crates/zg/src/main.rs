@@ -46,19 +46,21 @@ async fn main() {
             }
         }
     };
-    let debug = matches!(&cli.command, Some(Command::Query(args)) if args.debug)
-        || matches!(&cli.command, Some(Command::Index(args)) if args.debug)
-        || matches!(&cli.command, Some(Command::Status(args)) if args.debug);
+    let verbosity = format::Verbosity::from(
+        matches!(&cli.command, Some(Command::Query(args)) if args.debug)
+            || matches!(&cli.command, Some(Command::Index(args)) if args.debug)
+            || matches!(&cli.command, Some(Command::Status(args)) if args.debug),
+    );
     if let Err(error) = cli::validate(&cli) {
-        report(error, debug);
+        report(error, verbosity);
     }
     if let Err(error) = commands::run(cli).await {
-        report(error, debug);
+        report(error, verbosity);
     }
 }
 
-fn report(error: CliError, debug: bool) -> ! {
-    format::print_error(&error, color_stderr(), debug);
+fn report(error: CliError, verbosity: format::Verbosity) -> ! {
+    format::print_error(&error, color_stderr(), verbosity);
     std::process::exit(1);
 }
 

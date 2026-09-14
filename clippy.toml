@@ -1,0 +1,5 @@
+# Clippy threshold tuning (R7): `fn_params_excessive_bools` fires at more
+# than this many `bool` params. Default is 3, which let the `(human, color)`
+# / `(color, debug)` printer pairs through; the printers now take `Color` /
+# `Rendering` / `Verbosity` enums, and 2 keeps any future pair a deny.
+max-fn-params-bools = 2
