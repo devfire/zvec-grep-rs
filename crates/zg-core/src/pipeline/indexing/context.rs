@@ -9,7 +9,9 @@ use crate::error::{
 };
 use crate::models::EmbeddingModel;
 use crate::storage::WorkspaceIndexStorage;
-use crate::types::{Content, EntityFragment, FileInfo, FileScanDiagnostics, IndexProgress, WorkspaceIndexInfo};
+use crate::types::{
+    Content, EntityFragment, FileInfo, FileScanDiagnostics, IndexProgress, WorkspaceIndexInfo,
+};
 
 use super::scanner::CancelFlag;
 
@@ -160,7 +162,10 @@ pub(crate) fn summarize_failed_files(files: &[String]) -> String {
     }
 }
 
-pub(crate) fn throw_if_aborted(abort: &AtomicBool, cancel: Option<&CancelFlag>) -> EngineResult<()> {
+pub(crate) fn throw_if_aborted(
+    abort: &AtomicBool,
+    cancel: Option<&CancelFlag>,
+) -> EngineResult<()> {
     if abort.load(Ordering::Relaxed) || cancel.is_some_and(CancelFlag::is_cancelled) {
         return Err(EngineError::new(
             EngineErrorCode::from_static("INDEXING.CANCELLED"),

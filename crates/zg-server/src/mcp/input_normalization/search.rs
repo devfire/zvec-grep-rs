@@ -1,15 +1,14 @@
 //! Validated search inputs: `NormalizedSearchInput` plus wire normalization
 //! (query groups, path filters, modified times).
 
-
 use chrono::{Local, TimeZone};
 use zg_core::types::{CodeSymbolType as CoreSymbolType, UnixMillis};
 
 use crate::backend::{SearchFreshness, SearchQuery, SearchRoute, SearchRouteMode};
 use crate::mcp::error::McpError;
 use crate::mcp::schemas::{
-    FreshnessInput, PathFilter, QueryText, SearchInput, SearchLimit, StringOrList,
-    TimeInput, bound_groups, bound_path_filters, parse_root,
+    FreshnessInput, PathFilter, QueryText, SearchInput, SearchLimit, StringOrList, TimeInput,
+    bound_groups, bound_path_filters, parse_root,
 };
 use crate::root_runtime::RootKey;
 
@@ -333,5 +332,4 @@ mod tests {
                 .is_err()
         );
     }
-
 }

@@ -5,9 +5,7 @@ use std::collections::{HashMap, HashSet};
 use crate::error::EngineResult;
 use crate::ids::EntityId;
 use crate::models::{EmbeddingInput, EmbeddingModel, EmbeddingPurpose};
-use crate::storage::{
-    StorageSearchFilter, StorageSearchHit, StoredEntity, WorkspaceIndexStorage,
-};
+use crate::storage::{StorageSearchFilter, StorageSearchHit, StoredEntity, WorkspaceIndexStorage};
 use crate::types::{Entity, ResolvedSearchPlanRoute, SearchPlanRouteMode, SearchRecallTrace};
 
 use super::fusion::{Candidate, CandidateEvidence, RecallPath, public_entity_id};

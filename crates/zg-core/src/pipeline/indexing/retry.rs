@@ -11,9 +11,9 @@ use crate::types::{Content, IndexEmbeddingProgress};
 
 use super::context::{
     EMBEDDING_RATE_LIMIT_MAX_RETRIES, EMBEDDING_RATE_LIMIT_RETRY_BASE_DELAY_MS,
-    EMBEDDING_RATE_LIMIT_RETRY_MAX_DELAY_MS, EMBEDDING_SUCCESS_STREAK_MIN,
-    EMBEDDING_TRANSIENT_MAX_RETRIES, EMBEDDING_TRANSIENT_RETRY_BASE_DELAY_MS,
-    EMBEDDING_TRANSIENT_RETRY_MAX_DELAY_MS, EMBEDDING_RETRY_JITTER_MS,
+    EMBEDDING_RATE_LIMIT_RETRY_MAX_DELAY_MS, EMBEDDING_RETRY_JITTER_MS,
+    EMBEDDING_SUCCESS_STREAK_MIN, EMBEDDING_TRANSIENT_MAX_RETRIES,
+    EMBEDDING_TRANSIENT_RETRY_BASE_DELAY_MS, EMBEDDING_TRANSIENT_RETRY_MAX_DELAY_MS,
     PERMANENT_REMOTE_MODEL_PROVIDER_CODES, is_cancelled_or_aborted, throw_if_aborted,
 };
 use super::scanner::CancelFlag;
@@ -320,7 +320,10 @@ pub(crate) fn resolve_embedding_concurrency_policy(
     }
 }
 
-pub(crate) fn should_fail_fast_embedding_error(error: &EngineError, model: &dyn EmbeddingModel) -> bool {
+pub(crate) fn should_fail_fast_embedding_error(
+    error: &EngineError,
+    model: &dyn EmbeddingModel,
+) -> bool {
     classify_embedding_retry(error, model).fail_fast
 }
 

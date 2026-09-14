@@ -2,7 +2,6 @@
 //! `-l` compatibility, and the rejection policy for output/engine options,
 //! `stdin` patterns, and inline values on flag-only options.
 
-
 use crate::mcp::error::McpError;
 
 pub(crate) fn reject_inline(flag: &str, inline: Option<&str>) -> Result<(), McpError> {
@@ -253,7 +252,9 @@ fn starts_expansion(chars: &[char], index: usize) -> bool {
 
 /// Splits the trailing `| head` bound and the `2> /dev/null` red herring,
 /// mirroring `normalizeManagedRgShellSuffix`.
-pub(crate) fn split_head_suffix(tokens: &[String]) -> Result<(Vec<String>, Option<usize>), McpError> {
+pub(crate) fn split_head_suffix(
+    tokens: &[String],
+) -> Result<(Vec<String>, Option<usize>), McpError> {
     let mut argv = tokens.to_vec();
     let mut limit = None;
     if let Some(pipe) = argv.iter().rposition(|token| token == "|") {
@@ -392,5 +393,4 @@ mod tests {
         };
         assert!(rg_query_from_input(&input).is_err());
     }
-
 }

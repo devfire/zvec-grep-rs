@@ -43,7 +43,11 @@ pub(crate) fn retry_progress_base(pass: &IndexPassResult) -> ProgressBase {
     }
 }
 
-pub(crate) fn report_scanning(ctx: &IndexContext<'_>, detail: &str, progress_base: Option<ProgressBase>) {
+pub(crate) fn report_scanning(
+    ctx: &IndexContext<'_>,
+    detail: &str,
+    progress_base: Option<ProgressBase>,
+) {
     report(
         ctx,
         IndexProgress {
@@ -96,7 +100,9 @@ pub(crate) fn lock_stats(stats: &Arc<Mutex<IndexStats>>) -> IndexStats {
     stats.lock().map(|guard| guard.clone()).unwrap_or_default()
 }
 
-pub(crate) fn lock_stats_mut(stats: &Arc<Mutex<IndexStats>>) -> std::sync::MutexGuard<'_, IndexStats> {
+pub(crate) fn lock_stats_mut(
+    stats: &Arc<Mutex<IndexStats>>,
+) -> std::sync::MutexGuard<'_, IndexStats> {
     match stats.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),

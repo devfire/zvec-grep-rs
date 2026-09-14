@@ -1,6 +1,5 @@
 //! Root-scoped path resolution for managed-rg paths.
 
-
 use std::path::{Path, PathBuf};
 
 use crate::mcp::error::McpError;

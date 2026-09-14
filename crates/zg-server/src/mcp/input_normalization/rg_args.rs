@@ -1,7 +1,6 @@
 //! Managed-rg argv grammar: `rg_query_from_input` plus the accepted-flag
 //! parsers that lower argv onto `ParsedRgCommand`.
 
-
 use crate::backend::RgQuery;
 use crate::mcp::error::McpError;
 use crate::mcp::schemas::{RgInput, parse_root};
