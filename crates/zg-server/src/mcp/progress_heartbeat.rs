@@ -14,6 +14,7 @@ use std::time::Duration;
 use rmcp::RoleServer;
 use rmcp::model::{NumberOrString, ProgressNotificationParam, ProgressToken};
 use rmcp::service::Peer;
+use zg_core::types::UnixMillis;
 
 /// Heartbeat interval while waiting on authorization or a long index.
 pub const REMOTE_AUTHORIZATION_HEARTBEAT_MS: u64 = 15_000;
@@ -37,8 +38,9 @@ impl ProgressHeartbeat {
             let mut interval =
                 tokio::time::interval(Duration::from_millis(REMOTE_AUTHORIZATION_HEARTBEAT_MS));
             // Monotonic progress values (mirrors the TS `progress += 1`
-            // counter starting at `Date.now()`).
-            let mut progress = now_ms();
+            // counter starting at `Date.now()`). Clock-unavailable
+            // direction: `0` seed keeps monotonicity — fail-safe.
+            let mut progress = UnixMillis::now_ms_or(0);
             loop {
                 interval.tick().await;
                 progress = progress.saturating_add(1);
@@ -77,13 +79,6 @@ impl Drop for ProgressHeartbeat {
             task.abort();
         }
     }
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 /// Reads the `progressToken` from a request `_meta` object (mirrors

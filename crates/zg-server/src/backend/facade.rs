@@ -9,13 +9,14 @@ use std::path::PathBuf;
 
 use zg_core::lexical::LexicalSearchResult;
 use zg_core::service::facade::ZvecGrepService;
+use zg_core::types::UnixMillis;
 
 use super::actor::{RootCommand, send_recv};
 use super::config::{BackendShared, DaemonBackendOptions, ServiceConfig};
 use super::error::BackendError;
 use super::request_types::{DaemonIndexStatus, DaemonServerStatus, IndexInput, RgQuery};
 use super::search_types::{DaemonSearchResult, SearchQuery};
-use super::util::{join_backend_error, now_ms};
+use super::util::join_backend_error;
 use crate::job_scheduler::{JobScheduler, SubmitIndexJobResult};
 use crate::model_pool::EmbeddingModelPool;
 use crate::root_runtime::resolve_requested_root;
@@ -55,7 +56,9 @@ impl DaemonBackend {
             manager,
             scheduler,
             pool,
-            started_at_ms: now_ms(),
+            // Clock-unavailable direction: display-only (pairs with
+            // `uptime_ms`); `0` skews the display, inert otherwise.
+            started_at_ms: UnixMillis::now_ms_or(0),
         }
     }
 

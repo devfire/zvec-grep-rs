@@ -10,10 +10,11 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, atomic::AtomicBool};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use tokio::sync::{Notify, Semaphore};
 use zg_core::models::EmbeddingModel;
+use zg_core::types::UnixMillis;
 
 use crate::logger::DaemonLogger;
 
@@ -64,7 +65,9 @@ impl Entry {
             log_identity: uuid::Uuid::new_v4().to_string(),
             model: None,
             leases: 0,
-            last_used_ms: now_ms(),
+            // Clock-unavailable direction: idle-evict is equality-guarded;
+            // `0` reads as ancient, evicting eagerly at worst (fail-closed).
+            last_used_ms: UnixMillis::now_ms_or(0),
             retired: false,
             loading: None,
             idle_seq: 0,
@@ -74,7 +77,8 @@ impl Entry {
     /// Refreshes freshness. The lease-count change stays at the call site
     /// so it reads explicitly next to the reason.
     pub(crate) fn touch(&mut self) {
-        self.last_used_ms = now_ms();
+        // Same direction: equality-guarded idle-evict; eager at worst.
+        self.last_used_ms = UnixMillis::now_ms_or(0);
         self.idle_seq += 1;
     }
 }
@@ -119,11 +123,4 @@ pub(crate) fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
     state
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-pub(crate) fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }

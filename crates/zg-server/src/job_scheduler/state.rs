@@ -8,13 +8,12 @@
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use zg_core::index_status::IndexJobState;
 use zg_core::pipeline::indexing::IndexProgressSink;
-use zg_core::types::IndexProgress;
+use zg_core::types::{IndexProgress, UnixMillis};
 
 use crate::errors::DaemonError;
 use crate::logger::DaemonLogger;
@@ -92,13 +91,6 @@ pub(crate) fn lock(state: &Mutex<Inner>) -> MutexGuard<'_, Inner> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-pub(crate) fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
-}
-
 pub(crate) fn create_job(state: &mut Inner, input: SubmitIndexJob) -> JobId {
     let id = JobId::new(uuid::Uuid::new_v4().to_string());
     let (sender, _) = watch::channel(IndexJobSnapshot {
@@ -107,7 +99,9 @@ pub(crate) fn create_job(state: &mut Inner, input: SubmitIndexJob) -> JobId {
         reason: input.reason,
         state: IndexJobState::Queued,
         attempt: 0,
-        created_at_ms: now_ms(),
+        // Clock-unavailable direction: metadata plus dedupe tiebreak /
+        // duration display; ties keep stable sort order (fail-safe).
+        created_at_ms: UnixMillis::now_ms_or(0),
         started_at_ms: None,
         finished_at_ms: None,
         progress: None,
@@ -121,7 +115,9 @@ pub(crate) fn create_job(state: &mut Inner, input: SubmitIndexJob) -> JobId {
             reason: input.reason,
             state: IndexJobState::Queued,
             attempt: 0,
-            created_at_ms: now_ms(),
+            // Clock-unavailable direction: metadata plus dedupe tiebreak /
+            // duration display; ties keep stable sort order (fail-safe).
+            created_at_ms: UnixMillis::now_ms_or(0),
             started_at_ms: None,
             finished_at_ms: None,
             progress: None,
@@ -156,9 +152,12 @@ pub(crate) fn snapshot_missing(id: &JobId) -> IndexJobSnapshot {
         reason: JobReason::Manual,
         state: IndexJobState::Failed,
         attempt: 0,
-        created_at_ms: now_ms(),
+        // Clock-unavailable direction: metadata plus dedupe tiebreak /
+        // duration display; ties keep stable sort order (fail-safe).
+        created_at_ms: UnixMillis::now_ms_or(0),
         started_at_ms: None,
-        finished_at_ms: Some(now_ms()),
+        // Same direction: terminal metadata, display only.
+        finished_at_ms: Some(UnixMillis::now_ms_or(0)),
         progress: None,
         error: Some(IndexJobError {
             code: DaemonError::IndexFailed {

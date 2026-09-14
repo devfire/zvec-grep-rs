@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
+use zg_core::types::UnixMillis;
 
 use crate::config::resolve_client_token;
 use crate::errors::DaemonError;
@@ -104,8 +105,10 @@ impl DaemonInstanceLock {
                 pid: std::process::id(),
                 hostname: machine_name(),
                 instance_token: Uuid::new_v4().to_string(),
-                started_at_ms: now_ms(),
-                updated_at_ms: now_ms(),
+                // Clock-unavailable direction: metadata only — liveness is
+                // PID-based, so a `0` stamp is inert.
+                started_at_ms: UnixMillis::now_ms_or(0),
+                updated_at_ms: UnixMillis::now_ms_or(0),
                 server_url: server_url.to_owned(),
                 ready: false,
             };
@@ -167,7 +170,8 @@ impl DaemonInstanceLock {
                 let mut record = record;
                 loop {
                     tokio::time::sleep(LOCK_HEARTBEAT_INTERVAL).await;
-                    record.updated_at_ms = now_ms();
+                    // Same direction: heartbeat stamp is metadata; PID decides.
+                    record.updated_at_ms = UnixMillis::now_ms_or(0);
                     if read_record(&path).await.is_some_and(|current| {
                         current.instance_token == record.instance_token && current.pid == record.pid
                     }) {
@@ -207,7 +211,8 @@ impl DaemonInstanceLock {
     }
 
     async fn write(&mut self) {
-        self.record.updated_at_ms = now_ms();
+        // Same direction: heartbeat stamp is metadata; PID decides.
+        self.record.updated_at_ms = UnixMillis::now_ms_or(0);
         let current = read_record(&self.path).await;
         if current.is_some_and(|current| {
             current.instance_token != self.record.instance_token || current.pid != self.record.pid
@@ -528,13 +533,6 @@ fn chmod_owner_only(path: &Path) {
     {
         let _ = path;
     }
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

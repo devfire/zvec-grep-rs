@@ -7,6 +7,7 @@
 //! cancels tokens and polls `running` to zero.
 
 use zg_core::index_status::IndexJobState;
+use zg_core::types::UnixMillis;
 
 use crate::errors::DaemonError;
 use crate::logger::{LogField, root_identity};
@@ -43,7 +44,8 @@ impl JobScheduler {
                     job.attempt += 1;
                     job.error = None;
                     if job.started_at_ms.is_none() {
-                        job.started_at_ms = Some(super::state::now_ms());
+                        // Clock-unavailable direction: metadata only (fail-safe).
+                        job.started_at_ms = Some(UnixMillis::now_ms_or(0));
                     }
                     job.publish();
                     (job.canonical_root.clone(), job.attempt, job.id.clone())
@@ -198,7 +200,8 @@ impl JobScheduler {
                 return;
             };
             job.state = state;
-            job.finished_at_ms = Some(super::state::now_ms());
+            // Clock-unavailable direction: duration display only (fail-safe).
+            job.finished_at_ms = Some(UnixMillis::now_ms_or(0));
             job.retry_pending = false;
             job.publish();
             // Borrow ends here: sibling maps are touched with fresh lookups.

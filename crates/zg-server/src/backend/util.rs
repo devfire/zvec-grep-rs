@@ -1,9 +1,9 @@
 //! Small backend helpers with no home elsewhere.
 //!
-//! [`log_event`] emits a two-field daemon event; [`now_ms`] is the
-//! wall-clock behind [`DaemonServerStatus`](super::DaemonServerStatus);
-//! [`join_backend_error`] maps a `spawn_blocking` join failure without
-//! inventing new wire codes.
+//! [`log_event`] emits a two-field daemon event; [`join_backend_error`]
+//! maps a `spawn_blocking` join failure without inventing new wire codes.
+//! Wall-clock stamps come from the shared [`UnixMillis`](zg_core::types::UnixMillis)
+//! authority (see [`DaemonServerStatus`](super::DaemonServerStatus)).
 
 use std::collections::BTreeMap;
 
@@ -37,13 +37,6 @@ pub(crate) fn join_backend_error(error: tokio::task::JoinError) -> BackendError 
             message: format!("blocking task panicked: {error}"),
         })
     }
-}
-
-pub(crate) fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 /// Keeps `bridge_cancellation` referenced at the M6 seam: index runs cross

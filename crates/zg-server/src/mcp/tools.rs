@@ -22,6 +22,7 @@ use rmcp::model::{
 use rmcp::service::Peer;
 use rmcp::{ErrorData, RoleServer, ServerHandler};
 use serde::de::DeserializeOwned;
+use zg_core::types::UnixMillis;
 
 use crate::backend::SearchIndexing;
 use crate::backend::{
@@ -539,7 +540,8 @@ impl ZvecGrepMcpServer {
         let status = self.backend.server_status();
         let output = ServerStatusOutput {
             version: self.version.clone(),
-            uptime_ms: now_ms().saturating_sub(status.started_at_ms),
+            // Clock-unavailable direction: display-only uptime reads 0 — fail-safe.
+            uptime_ms: UnixMillis::now_ms_or(0).saturating_sub(status.started_at_ms),
             shutting_down: false,
             active_runtimes: status.runtimes,
             queued_jobs: status.queued_jobs,
@@ -756,11 +758,4 @@ fn progress_message(
         (None, None) => "Indexing workspace".to_owned(),
     };
     Some((completed, total, message))
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }

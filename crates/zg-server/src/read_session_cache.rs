@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use futures::future::BoxFuture;
 use zg_core::error::EngineError;
+use zg_core::types::UnixMillis;
 
 /// Idle TTL before a quiet session closes; mirrors the TS 60 s default.
 pub const DEFAULT_READ_SESSION_IDLE_TTL: Duration = Duration::from_secs(60);
@@ -99,7 +100,10 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
                 state: tokio::sync::Mutex::new(State {
                     handle: None,
                     active_readers: 0,
-                    last_read_ms: now_ms(),
+                    // Clock-unavailable direction: write-only diagnostic
+                    // stamp; idle close is `idle_seq`-guarded, so the `0`
+                    // fallback is inert.
+                    last_read_ms: UnixMillis::now_ms_or(0),
                     idle_seq: 0,
                     closed: false,
                 }),
@@ -137,7 +141,8 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
         };
         let output = operation(handle);
         state.active_readers -= 1;
-        state.last_read_ms = now_ms();
+        // Same direction as construction: diagnostic only, seq-guarded.
+        state.last_read_ms = UnixMillis::now_ms_or(0);
         let seq = state.idle_seq;
         let reads_drained = state.active_readers == 0;
         drop(state);
@@ -194,13 +199,6 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
             }
         });
     }
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

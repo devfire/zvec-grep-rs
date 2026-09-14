@@ -19,6 +19,8 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use zg_core::types::UnixMillis;
+
 use crate::mcp::error::McpError;
 
 /// Request-state signing key length (32 bytes).
@@ -151,14 +153,9 @@ impl InMemoryRequestStateReplayGuard {
         rand::rng().fill_bytes(&mut nonce_bytes);
         RemoteEmbeddingRequestState {
             version: 1,
-            nonce: format!(
-                "{}-{}",
-                SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .map(|duration| duration.as_millis())
-                    .unwrap_or(0),
-                hex_encode(&nonce_bytes)
-            ),
+            // Clock-unavailable direction: the `0` fallback is fail-safe —
+            // nonce uniqueness comes from the 16 random bytes, not the clock.
+            nonce: format!("{}-{}", UnixMillis::now_ms_or(0), hex_encode(&nonce_bytes)),
             method: "tools/call".to_owned(),
             tool: fields.tool,
             arguments_fingerprint: fields.arguments_fingerprint,
@@ -172,9 +169,12 @@ impl InMemoryRequestStateReplayGuard {
         let now = SystemTime::now();
         let mut consumed = lock(&self.consumed);
         consumed.retain(|_, consumed_at| {
+            // Fail closed: when the clock is unreadable every entry is kept,
+            // so a replay still hits the table (or the fail-closed-when-full
+            // rule) instead of slipping through an emptied guard.
             now.duration_since(*consumed_at)
                 .map(|age| age < REQUEST_STATE_TTL)
-                .unwrap_or(false)
+                .unwrap_or(true)
         });
         if consumed.contains_key(&state.nonce) || consumed.len() >= MAX_IN_MEMORY_CONSUMED_STATES {
             return false;
@@ -210,8 +210,11 @@ impl RequestStateCodec {
         state: &RemoteEmbeddingRequestState,
         principal: &str,
     ) -> Result<String, McpError> {
+        // Clock-unavailable direction: minting `0` is fail-closed —
+        // `verify_at` rejects on an unreadable clock, and a healthy clock
+        // reads age-from-`0` as ancient, exceeding any TTL.
         let envelope = StateEnvelope {
-            issued_at_ms: now_ms(),
+            issued_at_ms: UnixMillis::now_ms_or(0),
             method: state.method.clone(),
             principal: principal.to_owned(),
             state: state.clone(),
@@ -241,6 +244,28 @@ impl RequestStateCodec {
         expected: &RequestStateFields,
         principal: &str,
     ) -> Result<RemoteEmbeddingRequestState, McpError> {
+        // Fail closed: an unreadable clock expires every token (R2).
+        self.verify_at(token, expected, principal, UnixMillis::try_now())
+    }
+
+    /// [`RequestStateCodec::verify`] with an injectable clock (tests pass
+    /// `None` for a pre-epoch wall clock). A monotonic `Instant` cannot
+    /// serve here: mint and verify are separated by a
+    /// serialize/deserialize round-trip, so no in-memory instant survives —
+    /// fail-closed wall-clock comparison is the sound option.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::InvalidParams`] when the token is malformed, the signature
+    /// or binding check fails, `now` is `None` or negative, the token is expired,
+    /// or the state does not match.
+    pub fn verify_at(
+        &self,
+        token: &str,
+        expected: &RequestStateFields,
+        principal: &str,
+        now: Option<UnixMillis>,
+    ) -> Result<RemoteEmbeddingRequestState, McpError> {
         let invalid = || McpError::invalid_params("Invalid or expired requestState");
         let (payload, tag) = token.split_once('.').ok_or_else(invalid)?;
         let payload = URL_SAFE_NO_PAD.decode(payload).map_err(|_| invalid())?;
@@ -254,7 +279,13 @@ impl RequestStateCodec {
         if envelope.method != "tools/call" || envelope.principal != principal {
             return Err(invalid());
         }
-        if now_ms().saturating_sub(envelope.issued_at_ms) > self.ttl.as_millis() as u64 {
+        // `None` (pre-epoch clock) or a negative stamp fails closed: the
+        // token reads as expired rather than fresh.
+        let Some(now) = now else {
+            return Err(invalid());
+        };
+        let now_ms = u64::try_from(now.as_millis()).map_err(|_| invalid())?;
+        if now_ms.saturating_sub(envelope.issued_at_ms) > self.ttl.as_millis() as u64 {
             return Err(invalid());
         }
         if !envelope.state.matches(expected) {
@@ -309,13 +340,6 @@ pub fn random_state_key() -> [u8; REQUEST_STATE_KEY_BYTES] {
     let mut key = [0u8; REQUEST_STATE_KEY_BYTES];
     rand::rng().fill_bytes(&mut key);
     key
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 fn lock<T>(state: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -374,6 +398,32 @@ mod tests {
         assert!(
             codec
                 .verify(&token, &fields(), "loopback-anonymous")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn unavailable_or_garbage_clock_rejects() {
+        let codec = RequestStateCodec::new(random_state_key(), REQUEST_STATE_TTL);
+        let guard = InMemoryRequestStateReplayGuard::new();
+        let token = codec
+            .mint(&guard.issue(fields()), "loopback-anonymous")
+            .unwrap();
+        // Pre-epoch wall clock (`None`): fail closed, never fresh.
+        assert!(
+            codec
+                .verify_at(&token, &fields(), "loopback-anonymous", None)
+                .is_err()
+        );
+        // Negative stamp: fail closed too.
+        assert!(
+            codec
+                .verify_at(
+                    &token,
+                    &fields(),
+                    "loopback-anonymous",
+                    Some(UnixMillis::from_millis(-1)),
+                )
                 .is_err()
         );
     }
