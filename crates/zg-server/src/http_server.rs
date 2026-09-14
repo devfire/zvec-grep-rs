@@ -20,6 +20,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use serde_json::{Value, json};
+use subtle::ConstantTimeEq;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -356,17 +357,13 @@ fn valid_token(header: Option<&axum::http::HeaderValue>, expected: Option<&str>)
     let Some(presented) = actual.strip_prefix("Bearer ") else {
         return false;
     };
-    constant_time_eq(presented.as_bytes(), expected.as_bytes())
-}
-
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
+    // Length is not secret: early exit, then constant-time content
+    // comparison via `subtle` (same policy as the grant-signature check in
+    // `zg_core::authorization`).
+    if presented.len() != expected.len() {
         return false;
     }
-    left.iter()
-        .zip(right.iter())
-        .fold(0u8, |acc, (left, right)| acc | (left ^ right))
-        == 0
+    presented.as_bytes().ct_eq(expected.as_bytes()).into()
 }
 
 #[cfg(test)]
@@ -429,6 +426,14 @@ mod tests {
         ));
         assert!(!valid_token(
             Some(&HeaderValue::from_static("Bearer wrong")),
+            Some("secret")
+        ));
+        assert!(!valid_token(
+            Some(&HeaderValue::from_static("Bearer secert")),
+            Some("secret")
+        ));
+        assert!(!valid_token(
+            Some(&HeaderValue::from_static("Bearer sec")),
             Some("secret")
         ));
     }

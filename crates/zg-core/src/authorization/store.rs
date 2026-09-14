@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use subtle::ConstantTimeEq;
 
 use super::error::AuthError;
 use super::types::{
@@ -56,17 +57,6 @@ fn from_hex(hex: &str) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-/// Constant-time equality for signature comparison.
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (a, b) in left.iter().zip(right.iter()) {
-        diff |= a ^ b;
-    }
-    diff == 0
-}
 /// Stable (key-sorted) JSON, mirroring TS `stableStringify`: arrays keep
 /// order, objects sort keys recursively, scalars render as JSON.
 fn stable_stringify(value: &serde_json::Value) -> String {
@@ -405,7 +395,14 @@ impl RemoteEmbeddingAuthorizationStore {
         else {
             return false;
         };
-        constant_time_eq(&actual, &expected)
+        // Length is not secret: early exit, then constant-time content
+        // comparison. `subtle` barriers the accumulator so LLVM cannot
+        // short-circuit it (cf. `mac.verify_slice` in
+        // `zg-server/src/mcp/request_state.rs`).
+        if actual.len() != expected.len() {
+            return false;
+        }
+        actual.ct_eq(&expected).into()
     }
 
     fn read_signing_key(&self) -> EngineResult<Option<Vec<u8>>> {
@@ -626,6 +623,25 @@ mod tests {
         );
         assert!(!store.has_grant(&target).expect("has_grant after revoke"));
         assert!(!store.revoke(&target).expect("revoke missing"));
+    }
+
+    #[test]
+    fn truncated_signature_is_invalid() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("repo");
+        fs::create_dir_all(&root).expect("mkdir");
+        let store = store_in(dir.path());
+        let target = target_for(&root);
+        let grant = store.grant(&target).expect("grant");
+        let key = store
+            .read_signing_key()
+            .expect("read key")
+            .expect("key present");
+        assert!(store.verify_grant(&grant, &key));
+        // Length mismatch fails before content comparison.
+        let mut short = grant.clone();
+        short.signature.truncate(short.signature.len() / 2);
+        assert!(!store.verify_grant(&short, &key));
     }
 
     #[test]

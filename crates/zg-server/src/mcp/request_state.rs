@@ -24,6 +24,28 @@ use zg_core::types::UnixMillis;
 use crate::mcp::error::McpError;
 use crate::sync::MutexExt;
 
+/// MCP method a request-state token is bound to.
+///
+/// `#[non_exhaustive]` so binding a new method is a deliberate addition,
+/// not a string typo widening the check: construction and verification
+/// both go through [`BoundMethod::as_str`], never a literal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum BoundMethod {
+    /// `tools/call` — the only bound method today.
+    ToolsCall,
+}
+
+impl BoundMethod {
+    /// Wire string for the bound method.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ToolsCall => "tools/call",
+        }
+    }
+}
+
 /// Request-state signing key length (32 bytes).
 pub const REQUEST_STATE_KEY_BYTES: usize = 32;
 /// Request-state lifetime (10 minutes).
@@ -71,7 +93,7 @@ impl RemoteEmbeddingRequestState {
     #[must_use]
     pub fn matches(&self, expected: &RequestStateFields) -> bool {
         self.version == 1
-            && self.method == "tools/call"
+            && self.method == BoundMethod::ToolsCall.as_str()
             && self.tool == expected.tool
             && self.arguments_fingerprint == expected.arguments_fingerprint
             && self.target_fingerprint == expected.target_fingerprint
@@ -151,7 +173,7 @@ impl InMemoryRequestStateReplayGuard {
             // Clock-unavailable direction: the `0` fallback is fail-safe —
             // nonce uniqueness comes from the 16 random bytes, not the clock.
             nonce: format!("{}-{}", UnixMillis::now_ms_or(0), hex_encode(&nonce_bytes)),
-            method: "tools/call".to_owned(),
+            method: BoundMethod::ToolsCall.as_str().to_owned(),
             tool: fields.tool,
             arguments_fingerprint: fields.arguments_fingerprint,
             target_fingerprint: fields.target_fingerprint,
@@ -271,7 +293,7 @@ impl RequestStateCodec {
             .map_err(|_| invalid())?;
         self.verify_tag(&payload, &tag).map_err(|_| invalid())?;
         let envelope: StateEnvelope = serde_json::from_slice(&payload).map_err(|_| invalid())?;
-        if envelope.method != "tools/call" || envelope.principal != principal {
+        if envelope.method != BoundMethod::ToolsCall.as_str() || envelope.principal != principal {
             return Err(invalid());
         }
         // `None` (pre-epoch clock) or a negative stamp fails closed: the
