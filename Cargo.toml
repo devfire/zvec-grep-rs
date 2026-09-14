@@ -130,6 +130,12 @@ must_use_candidate = "deny"
 missing_errors_doc = "deny"
 missing_panics_doc = "deny"
 result_large_err = "warn"
+# `string_slice` stays at its default (allow): trial-enabling it as `warn`
+# fires on ~45 pre-existing sites across 12 files (markdown, trace,
+# install, glob, ...), far beyond the four R8 audited. Those need a
+# dedicated audit pass first — a warn-gate with 45 known warnings trains
+# reviewers to ignore warnings. `indexing_slicing` remains the deny-level
+# firewall; audited `str` sites carry the ASCII-boundary invariant comment.
 # The `zg` binary is a CLI: stdout/stderr output is its contract, so the
 # binary crate allows these at its root (see `crates/zg/src/main.rs`;
 # Cargo forbids `workspace = true` plus per-lint overrides in one manifest).

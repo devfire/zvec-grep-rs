@@ -152,6 +152,9 @@ struct CharacterClass {
 }
 
 fn read_glob_character_class(pattern: &str, start_index: usize) -> Option<CharacterClass> {
+    // UTF-8 safety: `[`, `]`, `!`, `^` are ASCII, and no ASCII byte occurs
+    // inside a multi-byte UTF-8 sequence — every boundary below (including
+    // the `content[1..]` negation strip) is a `str` boundary by construction.
     let end_index = pattern[start_index + 1..].find(']')? + start_index + 1;
     let mut content = &pattern[start_index + 1..end_index];
     if content.is_empty() || content == "!" || content == "^" {

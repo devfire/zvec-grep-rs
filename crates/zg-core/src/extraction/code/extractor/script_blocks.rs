@@ -156,6 +156,9 @@ fn find_script_blocks(text: &str) -> Vec<ScriptBlock> {
         else {
             break;
         };
+        // UTF-8 safety: every offset here derives from an ASCII-byte match
+        // (`<`, `>`, `s`), and no ASCII byte can appear inside a multi-byte
+        // UTF-8 sequence — so each is a `str` boundary by construction.
         let attrs = &text[after..tag_end];
         let start_offset = tag_end + 1;
         let Some(close) = find_insensitive(bytes, "</script", start_offset) else {
@@ -174,6 +177,7 @@ fn find_script_blocks(text: &str) -> Vec<ScriptBlock> {
         }
         close_end += 1;
         blocks.push(ScriptBlock {
+            // Same ASCII-boundary invariant as the `attrs` slice above.
             text: text[start_offset..close].to_owned(),
             format: script_block_format(attrs),
             start_line: bytes
