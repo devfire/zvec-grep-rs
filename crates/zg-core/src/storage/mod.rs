@@ -87,8 +87,15 @@ pub struct StorageSearchHit {
     pub score: f64,
 }
 
+/// Sealed: `ZvecWorkspaceIndexStorage` is the only implementor, so adding
+/// methods is not a breaking change. (Plain `mod private`: the implementor
+/// is a child module of this file.)
+mod private {
+    pub trait Sealed {}
+}
+
 /// Storage surface consumed by the indexing and search pipelines.
-pub trait WorkspaceIndexStorage: Send {
+pub trait WorkspaceIndexStorage: private::Sealed + Send {
     fn read_only(&self) -> bool;
 
     fn get_file_by_path(&self, absolute_path: &str) -> Option<FileInfo>;

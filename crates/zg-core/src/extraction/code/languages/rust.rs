@@ -31,6 +31,8 @@ pub static RUST_ADAPTER: RustLanguage = RustLanguage;
 /// Rust language adapter.
 pub struct RustLanguage;
 
+impl crate::extraction::code::adapter::private::Sealed for RustLanguage {}
+
 impl LanguageAdapter for RustLanguage {
     fn format(&self) -> &'static str {
         "rust"

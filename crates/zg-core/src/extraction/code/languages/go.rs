@@ -29,6 +29,8 @@ pub static GO_ADAPTER: GoLanguage = GoLanguage;
 /// Go language adapter.
 pub struct GoLanguage;
 
+impl crate::extraction::code::adapter::private::Sealed for GoLanguage {}
+
 impl LanguageAdapter for GoLanguage {
     fn format(&self) -> &'static str {
         "go"

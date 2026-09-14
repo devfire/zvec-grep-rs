@@ -36,6 +36,8 @@ pub static JAVA_ADAPTER: JavaLanguage = JavaLanguage;
 /// Java language adapter.
 pub struct JavaLanguage;
 
+impl crate::extraction::code::adapter::private::Sealed for JavaLanguage {}
+
 impl LanguageAdapter for JavaLanguage {
     fn format(&self) -> &'static str {
         "java"

@@ -27,6 +27,8 @@ pub static PYTHON_ADAPTER: PythonLanguage = PythonLanguage;
 /// Python language adapter.
 pub struct PythonLanguage;
 
+impl crate::extraction::code::adapter::private::Sealed for PythonLanguage {}
+
 impl LanguageAdapter for PythonLanguage {
     fn format(&self) -> &'static str {
         "python"

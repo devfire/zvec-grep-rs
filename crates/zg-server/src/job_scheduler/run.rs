@@ -302,7 +302,7 @@ impl JobScheduler {
                 if let Some(job) = self.shared.state.lock_ignore_poison().jobs.get_mut(member) {
                     job.error = Some(IndexJobError {
                         code: DaemonError::IndexCancelled.code().to_owned(),
-                        message: zg_core::error::redact_error_text(message, 512),
+                        message: zg_core::error::redact_error_text(message, 512).into_owned(),
                         context: None,
                         cause: None,
                     });

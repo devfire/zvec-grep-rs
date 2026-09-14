@@ -48,6 +48,8 @@ pub static TYPESCRIPT_ADAPTER: TypescriptLanguage = TypescriptLanguage;
 /// TypeScript language adapter.
 pub struct TypescriptLanguage;
 
+impl crate::extraction::code::adapter::private::Sealed for TypescriptLanguage {}
+
 impl LanguageAdapter for TypescriptLanguage {
     fn format(&self) -> &'static str {
         "typescript"

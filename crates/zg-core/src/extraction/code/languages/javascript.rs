@@ -34,6 +34,8 @@ pub static JAVASCRIPT_ADAPTER: JavascriptLanguage = JavascriptLanguage;
 /// JavaScript language adapter.
 pub struct JavascriptLanguage;
 
+impl crate::extraction::code::adapter::private::Sealed for JavascriptLanguage {}
+
 impl LanguageAdapter for JavascriptLanguage {
     fn format(&self) -> &'static str {
         "javascript"

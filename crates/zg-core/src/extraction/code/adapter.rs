@@ -204,7 +204,14 @@ impl std::fmt::Debug for SyntaxNode<'_> {
 /// become trait methods with defaults so languages only override what they
 /// need. All returned strings are owned: several hooks transform the raw
 /// slice (qualifier stripping, quote trimming, signature normalization).
-pub trait LanguageAdapter: Send + Sync {
+/// Sealed: every language adapter lives in `languages/`; adding methods is
+/// not a breaking change. (`pub(crate)` rather than private: the language
+/// modules are siblings of this file, not children.)
+pub(crate) mod private {
+    pub trait Sealed {}
+}
+
+pub trait LanguageAdapter: private::Sealed + Send + Sync {
     /// Structured format key, e.g. `"rust"`.
     fn format(&self) -> &'static str;
 
@@ -351,6 +358,7 @@ mod tests {
     use super::*;
 
     struct Probe;
+    impl private::Sealed for Probe {}
     impl LanguageAdapter for Probe {
         fn format(&self) -> &'static str {
             "probe"

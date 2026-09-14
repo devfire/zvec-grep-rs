@@ -18,10 +18,17 @@ use zg_core::types::UnixMillis;
 /// Idle TTL before a quiet session closes; mirrors the TS 60 s default.
 pub const DEFAULT_READ_SESSION_IDLE_TTL: Duration = Duration::from_secs(60);
 
+/// Sealed: only the daemon's own session handles implement this, so adding
+/// methods is not a breaking change. (`pub(crate)`: the implementor in
+/// `backend::actor` is a sibling module, not a child.)
+pub(crate) mod private {
+    pub trait Sealed {}
+}
+
 /// A read handle the cache can own. `Send` is required: the cache holds it
 /// across awaits inside a `tokio::sync::Mutex`.
 #[async_trait::async_trait]
-pub trait ClosableHandle: Send {
+pub trait ClosableHandle: private::Sealed + Send {
     /// Releases the handle (closes storage, returns leases).
     async fn close(self);
 }
@@ -211,6 +218,7 @@ mod tests {
         closes: Arc<AtomicUsize>,
     }
 
+    impl private::Sealed for TestHandle {}
     #[async_trait::async_trait]
     impl ClosableHandle for TestHandle {
         async fn close(self) {

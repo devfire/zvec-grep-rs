@@ -148,6 +148,8 @@ impl CachedSession {
     }
 }
 
+impl crate::read_session_cache::private::Sealed for CachedSession {}
+
 #[async_trait::async_trait]
 impl ClosableHandle for CachedSession {
     async fn close(self) {

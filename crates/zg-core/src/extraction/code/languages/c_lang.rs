@@ -34,6 +34,8 @@ pub static C_ADAPTER: CLanguage = CLanguage;
 /// C language adapter.
 pub struct CLanguage;
 
+impl crate::extraction::code::adapter::private::Sealed for CLanguage {}
+
 impl LanguageAdapter for CLanguage {
     fn format(&self) -> &'static str {
         "c"

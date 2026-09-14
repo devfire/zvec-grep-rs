@@ -1,6 +1,7 @@
 //! Engine error taxonomy mirroring `ZVEC_GREP.ENGINE.*` codes from the
 //! TypeScript implementation, with context lines and secret redaction.
 
+use std::borrow::Cow;
 use std::fmt;
 
 /// Prefix shared by every engine error code.
@@ -257,7 +258,9 @@ pub fn workspace_index_detail(name: &str) -> String {
 }
 
 /// Redacts credentials from arbitrary error text, then truncates to `max_length`
-/// with an ellipsis. Mirrors the five passes of the TS implementation (the URL
+/// with an ellipsis. Returns a borrow when nothing needs redacting or cutting,
+/// so the common no-secret path allocates zero times. Mirrors the five passes
+/// of the TS implementation (the URL
 /// userinfo pass is a hand-rolled scanner because the Rust regex crate has no
 /// lookbehind).
 ///
@@ -271,7 +274,8 @@ pub fn workspace_index_detail(name: &str) -> String {
 // skip-pass fallback (`LazyLock<Result<Regex>>`). Allowed here so the
 // `panic = "deny"` firewall stays green until then.
 #[allow(clippy::panic)]
-pub fn redact_error_text(value: &str, max_length: usize) -> String {
+#[must_use]
+pub fn redact_error_text(value: &str, max_length: usize) -> Cow<'_, str> {
     use std::sync::LazyLock;
 
     use regex::Regex;
@@ -293,17 +297,30 @@ pub fn redact_error_text(value: &str, max_length: usize) -> String {
             .unwrap_or_else(|e| panic!("static redaction regex must compile: {e}"))
     });
 
+    // Each pass borrows when it matches nothing, so the common no-secret
+    // path allocates zero times; only an actual redaction forces ownership
+    // (reassigned solely in the `Owned` arm, where nothing borrows `out`).
     let mut out = redact_url_userinfo(value);
-    out = KEY_VALUE.replace_all(&out, "$1\"[redacted]\"").into_owned();
-    out = BEARER.replace_all(&out, "$1 [redacted]").into_owned();
-    out = SK_TOKEN.replace_all(&out, "sk-[redacted]").into_owned();
-    truncate_chars(&out, max_length)
+    for (pattern, replacement) in [
+        (&KEY_VALUE, "$1\"[redacted]\""),
+        (&BEARER, "$1 [redacted]"),
+        (&SK_TOKEN, "sk-[redacted]"),
+    ] {
+        if let Cow::Owned(owned) = pattern.replace_all(&out, replacement) {
+            out = Cow::Owned(owned);
+        }
+    }
+    truncate_cow(out, max_length)
 }
 
 /// Replaces `scheme://user@` userinfo with `[redacted]@`. The scheme must start
 /// with an ASCII letter, not end in a punctuation char, and the byte before it
 /// must not be a scheme character (mirrors the TS lookbehind).
-fn redact_url_userinfo(value: &str) -> String {
+fn redact_url_userinfo(value: &str) -> Cow<'_, str> {
+    // Fast path: no scheme separator means no userinfo — borrow.
+    if !value.contains("://") {
+        return Cow::Borrowed(value);
+    }
     let bytes = value.as_bytes();
     let mut result = String::with_capacity(value.len());
     let mut cursor = 0usize;
@@ -352,18 +369,19 @@ fn redact_url_userinfo(value: &str) -> String {
         }
     }
     result.push_str(value.get(cursor..).unwrap_or(""));
-    result
+    Cow::Owned(result)
 }
 
 /// Truncates to `max_length` Unicode scalar values, keeping `max_length - 1`
-/// leading chars plus `…`; never splits a char.
-fn truncate_chars(value: &str, max_length: usize) -> String {
+/// leading chars plus `…`; never splits a char. Passes borrowing through
+/// when nothing is cut.
+fn truncate_cow(value: Cow<'_, str>, max_length: usize) -> Cow<'_, str> {
     if value.chars().count() <= max_length {
-        return value.to_owned();
+        return value;
     }
     let mut truncated: String = value.chars().take(max_length.saturating_sub(1)).collect();
     truncated.push('\u{2026}');
-    truncated
+    Cow::Owned(truncated)
 }
 
 #[cfg(test)]
@@ -387,6 +405,14 @@ mod tests {
         let redacted = redact_error_text(text, 200);
         assert!(redacted.contains("Bearer [redacted]"));
         assert!(!redacted.contains("s3cr3t"));
+    }
+
+    #[test]
+    fn clean_input_borrows_without_allocating() {
+        assert!(matches!(
+            redact_error_text("nothing secret here", 200),
+            Cow::Borrowed(_)
+        ));
     }
 
     #[test]

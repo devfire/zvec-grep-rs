@@ -92,6 +92,11 @@ pub type ModelLoadSink = Arc<dyn Fn(EmbeddingModelProgress) + Send + Sync>;
 ///
 /// Implementations must be `Send + Sync`; batch embedding may internally
 /// parallelize, but `embed` itself is called from arbitrary threads.
+///
+/// Intentionally **un**sealed: third-party backends are a supported
+/// extension point (the pool accepts any `Arc<dyn EmbeddingModel>` via its
+/// model factory), so downstream crates may implement this. New methods
+/// must therefore carry default bodies.
 pub trait EmbeddingModel: Send + Sync {
     fn info(&self) -> &EmbeddingModelInfo;
 

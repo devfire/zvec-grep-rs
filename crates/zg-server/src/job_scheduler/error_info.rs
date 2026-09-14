@@ -30,21 +30,21 @@ pub(crate) fn error_info(failure: &JobFailure) -> IndexJobError {
         },
         JobFailure::Daemon(error) => IndexJobError {
             code: safe_code(error.code()).unwrap_or("INDEX_FAILED").to_owned(),
-            message: zg_core::error::redact_error_text(&error.to_string(), 512),
+            message: zg_core::error::redact_error_text(&error.to_string(), 512).into_owned(),
             context: None,
             cause: None,
         },
         JobFailure::Engine(error) => IndexJobError {
             code: safe_engine_code(&error.code().to_string()),
-            message: zg_core::error::redact_error_text(error.message(), 512),
+            message: zg_core::error::redact_error_text(error.message(), 512).into_owned(),
             context: error
                 .context()
-                .map(|context| zg_core::error::redact_error_text(context, 4096)),
+                .map(|context| zg_core::error::redact_error_text(context, 4096).into_owned()),
             cause: None,
         },
         JobFailure::Failed(message) => IndexJobError {
             code: "INDEX_FAILED".to_owned(),
-            message: zg_core::error::redact_error_text(message, 512),
+            message: zg_core::error::redact_error_text(message, 512).into_owned(),
             context: None,
             cause: None,
         },
@@ -71,7 +71,7 @@ fn safe_code(code: &str) -> Option<&str> {
 }
 
 fn safe_engine_code(code: &str) -> String {
-    let redacted = zg_core::error::redact_error_text(code.trim(), 128);
+    let redacted = zg_core::error::redact_error_text(code.trim(), 128).into_owned();
     if redacted.chars().all(|char| {
         char.is_ascii_uppercase() || char.is_ascii_digit() || matches!(char, '_' | '.' | '-')
     }) && redacted.starts_with(|char: char| char.is_ascii_uppercase())

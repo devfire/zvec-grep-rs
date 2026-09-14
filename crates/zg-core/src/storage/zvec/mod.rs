@@ -328,6 +328,8 @@ impl ZvecWorkspaceIndexStorage {
     }
 }
 
+impl super::private::Sealed for ZvecWorkspaceIndexStorage {}
+
 impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
     fn read_only(&self) -> bool {
         self.read_only

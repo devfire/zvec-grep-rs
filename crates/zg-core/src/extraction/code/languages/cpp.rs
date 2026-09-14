@@ -40,6 +40,8 @@ pub static CPP_ADAPTER: CppLanguage = CppLanguage;
 /// C++ language adapter.
 pub struct CppLanguage;
 
+impl crate::extraction::code::adapter::private::Sealed for CppLanguage {}
+
 impl LanguageAdapter for CppLanguage {
     fn format(&self) -> &'static str {
         "cpp"

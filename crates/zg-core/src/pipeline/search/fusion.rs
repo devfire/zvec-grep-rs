@@ -119,10 +119,12 @@ pub fn fuse_candidates(candidates: &mut [Candidate]) {
         }
     }
     candidates.sort_by(|left, right| {
+        // Total order: RRF scores are finite, and `total_cmp` keeps the
+        // comparator consistent (no papered-over NaN arm) even if that
+        // invariant ever breaks.
         right
             .score
-            .partial_cmp(&left.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&left.score)
             .then_with(|| left.id.cmp(&right.id))
     });
     for (index, candidate) in candidates.iter_mut().enumerate() {
