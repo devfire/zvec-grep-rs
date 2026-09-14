@@ -5,5 +5,7 @@
 # side-by-side (same directory tarball, Docker image, `cargo install`
 # staging) resolves without `LD_LIBRARY_PATH`. Upstream ships no static
 # archive, so true static linking is not an option.
-[build]
+# Linux-only: `-z origin` is a GNU ld option; macOS ld rejects it
+# (`ld: unknown options: -z`) and breaks every macOS CI job.
+[target.'cfg(target_os = "linux")']
 rustflags = ["-C", "link-args=-Wl,-z,origin -Wl,-rpath,$ORIGIN"]
