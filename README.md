@@ -12,25 +12,28 @@ Rust port of [zvec-grep](https://github.com/zvec-ai/zvec-grep): local-first hybr
 
 - **Multi-root daemon**: concurrent per-root actors (`DaemonBackend` + `RuntimeManager`), canonical `RootKey` resolution with alias dedupe, idle eviction (30 min default), cooperative cancellation, deterministic shutdown.
 - **MCP**: 6 tools — `zvec_grep_search`, `zvec_grep_index`, `zvec_grep_index_drop`, `zvec_grep_rg`, `zvec_grep_index_status`, `zvec_grep_server_status` — with `agent|full` toolsets and validated input bounds at the boundary.
-- **Embeddings**: pure-Rust `model2vec` (`local/potion-retrieval-32m`, dim 512) and remote Qwen (`qwen/text-embedding-v4`, `qwen/qwen3.7-text-embedding` dim 1024, `qwen/qwen3-vl-embedding` dim 2560) requiring API key + workspace grant (fails closed without a permit).
+- **Embeddings**: pure-Rust `model2vec` (`local/potion-retrieval-32m`, dim 512), ONNX (`local/bge-small-en-v1.5`, `local/all-minilm-l6-v2`, dim 384; `--features onnx`), GGUF via llama.cpp (`local/embeddinggemma-300m` dim 768, `local/qwen3-embedding-0.6b` dim 1024; `--features llama`), and remote Qwen (`qwen/text-embedding-v4`, `qwen/qwen3.7-text-embedding` dim 1024, `qwen/qwen3-vl-embedding` dim 2560) requiring API key + workspace grant (fails closed without a permit). Vector-parity gate (cosine >= 0.999 vs TS goldens) covers all local backends.
 - **Authorization**: workspace-scoped remote-embedding grants (`zg auth`), enforced in both direct and daemon paths.
 - **Storage**: standalone — Rust indexes never share collections with the TS implementation; a TS-generation `files.zvec` is refused loudly (`STORAGE.FOREIGN_TS_INDEX_PRESENT`), never migrated.
 
-## Not supported: local backends
+## Local backends (opt-in)
 
-`transformers-js` (`local/bge-small-en-v1.5`, `local/all-minilm-l6-v2`) and `llama-cpp` (`local/embeddinggemma-300m`, `local/qwen3-embedding-0.6b`) catalog entries resolve but **cannot load**: `create_embedding_model` returns `ModelError::BackendUnavailable` (plan phases C/D — ONNX / GGUF behind off-by-default cargo features — are not implemented). No C++ toolchain or model downloads are needed; the default build is pure Rust.
+`onnx` (ort) and `llama` (llama-cpp-2) cargo features, off by default so the default build stays pure Rust. Compiled out, those catalog entries resolve but `create_embedding_model` returns `ModelError::BackendUnavailable`. `llama` needs a C++ toolchain; both download models on first use.
 
 ## Prereqs
 
-Rust 1.85+, `cargo`.
+Rust 1.88+, `cargo` (`llama` feature additionally needs a C++ toolchain).
 
 ## Build / test / lint
 
 ```bash
 cargo build --workspace
+cargo build -p zg-core --features onnx,llama  # local backends
 cargo test --workspace
-cargo clippy --workspace --all-targets
+cargo clippy --workspace --all-targets  # warning-free; deny lints (unwrap/expect/panic, indexing_slicing, …)
 ```
+
+`Dockerfile` ships a portable multi-stage `zg` image (`$ORIGIN` rpath, no `LD_LIBRARY_PATH`).
 
 Integration tests in `zg-server`/`zg` use `zg-core`'s `test-support` feature (`StubEmbeddingModel`: deterministic SHA-256-hash vectors — for tests only, not retrieval quality).
 
@@ -70,4 +73,4 @@ let hits = svc.context(&ZvecGrepContextOptions {
 
 ## Status
 
-Port phases 0, A, B, E, F, G, H, I per `RUST_PORT_OF_ZVEC_GREP_PLAN.md` (facade, daemon, MCP, CLI, auth, standalone storage). Remaining: C (ONNX) and D (llama-cpp GGUF) local backends. See `docs/ts-divergence.md` for deliberate divergences from the TS implementation.
+Port phases 0, A–I per `RUST_PORT_OF_ZVEC_GREP_PLAN.md` are complete (facade, daemon, MCP, CLI, auth, standalone storage, ONNX + llama-cpp local backends). See `docs/ts-divergence.md` for deliberate divergences from the TS implementation.
