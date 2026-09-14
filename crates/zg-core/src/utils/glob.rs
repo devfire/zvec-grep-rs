@@ -178,6 +178,10 @@ struct Alternation {
 }
 
 fn read_glob_alternation(pattern: &str, start_index: usize) -> Option<Alternation> {
+    // UTF-8 safety: `index` walks raw bytes but slices only at `{`, `}`,
+    // `,` — all ASCII, and no ASCII byte occurs inside a multi-byte UTF-8
+    // sequence — so `alternative_start` and `index` are `str` boundaries
+    // by construction whenever `pattern[alternative_start..index]` runs.
     let mut alternatives: Vec<String> = Vec::new();
     let mut depth = 0usize;
     let mut alternative_start = start_index + 1;
