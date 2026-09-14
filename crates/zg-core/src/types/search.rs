@@ -7,8 +7,10 @@ use crate::types::{
     CodeSymbolType, Content, Entity, EntityMetadata, FileInfo, Range, TimingEntry, UnixMillis,
 };
 
-/// Which recall paths contributed to a hit.
+/// Which recall paths contributed to a hit (wire form mirrors TS
+/// `SearchMatchedBy`: lowercase `fts`/`vector`/`fts+vector`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SearchMatchedBy {
     Fts,
     Vector,

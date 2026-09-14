@@ -169,6 +169,24 @@ under `--all-features` in CI, not here.
   Reason: `EmbeddingModel::embed` is sync; async wrapping is phase G's
   `spawn_blocking` seam (M4/M6). Cancellation crosses via a poll thread
   tripping `CancelFlag`; the daemon wires `CancellationToken` properly.
+- `ZvecGrepContextOptions.trackEntityId` does not exist in TS; the Rust
+  field stays for API compatibility but the context path never forwards it
+  into per-group `SearchPlan`s (the TS context `searchPlan` call omits it).
+  Reason: forwarding per group would force-track in every group and inflate
+  the tracked entity's RRF sum; direct `search_plan` / diagnose use is
+  unaffected.
+- `ContextItem.range` is evidence-first with entity-range fallback
+  (`hit_to_item`); TS uses `hit.entity.range` and renders the evidence
+  range separately. Reason: the matched range is already surfaced via
+  `matched_range_line`; changing `range` would alter CLI output with no
+  consumer benefit.
+- `select_and_rank` dedupe-key tie-break is byte order; TS is
+  `localeCompare`. Reason: observable only for non-ASCII paths; `Intl`
+  collation has no allocation-free Rust equivalent on this path.
+- Merged trace/evidence `route_id`s repeat per group (`fts`/`vector` are
+  assigned per plan by `make_default_route_id`) with first-seen winning.
+  Reason: per-group plans are the TS execution shape; globally unique
+  route ids would diverge further from TS `search.plan.routes`.
 
 ## Deferred (accepted gaps, not silence)
 

@@ -183,6 +183,7 @@ define_engine_error_codes! {
     SearchPlanInvalidModifiedTimeFilter => "SEARCH_PLAN.INVALID_MODIFIED_TIME_FILTER",
     SearchPlanInvalidModifiedTimeRange => "SEARCH_PLAN.INVALID_MODIFIED_TIME_RANGE",
     SearchPlanInvalidPathFilter => "SEARCH_PLAN.INVALID_PATH_FILTER",
+    ServiceEmptyRouteQuery => "SERVICE.EMPTY_ROUTE_QUERY",
     ServiceReadSessionClosed => "SERVICE.READ_SESSION_CLOSED",
     StorageCollectionClosed => "STORAGE.COLLECTION_CLOSED",
     StorageCreateFailed => "STORAGE.CREATE_FAILED",
@@ -353,6 +354,11 @@ pub mod codes {
     #[must_use]
     pub const fn daemon_blocking_join_failed() -> EngineErrorCode {
         EngineErrorCode::DaemonBlockingJoinFailed
+    }
+
+    #[must_use]
+    pub const fn service_empty_route_query() -> EngineErrorCode {
+        EngineErrorCode::ServiceEmptyRouteQuery
     }
 
     #[must_use]

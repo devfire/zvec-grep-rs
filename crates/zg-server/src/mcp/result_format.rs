@@ -497,8 +497,9 @@ mod tests {
     use super::*;
     use zg_core::service::types::{
         ContentRole, ContentStatus, ContextCoverage, ContextDiagnostics, ContextFile,
-        ContextItemKind, ContextSource,
+        ContextItemKind, ContextSource, GroupResult, GroupRole, QueryGroupRef,
     };
+    use zg_core::types::SearchMatchedBy;
 
     fn item(rank: usize, text: &str) -> ContextItem {
         ContextItem {
@@ -530,6 +531,7 @@ mod tests {
             query_groups: Vec::new(),
             container: None,
             selection_reason: None,
+            coverage_group: None,
         }
     }
 
@@ -583,5 +585,49 @@ mod tests {
             "7"
         );
         assert_eq!(range_label(&Range::File), "file");
+    }
+
+    #[test]
+    fn grouped_results_render_items_per_group() {
+        let mut first = item(1, "fn alpha() {}\n");
+        first.query_groups = vec![QueryGroupRef {
+            id: "Q1".to_owned(),
+            query: "alpha".to_owned(),
+            role: GroupRole::Primary,
+            rank: 1,
+            matched_by: SearchMatchedBy::Fts,
+        }];
+        let mut second = item(2, "fn beta() {}\n");
+        second.query_groups = vec![QueryGroupRef {
+            id: "Q2".to_owned(),
+            query: "beta".to_owned(),
+            role: GroupRole::Supplemental,
+            rank: 1,
+            matched_by: SearchMatchedBy::Vector,
+        }];
+        let mut grouped = result(vec![first, second]);
+        grouped.group_results = Some(vec![
+            GroupResult {
+                id: "Q1".to_owned(),
+                query: "alpha".to_owned(),
+                role: Some(GroupRole::Primary),
+                items: Vec::new(),
+                timings: None,
+            },
+            GroupResult {
+                id: "Q2".to_owned(),
+                query: "beta".to_owned(),
+                role: Some(GroupRole::Supplemental),
+                items: Vec::new(),
+                timings: None,
+            },
+        ]);
+        let text = format_agent_context_result(&grouped, false);
+        assert!(text.contains("query groups (2):"), "{text}");
+        assert!(text.contains("Q1 [primary]: alpha"), "{text}");
+        assert!(text.contains("Q2 [supplemental]: beta"), "{text}");
+        assert!(text.contains("hits: 1"), "{text}");
+        assert!(text.contains("#1 matchedBy=vector a.rs:10-12"), "{text}");
+        assert!(text.contains("#2 matchedBy=vector a.rs:10-12"), "{text}");
     }
 }

@@ -51,6 +51,7 @@ fn item(rank: usize, path: &str, text: &str) -> ContextItem {
         query_groups: Vec::new(),
         container: None,
         selection_reason: None,
+        coverage_group: None,
     }
 }
 

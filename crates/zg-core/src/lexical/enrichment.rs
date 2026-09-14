@@ -443,6 +443,7 @@ mod tests {
             query_groups: Vec::new(),
             container: None,
             selection_reason: None,
+            coverage_group: None,
         }
     }
 

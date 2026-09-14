@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use crate::ids::EntityId;
 use crate::pipeline::indexing::IndexProgressSink;
 use crate::types::{
-    CodeSymbolType, Content, EntityMetadata, Range, RootPath, SearchMetric, UnixMillis,
-    WorkspaceIndexInfo, WorkspaceIndexPolicy,
+    CodeSymbolType, Content, EntityMetadata, Range, RootPath, SearchMatchedBy, SearchMetric,
+    UnixMillis, WorkspaceIndexInfo, WorkspaceIndexPolicy,
 };
 
 /// Abort probe: return `true` to cancel a long-running operation.
@@ -185,6 +185,8 @@ pub struct ContextItem {
     pub container: Option<StructuralContainer>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selection_reason: Option<SelectionReason>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coverage_group: Option<String>,
 }
 
 /// Item provenance.
@@ -222,12 +224,16 @@ pub enum ContentStatus {
     PossiblyStale,
 }
 
-/// Reference to the query group that matched an item.
+/// Reference to the query group that matched an item (mirrors TS
+/// `ZvecGrepContextQueryGroupMatch`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryGroupRef {
     pub id: String,
+    pub query: String,
+    pub role: GroupRole,
     pub rank: usize,
+    pub matched_by: SearchMatchedBy,
 }
 
 /// Enclosing structural entity attached to lexical matches.
@@ -279,7 +285,8 @@ pub struct ZvecGrepContextResult {
     pub diagnostics: ContextDiagnostics,
 }
 
-/// Per-query-group search result.
+/// Per-query-group search result (mirrors TS `groupResults`: per-group items,
+/// not hits).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupResult {
@@ -287,7 +294,7 @@ pub struct GroupResult {
     pub query: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<GroupRole>,
-    pub hits: Vec<crate::types::SearchHit>,
+    pub items: Vec<ContextItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timings: Option<serde_json::Value>,
 }
