@@ -235,4 +235,19 @@ mod tests {
         assert_eq!(clean_comment_text("/** hello */"), "hello");
         assert_eq!(clean_comment_text("/*\n * a\n * b\n */"), "a\nb");
     }
+
+    #[test]
+    fn friend_is_not_internal_outside_vb() {
+        // `friend class Foo;` is genuine C++: the shared helper must not
+        // report `Internal` for it. VB-only `friend` handling lives in
+        // `languages::vb` and never leaks into this path.
+        let source = "friend class Foo;";
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_cpp::LANGUAGE.into())
+            .expect("cpp grammar loads");
+        let tree = parser.parse(source, None).expect("cpp source parses");
+        let root = SyntaxNode::new(tree.root_node(), source.as_bytes());
+        assert!(extract_common_modifiers(&root).is_empty());
+    }
 }
