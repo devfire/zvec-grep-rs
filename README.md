@@ -18,6 +18,8 @@ If you use an AI coding assistant, it can search your code through zg instead of
 
 MCP is just the plug that lets the assistant call into zg. Run `zg install` once and it wires up your editor, or start the daemon with `zg server run --stdio`. After that your assistant gets a few tools: search code by meaning, run exact grep, check if the index is ready, kick off a reindex, that sort of thing.
 
+For HTTP instead of stdio, run `zg server run` (default `http://127.0.0.1:7999`, override with `ZVEC_GREP_SERVER_URL`) and point the client at its StreamableHTTP endpoint: `POST /mcp` for calls, `GET`/`DELETE /mcp` plus the `mcp-session-id` header for streaming sessions (`Accept: application/json, text/event-stream`). `zg install --mcp-transport http [--mcp-token-env VAR]` writes that URL into your editor config and sends `Authorization: Bearer $<VAR>` with each request; the daemon's loopback + bearer-token guards apply.
+
 It all goes through the same daemon and the same index as the command line, so you and the agent see the same results.
 
 ## Crates
