@@ -65,12 +65,18 @@ pub fn extract_generic_signature(node: &SyntaxNode<'_>) -> Option<String> {
 ///
 /// Mirrors `extractPrecedingDoc`: walks `previousNamedSibling` while the
 /// sibling is a comment, cleans each with [`clean_comment_text`], and joins
-/// them in source order.
+/// them in source order. Diverges by skipping named `blank_line` siblings
+/// (emitted by the vb-dotnet grammar after every comment); no other bundled
+/// grammar emits that kind, so other languages are unaffected.
 #[must_use]
 pub fn extract_preceding_doc(node: &SyntaxNode<'_>) -> Option<String> {
     let mut comments = Vec::new();
     let mut sibling = node.prev_named_sibling();
     while let Some(current) = sibling {
+        if current.kind() == "blank_line" {
+            sibling = current.prev_named_sibling();
+            continue;
+        }
         if !COMMENT_TYPES.contains(&current.kind()) {
             break;
         }
@@ -102,7 +108,8 @@ pub fn extract_preceding_doc(node: &SyntaxNode<'_>) -> Option<String> {
 /// Mirrors `extractCommonModifiers`: adds `exported` inside an
 /// `export_statement`, then scans the generic signature for
 /// `public|private|protected|internal|static|async|pub` (`pub` normalizes to
-/// `public`).
+/// `public`). Diverges by matching keywords case-insensitively (VB
+/// `Public`/`Shared` capitalisation); no new keyword arms are added here.
 #[must_use]
 pub fn extract_common_modifiers(node: &SyntaxNode<'_>) -> Vec<CodeEntityModifier> {
     let mut modifiers: Vec<CodeEntityModifier> = Vec::new();
@@ -117,7 +124,8 @@ pub fn extract_common_modifiers(node: &SyntaxNode<'_>) -> Vec<CodeEntityModifier
         push_unique(&mut modifiers, CodeEntityModifier::Exported);
     }
     for word in haystack.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
-        let modifier = match word {
+        let lowered = word.to_ascii_lowercase();
+        let modifier = match lowered.as_str() {
             "public" => Some(CodeEntityModifier::Public),
             "private" => Some(CodeEntityModifier::Private),
             "protected" => Some(CodeEntityModifier::Protected),

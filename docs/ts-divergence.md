@@ -187,6 +187,13 @@ under `--all-features` in CI, not here.
   assigned per plan by `make_default_route_id`) with first-seen winning.
   Reason: per-group plans are the TS execution shape; globally unique
   route ids would diverge further from TS `search.plan.routes`.
+- `extractPrecedingDoc` walk; `extract_preceding_doc` skips named
+  `blank_line` siblings instead of breaking. Reason: the vb-dotnet grammar
+  emits a named `blank_line` after every comment, which would otherwise cut
+  doc collection short; no other bundled grammar emits that kind.
+- `extractCommonModifiers` keyword match; `extract_common_modifiers`
+  lowercases each word before matching. Reason: VB `Public`/`Shared`
+  capitalisation; no new keyword arms (`shared`/`friend` stay VB-only).
 
 ## Deferred (accepted gaps, not silence)
 
