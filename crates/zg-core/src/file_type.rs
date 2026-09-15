@@ -55,6 +55,7 @@ const CODE_EXTENSIONS: &[(&str, &str)] = &[
     ("less", "less"),
     ("vue", "vue"),
     ("svelte", "svelte"),
+    ("vb", "vb"),
 ];
 
 const DATA_EXTENSIONS: &[(&str, &str)] = &[
@@ -260,6 +261,8 @@ mod tests {
         );
         assert_eq!(detect("a.hpp"), Some((FileKind::Code, "cpp".to_owned())));
         assert_eq!(detect("app.vue"), Some((FileKind::Code, "vue".to_owned())));
+        assert_eq!(detect("a.vb"), Some((FileKind::Code, "vb".to_owned())));
+        assert_eq!(detect("A.VB"), Some((FileKind::Code, "vb".to_owned())));
     }
 
     #[test]
