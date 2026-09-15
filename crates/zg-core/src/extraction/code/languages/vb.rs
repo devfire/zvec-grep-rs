@@ -67,6 +67,9 @@ impl LanguageAdapter for VbLanguage {
         SCOPE_TYPES
     }
     fn extract_name(&self, node: &SyntaxNode<'_>) -> Option<String> {
+        if node.kind() == "constructor_declaration" {
+            return Some("New".to_string());
+        }
         name_field_extract_name(node)
     }
     fn classify_node(
@@ -173,6 +176,29 @@ mod tests {
         assert_eq!(
             modifiers_of(source, "method_declaration"),
             vec![CodeEntityModifier::Public]
+        );
+    }
+
+    #[test]
+    fn constructor_extracts_new() {
+        let source =
+            "Public Class Greeter\n    Public Sub New()\n    End Sub\nEnd Class\n";
+        let tree = parse_vb(source);
+        assert!(
+            !tree.root_node().has_error(),
+            "fixture parses without error nodes: {source:?}"
+        );
+        let root = SyntaxNode::new(tree.root_node(), source.as_bytes());
+        let ctor = root
+            .find_descendant_by_kind("constructor_declaration")
+            .expect("fixture contains the constructor node");
+        assert_eq!(VB_ADAPTER.extract_name(&ctor), Some("New".to_string()));
+        let class = root
+            .find_descendant_by_kind("class_block")
+            .expect("fixture contains the class node");
+        assert_eq!(
+            VB_ADAPTER.extract_name(&class),
+            Some("Greeter".to_string())
         );
     }
 }
