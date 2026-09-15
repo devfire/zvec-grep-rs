@@ -29,6 +29,7 @@ fn has_grammar(format: &str) -> bool {
     matches!(
         format,
         "c" | "cpp"
+            | "csharp"
             | "go"
             | "java"
             | "javascript"
@@ -37,6 +38,7 @@ fn has_grammar(format: &str) -> bool {
             | "rust"
             | "tsx"
             | "typescript"
+            | "vb"
     )
 }
 
@@ -44,6 +46,7 @@ fn language_for_format(format: &str) -> Option<tree_sitter::Language> {
     let language = match format {
         "c" => tree_sitter_c::LANGUAGE.into(),
         "cpp" => tree_sitter_cpp::LANGUAGE.into(),
+        "csharp" => tree_sitter_c_sharp::LANGUAGE.into(),
         "go" => tree_sitter_go::LANGUAGE.into(),
         "java" => tree_sitter_java::LANGUAGE.into(),
         "javascript" | "jsx" => tree_sitter_javascript::LANGUAGE.into(),
@@ -51,11 +54,11 @@ fn language_for_format(format: &str) -> Option<tree_sitter::Language> {
         "rust" => tree_sitter_rust::LANGUAGE.into(),
         "typescript" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         "tsx" => tree_sitter_typescript::LANGUAGE_TSX.into(),
+        "vb" => tree_sitter_vb_dotnet::LANGUAGE.into(),
         _ => return None,
     };
     Some(language)
 }
-
 /// Entry point used by [`crate::extraction`]: structural fragments plus
 /// per-fragment embedding content, or `None` when this file is not code.
 ///

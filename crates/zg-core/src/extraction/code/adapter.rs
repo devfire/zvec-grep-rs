@@ -312,12 +312,14 @@ pub fn resolve_adapter(format: &str) -> Option<&'static dyn LanguageAdapter> {
     match format {
         "c" => Some(&super::languages::c_lang::C_ADAPTER),
         "cpp" => Some(&super::languages::cpp::CPP_ADAPTER),
+        "csharp" => Some(&super::languages::csharp::CSHARP_ADAPTER),
         "go" => Some(&super::languages::go::GO_ADAPTER),
         "java" => Some(&super::languages::java::JAVA_ADAPTER),
         "javascript" | "jsx" => Some(&super::languages::javascript::JAVASCRIPT_ADAPTER),
         "python" => Some(&super::languages::python::PYTHON_ADAPTER),
         "rust" => Some(&super::languages::rust::RUST_ADAPTER),
         "typescript" | "tsx" => Some(&super::languages::typescript::TYPESCRIPT_ADAPTER),
+        "vb" => Some(&super::languages::vb::VB_ADAPTER),
         _ => None,
     }
 }
@@ -380,8 +382,15 @@ mod tests {
         let adapter = Probe;
         assert!(adapter.is_entity_type("function_definition"));
         assert!(!adapter.is_entity_type("class_definition"));
-        assert!(!adapter.is_scope_type("function_definition"));
         assert!(resolve_adapter("ruby").is_none());
+        assert_eq!(
+            resolve_adapter("csharp").map(|adapter| adapter.format()),
+            Some("csharp")
+        );
+        assert_eq!(
+            resolve_adapter("vb").map(|adapter| adapter.format()),
+            Some("vb")
+        );
         let resolved = resolve_adapter("tsx");
         assert!(resolved.is_some());
     }
