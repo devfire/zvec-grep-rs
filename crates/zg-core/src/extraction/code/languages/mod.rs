@@ -2,6 +2,7 @@
 
 pub mod c_lang;
 pub mod cpp;
+pub mod csharp;
 pub mod go;
 pub mod java;
 pub mod javascript;
