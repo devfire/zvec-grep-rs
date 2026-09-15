@@ -194,6 +194,16 @@ under `--all-features` in CI, not here.
 - `extractCommonModifiers` keyword match; `extract_common_modifiers`
   lowercases each word before matching. Reason: VB `Public`/`Shared`
   capitalisation; no new keyword arms (`shared`/`friend` stay VB-only).
+- `extractDoc` wrapper probe; VB `extract_doc` falls back to the
+  `type_declaration` wrapper parent when the `*_block` entity itself has no
+  preceding comment. Reason: vb-dotnet wraps every type in a fieldless
+  `type_declaration`, so doc comments are siblings of the wrapper, never of
+  the entity; probing any other parent kind would misattribute docs and is
+  refused.
+- `cleanCommentText` quote strip; `clean_comment_text` strips leading `'`
+  runs (including `'''` XML-doc markers) before a gap or end of line.
+  Reason: VB `'` comments; the gap guard keeps apostrophe prose (`'tis`)
+  intact.
 
 ## Deferred (accepted gaps, not silence)
 

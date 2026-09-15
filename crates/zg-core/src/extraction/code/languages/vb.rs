@@ -1,17 +1,18 @@
 //! VB.NET language adapter.
 //!
 //! Mirrors `languages/java.rs`: entity/scope tables plus the name-field
-//! family hooks. The only hook that diverges from the java.rs mirror is
-//! [`crate::extraction::code::adapter::LanguageAdapter::extract_modifiers`]:
-//! VB-only spellings (`Shared` → `Static`, `Friend` → `Internal`) are applied
+//! family hooks. Two hooks diverge from the java.rs mirror:
+//! [`crate::extraction::code::adapter::LanguageAdapter::extract_modifiers`]
+//! applies VB-only spellings (`Shared` → `Static`, `Friend` → `Internal`)
 //! here so the shared `extract_common_modifiers` stays free of them —
 //! `friend class Foo;` is genuine C++ and must never report `Internal`
-//! outside VB.
+//! outside VB; [`crate::extraction::code::adapter::LanguageAdapter::extract_doc`]
+//! additionally probes the `type_declaration` wrapper parent (see below).
 //!
 //! Entity tables are keep-only-if-present subsets of the vb-dotnet
 //! `NODE_TYPES`: every listed kind bears a `name` field except
-//! `constructor_declaration`, whose `Sub New` naming override lands with
-//! step 6 of `docs/NET_STRUCTURED_SUPPORT_PLAN.md`.
+//! `constructor_declaration`, named `New` by [`VbLanguage::extract_name`]
+//! (`Sub New` has no name field; VB constructors are always `Sub New`).
 
 use crate::extraction::code::adapter::{LanguageAdapter, SyntaxNode};
 use crate::extraction::code::families::metadata::{
@@ -85,7 +86,17 @@ impl LanguageAdapter for VbLanguage {
         name_field_extract_signature(node)
     }
     fn extract_doc(&self, node: &SyntaxNode<'_>) -> Option<String> {
-        name_field_extract_doc(node)
+        if let Some(doc) = name_field_extract_doc(node) {
+            return Some(doc);
+        }
+        // vb-dotnet wraps every type in a fieldless `type_declaration`
+        // parent, so preceding comments are siblings of the wrapper, not of
+        // the `*_block` entity itself. Probe the wrapper only: falling back
+        // to any parent would misattribute the type's doc to undocumented
+        // members nested inside it.
+        node.parent()
+            .filter(|parent| parent.kind() == "type_declaration")
+            .and_then(|parent| name_field_extract_doc(&parent))
     }
     fn extract_modifiers(&self, node: &SyntaxNode<'_>) -> Vec<CodeEntityModifier> {
         let mut modifiers = extract_common_modifiers(node);
@@ -181,8 +192,7 @@ mod tests {
 
     #[test]
     fn constructor_extracts_new() {
-        let source =
-            "Public Class Greeter\n    Public Sub New()\n    End Sub\nEnd Class\n";
+        let source = "Public Class Greeter\n    Public Sub New()\n    End Sub\nEnd Class\n";
         let tree = parse_vb(source);
         assert!(
             !tree.root_node().has_error(),
@@ -196,9 +206,6 @@ mod tests {
         let class = root
             .find_descendant_by_kind("class_block")
             .expect("fixture contains the class node");
-        assert_eq!(
-            VB_ADAPTER.extract_name(&class),
-            Some("Greeter".to_string())
-        );
+        assert_eq!(VB_ADAPTER.extract_name(&class), Some("Greeter".to_string()));
     }
 }

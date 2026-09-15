@@ -175,7 +175,7 @@ pub fn first_non_empty_line(text: &str) -> &str {
     ""
 }
 
-/// Strips comment markers (`//`, `#`, `/* */`, leading `*`) from doc text.
+/// Strips comment markers (`//`, `#`, `'`, `/* */`, leading `*`) from doc text.
 #[must_use]
 pub fn clean_comment_text(text: &str) -> String {
     let mut stripped = text.trim();
@@ -202,6 +202,14 @@ pub fn clean_comment_text(text: &str) -> String {
             && (after.starts_with(' ') || after.starts_with('\t') || after.is_empty())
         {
             rest = after.strip_prefix(is_gap).unwrap_or(after);
+        } else if rest.starts_with('\'') {
+            // VB `'` comments (vb-dotnet emits no other quote-led comment
+            // shape): strip the quotes only before a gap or end of line, so
+            // apostrophe prose (`'tis`) survives.
+            let after = rest.trim_start_matches('\'');
+            if after.starts_with(' ') || after.starts_with('\t') || after.is_empty() {
+                rest = after.strip_prefix(is_gap).unwrap_or(after);
+            }
         }
         if !out.is_empty() {
             out.push('\n');
@@ -234,6 +242,9 @@ mod tests {
         assert_eq!(clean_comment_text("# hello"), "hello");
         assert_eq!(clean_comment_text("/** hello */"), "hello");
         assert_eq!(clean_comment_text("/*\n * a\n * b\n */"), "a\nb");
+        assert_eq!(clean_comment_text("' hello"), "hello");
+        assert_eq!(clean_comment_text("''' hello"), "hello");
+        assert_eq!(clean_comment_text("'tis"), "'tis");
     }
 
     #[test]
