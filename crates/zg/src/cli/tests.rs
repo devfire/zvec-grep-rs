@@ -154,6 +154,26 @@ fn config_and_index_shapes() {
 }
 
 #[test]
+fn index_nested_git_flag_parses_and_conflicts_with_drop() {
+    let cli = parse(&["zg", "index", "--include-nested-git"]).unwrap();
+    let Some(Command::Index(args)) = cli.command else {
+        panic!("index command");
+    };
+    assert!(args.include_nested_git);
+    let cli = parse(&["zg", "index"]).unwrap();
+    let Some(Command::Index(args)) = cli.command else {
+        panic!("index command");
+    };
+    assert!(!args.include_nested_git);
+    let cli = parse(&["zg", "index", "--drop", "--include-nested-git", "."]).unwrap();
+    let error = validate(&cli).expect_err("drop + include-nested-git must fail");
+    assert_eq!(
+        error.to_string(),
+        "zg index --drop cannot be combined with indexing options"
+    );
+}
+
+#[test]
 fn byte_sizes_and_times_parse() {
     assert_eq!(parse_byte_size("512").unwrap(), 512);
     assert_eq!(parse_byte_size("10MB").unwrap(), 10 * 1024 * 1024);

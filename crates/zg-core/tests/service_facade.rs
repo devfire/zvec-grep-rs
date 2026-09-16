@@ -258,3 +258,248 @@ fn fuse_collapses_two_primary_queries() {
     assert_eq!(fused_groups[0].id, "Q1");
     assert_eq!(fused_groups[0].role, Some(GroupRole::Primary));
 }
+
+fn nested_workspace() -> TempDir {
+    let dir = TempDir::new().expect("tempdir");
+    std::fs::write(dir.path().join("top.txt"), "top-level content\n").expect("write top");
+    std::fs::create_dir_all(dir.path().join("repo-a/.git")).expect("nested git dir");
+    std::fs::write(dir.path().join("repo-a/.git/HEAD"), "ref\n").expect("marker");
+    std::fs::write(
+        dir.path().join("repo-a/nested-one.txt"),
+        "zephyrnestedone lives in a nested repository\n",
+    )
+    .expect("write nested");
+    dir
+}
+
+fn fts_search(
+    service: &ZvecGrepService,
+    dir: &TempDir,
+    term: &str,
+) -> zg_core::service::types::ZvecGrepContextResult {
+    service
+        .context(&ZvecGrepContextOptions {
+            root: Some(dir.path()),
+            fts: vec![term.to_owned()],
+            auto_update: false,
+            ..ZvecGrepContextOptions::default()
+        })
+        .expect("context")
+}
+
+fn manifest_home(dir: &TempDir) -> std::path::PathBuf {
+    dir.path().join(".zvec-grep")
+}
+
+#[test]
+fn nested_git_opt_in_persists_across_incremental_reload() {
+    use zg_core::manifest::read_workspace_manifest;
+
+    let dir = nested_workspace();
+    let service = stub_service(&dir);
+    service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(dir.path()),
+            include_nested_git: Some(true),
+            ..ZvecGrepIndexOptions::default()
+        })
+        .expect("index");
+    let found = fts_search(&service, &dir, "zephyrnestedone");
+    assert!(
+        found
+            .items
+            .iter()
+            .any(|item| item.file.relative_path.ends_with("repo-a/nested-one.txt")),
+        "{}",
+        serde_json::to_string_pretty(&found.items).expect("json")
+    );
+    drop(service);
+
+    let service = stub_service(&dir);
+    let second = dir.path().join("repo-a/nested-two.txt");
+    std::fs::write(
+        &second,
+        "zephyrnestedtwo lives in the same nested repository\n",
+    )
+    .expect("write second");
+    service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(dir.path()),
+            changed_paths: vec![second],
+            ..ZvecGrepIndexOptions::default()
+        })
+        .expect("incremental");
+    let found = fts_search(&service, &dir, "zephyrnestedtwo");
+    assert!(
+        found
+            .items
+            .iter()
+            .any(|item| item.file.relative_path.ends_with("repo-a/nested-two.txt")),
+        "{}",
+        serde_json::to_string_pretty(&found.items).expect("json")
+    );
+    let info = service.workspace_info(Some(dir.path())).expect("info");
+    let workspace = info.workspace_index.expect("workspace");
+    assert_eq!(workspace.root_paths.len(), 1);
+    assert_eq!(
+        workspace.root_paths[0].include_nested_git,
+        Some(true),
+        "{:?}",
+        workspace.root_paths[0]
+    );
+    let manifest = read_workspace_manifest(&manifest_home(&dir))
+        .expect("read manifest")
+        .expect("manifest exists");
+    assert_eq!(manifest.info.root_paths[0].include_nested_git, Some(true));
+}
+
+#[test]
+fn nested_git_root_spec_constructors_carry_policy() {
+    use zg_core::service::types::RootPathSpec;
+
+    let dir = nested_workspace();
+    let service = stub_service(&dir);
+    service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(dir.path()),
+            root_paths: vec![RootPathSpec::Path(".")],
+            include_nested_git: Some(true),
+            ..ZvecGrepIndexOptions::default()
+        })
+        .expect("path spec index");
+    let found = fts_search(&service, &dir, "zephyrnestedone");
+    assert!(
+        found
+            .items
+            .iter()
+            .any(|item| item.file.relative_path.ends_with("repo-a/nested-one.txt")),
+        "{}",
+        serde_json::to_string_pretty(&found.items).expect("json")
+    );
+
+    let dir = nested_workspace();
+    let service = stub_service(&dir);
+    let root = zg_core::types::RootPath {
+        absolute_path: dir.path().to_string_lossy().into_owned(),
+        recursive: true,
+        include: Vec::new(),
+        exclude: Vec::new(),
+        globs: Vec::new(),
+        insensitive_globs: Vec::new(),
+        file_types: Vec::new(),
+        excluded_file_types: Vec::new(),
+        hidden: None,
+        no_ignore: None,
+        ignore_files: Vec::new(),
+        max_depth: None,
+        max_file_size_bytes: None,
+        follow: None,
+        include_nested_git: Some(true),
+    };
+    service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(dir.path()),
+            root_paths: vec![RootPathSpec::Full(Box::new(root))],
+            ..ZvecGrepIndexOptions::default()
+        })
+        .expect("full spec index");
+    let found = fts_search(&service, &dir, "zephyrnestedone");
+    assert!(
+        found
+            .items
+            .iter()
+            .any(|item| item.file.relative_path.ends_with("repo-a/nested-one.txt")),
+        "{}",
+        serde_json::to_string_pretty(&found.items).expect("json")
+    );
+}
+
+#[test]
+fn nested_git_reset_paths_removes_policy_from_index() {
+    let dir = nested_workspace();
+    let service = stub_service(&dir);
+    service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(dir.path()),
+            include_nested_git: Some(true),
+            ..ZvecGrepIndexOptions::default()
+        })
+        .expect("index");
+    assert!(
+        !fts_search(&service, &dir, "zephyrnestedone")
+            .items
+            .is_empty()
+    );
+    service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(dir.path()),
+            reset_paths: true,
+            ..ZvecGrepIndexOptions::default()
+        })
+        .expect("reset");
+    assert!(
+        fts_search(&service, &dir, "zephyrnestedone")
+            .items
+            .is_empty()
+    );
+    let info = service.workspace_info(Some(dir.path())).expect("info");
+    let workspace = info.workspace_index.expect("workspace");
+    assert_eq!(workspace.root_paths[0].include_nested_git, None);
+}
+
+#[test]
+fn nested_git_manifest_validation() {
+    use zg_core::manifest::read_workspace_manifest;
+
+    let dir = nested_workspace();
+    let service = stub_service(&dir);
+    service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(dir.path()),
+            include_nested_git: Some(true),
+            ..ZvecGrepIndexOptions::default()
+        })
+        .expect("index");
+    let home = manifest_home(&dir);
+    let manifest = read_workspace_manifest(&home)
+        .expect("read")
+        .expect("exists");
+    let mut value = serde_json::to_value(&manifest).expect("json");
+
+    let scratch = TempDir::new().expect("tempdir");
+    let scratch_home = scratch.path().join(".zvec-grep");
+    std::fs::create_dir_all(&scratch_home).expect("mkdir");
+    let write_manifest = |value: &serde_json::Value| {
+        std::fs::write(
+            scratch_home.join("manifest.json"),
+            serde_json::to_string_pretty(value).expect("stringify"),
+        )
+        .expect("write scratch manifest");
+    };
+
+    let mut legacy = value.clone();
+    legacy["rootPaths"][0]
+        .as_object_mut()
+        .expect("root")
+        .remove("includeNestedGit");
+    write_manifest(&legacy);
+    let legacy = read_workspace_manifest(&scratch_home).expect("read legacy");
+    assert_eq!(
+        legacy.expect("legacy exists").info.root_paths[0].include_nested_git,
+        None
+    );
+
+    let mut explicit_false = value.clone();
+    explicit_false["rootPaths"][0]["includeNestedGit"] = serde_json::json!(false);
+    write_manifest(&explicit_false);
+    let explicit_false = read_workspace_manifest(&scratch_home).expect("read false");
+    assert_eq!(
+        explicit_false.expect("false exists").info.root_paths[0].include_nested_git,
+        Some(false)
+    );
+
+    value["rootPaths"][0]["includeNestedGit"] = serde_json::json!("true");
+    write_manifest(&value);
+    let error = read_workspace_manifest(&scratch_home).expect_err("malformed must fail");
+    assert_eq!(error.code(), &zg_core::error::codes::manifest_invalid());
+}

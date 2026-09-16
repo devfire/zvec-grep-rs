@@ -413,3 +413,104 @@ async fn search_reports_missing_index_without_a_backend_call() {
     assert_eq!(missing["error"]["code"], -32603, "{missing}");
     server.close().await;
 }
+
+#[tokio::test]
+async fn index_rejects_nested_git_override_per_request() {
+    let (server, base) = start(
+        stub_backend(),
+        McpToolset::Full,
+        McpHttpEndpointOptions::default(),
+    )
+    .await;
+    let session = initialize(&base).await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_string_lossy().into_owned();
+    for value in [true, false] {
+        let (status, rejected) = message(
+            post(
+                &base,
+                &call_body(
+                    2,
+                    "zvec_grep_index",
+                    json!({"root": root, "includeNestedGit": value}),
+                ),
+                Some(&session),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, reqwest::StatusCode::OK);
+        assert_eq!(rejected["error"]["code"], -32602, "{rejected}");
+    }
+    assert!(
+        !dir.path().join(".zvec-grep").exists(),
+        "rejected overrides must not create an index"
+    );
+    server.close().await;
+}
+
+#[tokio::test]
+async fn index_status_reports_persisted_nested_git_policy() {
+    use std::sync::Arc;
+    use zg_core::models::stub::StubEmbeddingModel;
+    use zg_core::service::facade::{CreateZvecGrepOptions, create_zvec_grep};
+    use zg_core::service::types::ZvecGrepIndexOptions;
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("repo-a/.git")).unwrap();
+    std::fs::write(dir.path().join("repo-a/.git/HEAD"), "ref\n").unwrap();
+    std::fs::write(dir.path().join("repo-a/nested.txt"), "nested content\n").unwrap();
+    std::fs::write(dir.path().join("top.txt"), "top content\n").unwrap();
+    let service = create_zvec_grep(CreateZvecGrepOptions {
+        root: Some(dir.path().to_path_buf()),
+        embedding_model: Some(Arc::new(StubEmbeddingModel::new(16))),
+        ..CreateZvecGrepOptions::default()
+    });
+    service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(dir.path()),
+            include_nested_git: Some(true),
+            ..ZvecGrepIndexOptions::default()
+        })
+        .unwrap();
+    drop(service);
+
+    let (server, base) = start(
+        stub_backend(),
+        McpToolset::Full,
+        McpHttpEndpointOptions::default(),
+    )
+    .await;
+    let session = initialize(&base).await;
+    let root = dir.path().to_string_lossy().into_owned();
+    let (status, reported) = message(
+        post(
+            &base,
+            &call_body(2, "zvec_grep_index_status", json!({"root": root})),
+            Some(&session),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    let structured = &reported["result"]["structuredContent"];
+    let roots = structured
+        .get("workspace_index")
+        .and_then(|index| index.get("root_paths"))
+        .or_else(|| {
+            structured
+                .get("persistent")
+                .and_then(|persistent| persistent.get("workspace_index"))
+                .and_then(|index| index.get("root_paths"))
+        })
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("status reports workspace roots: {structured}"));
+    assert!(
+        roots.iter().any(|entry| entry
+            .get("include_nested_git")
+            .and_then(Value::as_bool)
+            .is_some_and(|enabled| enabled,)),
+        "{roots:?}"
+    );
+    server.close().await;
+}

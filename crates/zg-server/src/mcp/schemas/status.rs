@@ -82,25 +82,46 @@ pub struct RootPathOutput {
     /// Follow symlinks, when set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub follow: Option<bool>,
+    /// Traverse nested Git repositories, when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_nested_git: Option<bool>,
 }
 
 impl From<&zg_core::types::RootPath> for RootPathOutput {
     fn from(path: &zg_core::types::RootPath) -> Self {
+        let zg_core::types::RootPath {
+            absolute_path,
+            recursive,
+            include,
+            exclude,
+            globs,
+            insensitive_globs,
+            file_types,
+            excluded_file_types,
+            hidden,
+            no_ignore,
+            ignore_files,
+            max_depth,
+            max_file_size_bytes,
+            follow,
+            include_nested_git,
+        } = path;
         Self {
-            absolute_path: path.absolute_path.clone(),
-            recursive: path.recursive,
-            include: nonempty(path.include.clone()),
-            exclude: nonempty(path.exclude.clone()),
-            globs: nonempty(path.globs.clone()),
-            insensitive_globs: nonempty(path.insensitive_globs.clone()),
-            file_types: nonempty(path.file_types.clone()),
-            excluded_file_types: nonempty(path.excluded_file_types.clone()),
-            hidden: path.hidden,
-            no_ignore: path.no_ignore,
-            ignore_files: nonempty(path.ignore_files.clone()),
-            max_depth: path.max_depth,
-            max_file_size_bytes: path.max_file_size_bytes,
-            follow: path.follow,
+            absolute_path: absolute_path.clone(),
+            recursive: *recursive,
+            include: nonempty(include.clone()),
+            exclude: nonempty(exclude.clone()),
+            globs: nonempty(globs.clone()),
+            insensitive_globs: nonempty(insensitive_globs.clone()),
+            file_types: nonempty(file_types.clone()),
+            excluded_file_types: nonempty(excluded_file_types.clone()),
+            hidden: *hidden,
+            no_ignore: *no_ignore,
+            ignore_files: nonempty(ignore_files.clone()),
+            max_depth: *max_depth,
+            max_file_size_bytes: *max_file_size_bytes,
+            follow: *follow,
+            include_nested_git: *include_nested_git,
         }
     }
 }

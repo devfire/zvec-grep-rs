@@ -53,6 +53,10 @@ pub struct IndexArgs {
     /// Follow symlinks.
     #[arg(long = "follow", short = 'L', action = clap::ArgAction::SetTrue)]
     pub follow: bool,
+    /// Traverse nested Git repositories while respecting existing file filters.
+    /// Use --mode direct; for a rootless update of an existing index, also use --reset-paths.
+    #[arg(long = "include-nested-git", action = clap::ArgAction::SetTrue)]
+    pub include_nested_git: bool,
     /// Embedding requests processed concurrently.
     #[arg(long = "embedding-concurrency")]
     pub embedding_concurrency: Option<usize>,

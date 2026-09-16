@@ -14,7 +14,6 @@ use zg_core::authorization::{
     PlanIndexInput, RemoteEmbeddingPermit, plan_remote_index_authorization,
     with_remote_embedding_operation_permit,
 };
-use zg_core::config::ClientMode;
 use zg_core::models::embeddings::{CreateEmbeddingModelOptions, DeviceKind};
 use zg_core::models::factory::create_embedding_model;
 use zg_core::service::facade::create_zvec_grep;
@@ -38,16 +37,6 @@ pub(crate) async fn run_index(args: IndexArgs) -> Result<(), CliError> {
     }
     if let Some(reference) = &args.embedding {
         catalog_reference(reference)?;
-    }
-    if server_flags_set(&args) {
-        // Fail fast: the daemon owns index configuration and would
-        // reject these per-request overrides.
-        let mode = resolve_client_mode(args.mode)?;
-        if mode == ClientMode::Server {
-            return Err(CliError::usage(
-                "index credentials and file-scope options cannot be used with server mode; configure the daemon instead",
-            ));
-        }
     }
     let mode = resolve_client_mode(args.mode)?;
     route_by_mode(
@@ -78,6 +67,7 @@ fn server_flags_set(args: &IndexArgs) -> bool {
         || args.max_depth.is_some()
         || args.max_filesize.is_some()
         || args.follow
+        || args.include_nested_git
         || args.embedding_concurrency.is_some()
         || args.reset_paths
 }
@@ -124,6 +114,7 @@ async fn run_index_direct(args: &IndexArgs, root: &PathBuf) -> Result<(), CliErr
             .map(parse_byte_size)
             .transpose()?,
         follow: bool_flag(args.follow),
+        include_nested_git: bool_flag(args.include_nested_git),
     };
     let root_spec = if explicit {
         vec![RootPathSpec::Full(Box::new(root_path))]
@@ -152,6 +143,7 @@ async fn run_index_direct(args: &IndexArgs, root: &PathBuf) -> Result<(), CliErr
             .map(parse_byte_size)
             .transpose()?,
         follow: bool_flag(args.follow),
+        include_nested_git: bool_flag(args.include_nested_git),
         embedding_concurrency: args.embedding_concurrency,
         on_progress: Some(sink),
         changed_paths: Vec::new(),
@@ -271,6 +263,11 @@ async fn run_index_server(
     root: &PathBuf,
     client: DaemonClient,
 ) -> Result<(), CliError> {
+    if server_flags_set(args) {
+        return Err(CliError::usage(
+            "index credentials and file-scope options cannot be used with server mode; configure the daemon instead",
+        ));
+    }
     let absolute = absolute_path(root)?;
     let result = client
         .call_tool(
@@ -376,4 +373,38 @@ fn confirm_index_drop(root: &Path, yes: bool) -> Result<bool, CliError> {
     }
     let answer = read_choice(&format!("Drop the index for {}? [y/N] ", root.display()))?;
     Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[tokio::test]
+    async fn auto_server_rejects_nested_git_flag_without_daemon() {
+        let cli =
+            crate::cli::Cli::try_parse_from(["zg", "index", "--include-nested-git", "."]).unwrap();
+        let Some(crate::cli::Command::Index(args)) = cli.command else {
+            panic!("index command");
+        };
+        let root = PathBuf::from(".");
+        let result = route_by_mode(
+            zg_core::config::ClientMode::Auto,
+            run_index_direct(args.as_ref(), &root),
+            run_index_server(
+                args.as_ref(),
+                &root,
+                DaemonClient::new("http://127.0.0.1:0", None),
+            ),
+            async { true },
+        )
+        .await;
+        let error = result.expect_err("auto server must reject the file-scope flag");
+        assert!(matches!(error, CliError::Usage { .. }), "{error:?}");
+        assert_eq!(
+            error.to_string(),
+            "index credentials and file-scope options cannot be used with server mode; configure the daemon instead"
+        );
+    }
 }

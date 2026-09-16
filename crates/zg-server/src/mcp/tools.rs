@@ -596,9 +596,9 @@ fn reject_index_overrides(input: &WireIndexInput) -> Result<(), McpError> {
         ("hidden", input.hidden.is_some()),
         ("noIgnore", input.no_ignore.is_some()),
         ("ignoreFiles", input.ignore_files.is_some()),
-        ("maxDepth", input.max_depth.is_some()),
         ("maxFileSizeBytes", input.max_file_size_bytes.is_some()),
         ("follow", input.follow.is_some()),
+        ("includeNestedGit", input.include_nested_git.is_some()),
         (
             "embeddingConcurrency",
             input.embedding_concurrency.is_some(),
