@@ -103,6 +103,10 @@ pub trait WorkspaceIndexStorage: private::Sealed + Send {
     fn list_files_by_path_prefixes(&self, absolute_paths: &[String]) -> Vec<FileInfo>;
     fn list_files(&self) -> Vec<FileInfo>;
 
+    /// Borrowed file metadata in relative-path order, for hot paths that must
+    /// not clone the whole index (mirrors [`list_files`] without cloning).
+    fn list_file_refs(&self) -> Vec<&FileInfo>;
+
     fn list_entities_by_file(
         &self,
         file_id: &FileId,
@@ -139,14 +143,54 @@ pub trait WorkspaceIndexStorage: private::Sealed + Send {
         entries: &[IndexedFragment],
         diagnostics: Option<&FileIndexDiagnostics>,
     ) -> EngineResult<()>;
+    /// Batched [`replace_file`](Self::replace_file): pending metadata for all
+    /// files, document deletes, document upserts, then indexed metadata —
+    /// two metadata snapshots per batch. Every entry is validated and encoded
+    /// before any destructive work; an empty batch is a no-op. A
+    /// metadata-checkpoint failure aborts the batch as the operation error;
+    /// document failures attribute to the owning file.
+    ///
+    /// Each tuple is `(file, entries, diagnostics)`, mirroring [`replace_file`](Self::replace_file).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when storage is read-only or closed, fragments fail validation or
+    /// encoding, or the write fails.
+    fn replace_files_batch(
+        &mut self,
+        batch: &[(FileInfo, Vec<IndexedFragment>, Option<FileIndexDiagnostics>)],
+    ) -> EngineResult<()>;
+
     /// # Errors
     ///
     /// Returns an error when storage is read-only or closed, or the write fails.
     fn mark_file_failed(&mut self, file: &FileInfo, error: &str) -> EngineResult<()>;
+
     /// # Errors
     ///
     /// Returns an error when storage is read-only or closed, or the delete fails.
     fn delete_file(&mut self, file_id: &FileId) -> EngineResult<()>;
+
+    /// Batched [`delete_file`](Self::delete_file): document deletes for all
+    /// ids, then one metadata snapshot. An empty batch is a no-op. A
+    /// metadata-checkpoint failure aborts the batch as the operation error;
+    /// document failures attribute to the owning file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when storage is read-only or closed, or the delete fails.
+    fn delete_files_batch(&mut self, file_ids: &[FileId]) -> EngineResult<()>;
+
+    /// Persists staged file-metadata mutations at a pipeline checkpoint.
+    /// Checkpoints: prepare failure, zero-fragment replacement, per-file
+    /// fallback failure, failed unit, stale deletion, finalization, shutdown.
+    /// No-op when clean; error paths never flush, so cancellation never
+    /// publishes queued work.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the metadata write fails.
+    fn flush(&mut self) -> EngineResult<()>;
 
     /// # Errors
     ///

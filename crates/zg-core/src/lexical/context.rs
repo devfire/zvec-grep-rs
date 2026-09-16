@@ -65,24 +65,24 @@ pub(crate) fn expand_context_item(
 
 /// Cached whole-file line split, mirroring `readTextLines` (lossy UTF-8,
 /// one trailing empty line dropped).
-fn read_text_lines(
+fn read_text_lines<'a>(
     path: &Path,
-    cache: &mut HashMap<PathBuf, Option<Vec<String>>>,
-) -> Option<Vec<String>> {
-    if let Some(cached) = cache.get(path) {
-        return cached.clone();
-    }
-    let lines = fs::read(path).ok().map(|bytes| {
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        let mut parts: Vec<String> = text
-            .split('\n')
-            .map(|line| line.strip_suffix('\r').unwrap_or(line).to_owned())
-            .collect();
-        if parts.last().is_some_and(|last| last.is_empty()) {
-            parts.pop();
-        }
-        parts
-    });
-    cache.insert(path.to_owned(), lines.clone());
-    lines
+    cache: &'a mut HashMap<PathBuf, Option<Vec<String>>>,
+) -> Option<&'a [String]> {
+    cache
+        .entry(path.to_owned())
+        .or_insert_with(|| {
+            fs::read(path).ok().map(|bytes| {
+                let text = String::from_utf8_lossy(&bytes).into_owned();
+                let mut parts: Vec<String> = text
+                    .split('\n')
+                    .map(|line| line.strip_suffix('\r').unwrap_or(line).to_owned())
+                    .collect();
+                if parts.last().is_some_and(|last| last.is_empty()) {
+                    parts.pop();
+                }
+                parts
+            })
+        })
+        .as_deref()
 }

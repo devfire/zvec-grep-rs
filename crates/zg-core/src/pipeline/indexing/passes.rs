@@ -3,20 +3,9 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use crate::error::{
-    DetailEntry, DetailValue, EngineError, EngineErrorCode, EngineResult, error_details,
-    workspace_index_detail,
-};
-use crate::types::{
-    FileInfo, FileScanDiagnostics, IndexProgress, IndexProgressPhase, IndexResult,
-    WorkspaceIndexInfo, WorkspaceIndexStatus,
-};
-use crate::utils::timing::TimingCollector;
-
 use super::context::{
     IndexContext, IndexPassResult, IndexStats, MAX_SKIPPED_FILE_SAMPLES, ProgressBase,
-    error_to_message, file_context, summarize_failed_files, throw_if_index_cancelled,
-    workspace_index_context,
+    error_to_message, summarize_failed_files, throw_if_index_cancelled, workspace_index_context,
 };
 use super::diff::{compute_diff_from_files, normalize_for_diff};
 use super::embed::index_files;
@@ -27,6 +16,16 @@ use super::scanner::{
     CancelFlag, ScanOptions, create_scan_diagnostics, scan_directory_path, scan_file_path,
     scan_root_paths,
 };
+use crate::error::{
+    DetailEntry, DetailValue, EngineError, EngineErrorCode, EngineResult, error_details,
+    workspace_index_detail,
+};
+use crate::ids::FileId;
+use crate::types::{
+    FileInfo, FileScanDiagnostics, IndexProgress, IndexProgressPhase, IndexResult,
+    WorkspaceIndexInfo, WorkspaceIndexStatus,
+};
+use crate::utils::timing::TimingCollector;
 
 /// Index the whole workspace (mirrors `indexWorkspace`).
 ///
@@ -454,23 +453,26 @@ fn run_diff_pass(
     );
 
     timings.time("index_delete_stale", || {
-        for file in &diff.deleted {
-            throw_if_index_cancelled(ctx)?;
-            ctx.storage.delete_file(&file.id).map_err(|error| {
-                EngineError::new(
-                    EngineErrorCode::IndexingDeleteFileFailed,
-                    "indexing failed to delete stale file records",
-                )
-                .with_context(format!(
-                    "{}\ncause={}",
-                    file_context(file),
-                    error_to_message(&error)
-                ))
-            })?;
+        if diff.deleted.is_empty() {
+            return Ok::<_, EngineError>(());
         }
+        throw_if_index_cancelled(ctx)?;
+        // Stale-deletion checkpoint: one batched call stages removals and
+        // persists a single metadata snapshot.
+        let ids: Vec<FileId> = diff.deleted.iter().map(|file| file.id.clone()).collect();
+        ctx.storage.delete_files_batch(&ids).map_err(|error| {
+            EngineError::new(
+                EngineErrorCode::IndexingDeleteFileFailed,
+                "indexing failed to delete stale file records",
+            )
+            .with_context(format!(
+                "deletedCount={}\ncause={}",
+                ids.len(),
+                error_to_message(&error)
+            ))
+        })?;
         Ok::<_, EngineError>(())
     })?;
-
     report_indexing(
         ctx,
         &IndexStats::default(),

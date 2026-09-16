@@ -1,7 +1,7 @@
 //! Atomic JSON persistence: tmp-file + rename writes, ENOENT-tolerant reads.
 
 use std::fs;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use serde::Serialize;
@@ -79,40 +79,67 @@ pub fn write_json_file<T: Serialize>(
         apply_mode(parent, mode);
     }
 
-    let body = serde_json::to_string_pretty(value).map_err(|error| {
-        crate::error::EngineError::new(
-            crate::error::EngineErrorCode::JsonWriteFailed,
-            "failed to serialize JSON",
-        )
-        .with_context(format!("error={error}"))
-        .with_source(error)
-    })?;
-
     let tmp = path.with_extension(format!(
         "{}.{}.tmp",
         std::process::id(),
         uuid::Uuid::new_v4().simple()
     ));
-    let write_result = (|| -> std::io::Result<()> {
-        let mut file = fs::File::create(&tmp)?;
+    let write_result = (|| -> EngineResult<()> {
+        let file = fs::File::create(&tmp).map_err(|error| {
+            crate::error::EngineError::new(
+                crate::error::EngineErrorCode::JsonWriteFailed,
+                format!("failed to write {}", path.display()),
+            )
+            .with_context(format!("error={error}"))
+            .with_source(error)
+        })?;
         #[cfg(unix)]
         if let Some(mode) = modes.file_mode {
             apply_mode(&tmp, mode);
         }
-        file.write_all(body.as_bytes())?;
-        file.write_all(b"\n")?;
-        drop(file);
-        fs::rename(&tmp, path)
+        // Stream pretty JSON through a buffer instead of materializing the
+        // whole document as a `String`: a constant-factor win with
+        // byte-identical output (pretty + trailing newline).
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(&mut writer, value).map_err(|error| {
+            crate::error::EngineError::new(
+                crate::error::EngineErrorCode::JsonWriteFailed,
+                "failed to serialize JSON",
+            )
+            .with_context(format!("error={error}"))
+            .with_source(error)
+        })?;
+        writer.write_all(b"\n").map_err(|error| {
+            crate::error::EngineError::new(
+                crate::error::EngineErrorCode::JsonWriteFailed,
+                format!("failed to write {}", path.display()),
+            )
+            .with_context(format!("error={error}"))
+            .with_source(error)
+        })?;
+        writer.flush().map_err(|error| {
+            crate::error::EngineError::new(
+                crate::error::EngineErrorCode::JsonWriteFailed,
+                format!("failed to write {}", path.display()),
+            )
+            .with_context(format!("error={error}"))
+            .with_source(error)
+        })?;
+        drop(writer);
+        fs::rename(&tmp, path).map_err(|error| {
+            crate::error::EngineError::new(
+                crate::error::EngineErrorCode::JsonWriteFailed,
+                format!("failed to write {}", path.display()),
+            )
+            .with_context(format!("error={error}"))
+            .with_source(error)
+        })?;
+        Ok(())
     })();
 
     if let Err(error) = write_result {
         let _ = fs::remove_file(&tmp);
-        return Err(crate::error::EngineError::new(
-            crate::error::EngineErrorCode::JsonWriteFailed,
-            format!("failed to write {}", path.display()),
-        )
-        .with_context(format!("error={error}"))
-        .with_source(error));
+        return Err(error);
     }
     Ok(())
 }

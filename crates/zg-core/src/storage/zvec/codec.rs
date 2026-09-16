@@ -21,6 +21,7 @@ use crate::types::{
 };
 
 use super::schema::{ENTITY_TEXT_FIELD, ENTITY_VECTOR_FIELD};
+use super::store::FileRecord;
 
 /// A decoded fragment joined with its owning file.
 #[derive(Debug, Clone, PartialEq)]
@@ -106,7 +107,8 @@ pub fn fragment_to_doc(
 }
 
 /// Decodes a stored document, returning `None` when its file is unknown
-/// (mirrors the TypeScript `null` for orphan documents).
+/// (mirrors the TypeScript `null` for orphan documents). Resolves against
+/// the borrowed record map, cloning only the [`FileInfo`] in the result.
 ///
 /// # Errors
 ///
@@ -115,7 +117,7 @@ pub fn fragment_to_doc(
 /// content kinds or image formats.
 pub fn doc_to_stored_fragment(
     doc: &Doc,
-    files_by_id: &HashMap<String, FileInfo>,
+    files_by_id: &HashMap<String, FileRecord>,
 ) -> EngineResult<Option<StoredFragment>> {
     let pk = doc.get_pk().unwrap_or_default().to_owned();
     if pk.is_empty() {
@@ -128,7 +130,7 @@ pub fn doc_to_stored_fragment(
     let Some(file_id) = file_id.filter(|value| !value.is_empty()) else {
         return Ok(None);
     };
-    let Some(file) = files_by_id.get(&file_id) else {
+    let Some(record) = files_by_id.get(file_id.as_str()) else {
         return Ok(None);
     };
     let group = optional_string_field(doc, "group", &pk)?.filter(|value| !value.is_empty());
@@ -154,7 +156,7 @@ pub fn doc_to_stored_fragment(
             },
             group,
         },
-        file: file.clone(),
+        file: record.info.clone(),
     }))
 }
 

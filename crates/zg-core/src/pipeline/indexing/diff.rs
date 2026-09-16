@@ -23,7 +23,7 @@ pub(crate) fn compute_diff_from_files(
     for file in scanned_files {
         seen.insert(file.id.clone());
         match existing_by_id.get(&file.id) {
-            None => diff.added.push(with_content_hash(file)?),
+            None => diff.added.push(file.clone()),
             Some(existing) => {
                 if existing
                     .index_status
@@ -31,7 +31,7 @@ pub(crate) fn compute_diff_from_files(
                     .and_then(|status| status.indexed_time)
                     .is_none()
                 {
-                    diff.pending.push(with_content_hash(file)?);
+                    diff.pending.push(file.clone());
                     continue;
                 }
                 if existing.size_bytes == file.size_bytes

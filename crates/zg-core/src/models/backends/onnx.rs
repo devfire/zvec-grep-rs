@@ -405,11 +405,15 @@ impl OnnxEmbeddingModel {
                 .tokenizer
                 .encode(text.as_str(), true)
                 .map_err(|err| tokenize_failed(entry, err))?;
-            let mut ids: Vec<i64> = encoding.get_ids().iter().map(|id| i64::from(*id)).collect();
-            if ids.len() > entry.max_input_tokens {
+            let raw_ids = encoding.get_ids();
+            if raw_ids.len() > entry.max_input_tokens {
                 truncated.push(index);
-                ids.truncate(entry.max_input_tokens);
             }
+            let ids: Vec<i64> = raw_ids
+                .iter()
+                .take(entry.max_input_tokens)
+                .map(|id| i64::from(*id))
+                .collect();
             ids_batch.push(ids);
         }
         let sequence_len = ids_batch.iter().map(Vec::len).max().unwrap_or(0).max(1);

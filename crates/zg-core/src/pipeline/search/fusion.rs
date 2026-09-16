@@ -140,7 +140,7 @@ pub fn candidate_to_hit(candidate: &Candidate, limit: usize, trace: bool) -> Sea
         file: candidate.file.clone(),
         evidence: sorted_evidence(&candidate.evidence)
             .into_iter()
-            .map(|evidence| evidence_to_hit_evidence(&evidence))
+            .map(evidence_to_hit_evidence)
             .collect(),
         rank: candidate.rank,
         score: candidate.score,
@@ -177,8 +177,8 @@ pub fn public_entity_id(fragment: &EntityFragment) -> &str {
         .unwrap_or_else(|| fragment.entity.id.as_str())
 }
 
-fn sorted_evidence(evidence: &[CandidateEvidence]) -> Vec<CandidateEvidence> {
-    let mut sorted = evidence.to_vec();
+fn sorted_evidence(evidence: &[CandidateEvidence]) -> Vec<&CandidateEvidence> {
+    let mut sorted: Vec<&CandidateEvidence> = evidence.iter().collect();
     sorted.sort_by(|left, right| {
         left.rank
             .unwrap_or(usize::MAX)
