@@ -90,7 +90,3 @@ let hits = svc.context(&ZvecGrepContextOptions {
     ..Default::default()
 })?;
 ```
-
-## Status
-
-Port phases 0, A–I per `RUST_PORT_OF_ZVEC_GREP_PLAN.md` are complete (facade, daemon, MCP, CLI, auth, standalone storage, ONNX + llama-cpp local backends). See `docs/ts-divergence.md` for deliberate divergences from the TS implementation.
