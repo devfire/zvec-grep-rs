@@ -57,7 +57,23 @@ fn server_flags_set(args: &IndexArgs) -> bool {
         || args.api_key.is_some()
         || args.endpoint.is_some()
         || args.device.is_some()
-        || !args.globs.is_empty()
+        || file_scope_flags_set(args)
+        || args.embedding_concurrency.is_some()
+        || args.reset_paths
+}
+
+/// True when any flag that lands in the constructed [`RootPath`] is set.
+///
+/// These flags only take effect when the root paths are (re)built from CLI
+/// args: an explicit root path constructs a fresh `RootPath`, and
+/// `--reset-paths` replaces the recorded ones. On a rootless update of an
+/// existing index the facade instead reuses the manifest's recorded root
+/// paths and silently ignores these flags (`ZvecGrepService::resolve_root_paths`),
+/// which [`rootless_flag_conflict`] turns into a fail-fast usage error.
+/// Excludes `--embedding-concurrency` (applies without a root rebuild),
+/// credential flags, and `--reset-paths`.
+fn file_scope_flags_set(args: &IndexArgs) -> bool {
+    !args.globs.is_empty()
         || !args.iglobs.is_empty()
         || !args.file_types.is_empty()
         || !args.excluded_file_types.is_empty()
@@ -68,8 +84,29 @@ fn server_flags_set(args: &IndexArgs) -> bool {
         || args.max_filesize.is_some()
         || args.follow
         || args.include_nested_git
-        || args.embedding_concurrency.is_some()
+}
+
+/// Usage error for a rootless update whose file-scope flags the existing
+/// index would silently drop, or `None` when every flag still applies.
+///
+/// Fires only when all of the following hold: no explicit root path (the
+/// run would reuse the recorded root paths), `--reset-paths` absent (the
+/// reuse is not overridden), a file-scope flag set (something would be
+/// dropped), and the index has recorded root paths to reuse (otherwise the
+/// fallback root path is rebuilt from the flags and honors them).
+fn rootless_flag_conflict(args: &IndexArgs, existing_root_paths: &[RootPath]) -> Option<CliError> {
+    if !args.roots.is_empty()
         || args.reset_paths
+        || !file_scope_flags_set(args)
+        || existing_root_paths.is_empty()
+    {
+        return None;
+    }
+    Some(CliError::usage(
+        "index file-scope options cannot be used on a rootless update while the existing index \
+         keeps its configured root paths; re-run with --reset-paths to rebuild the root paths \
+         from these flags, or pass an explicit root path",
+    ))
 }
 
 async fn run_index_direct(args: &IndexArgs, root: &PathBuf) -> Result<(), CliError> {
@@ -94,6 +131,13 @@ async fn run_index_direct(args: &IndexArgs, root: &PathBuf) -> Result<(), CliErr
     ));
     let info_before = service.workspace_info(Some(absolute.as_path()))?;
     assert_model_compatible(&info_before, args.embedding.as_deref(), args.rebuild)?;
+    let existing_roots = match info_before.workspace_index.as_ref() {
+        Some(index) => index.root_paths.as_slice(),
+        None => &[],
+    };
+    if let Some(error) = rootless_flag_conflict(args, existing_roots) {
+        return Err(error);
+    }
     let permit = plan_index_permit(&info_before, args).await?;
     let root_path = RootPath {
         absolute_path: absolute.to_string_lossy().into_owned(),
@@ -406,5 +450,155 @@ mod tests {
             error.to_string(),
             "index credentials and file-scope options cannot be used with server mode; configure the daemon instead"
         );
+    }
+
+    /// Parses `zg index <flags>` into args through the real clap surface.
+    fn index_args(flags: &[&str]) -> IndexArgs {
+        let mut argv = vec!["zg", "index"];
+        argv.extend_from_slice(flags);
+        let cli = crate::cli::Cli::try_parse_from(argv).unwrap();
+        let Some(crate::cli::Command::Index(args)) = cli.command else {
+            panic!("index command");
+        };
+        *args
+    }
+
+    #[test]
+    fn file_scope_flags_set_covers_exactly_the_root_path_flags() {
+        assert!(!file_scope_flags_set(&index_args(&[])));
+        // Credentials, embedding concurrency, and --reset-paths apply
+        // without a root-path rebuild, so they are not file-scope flags.
+        let non_scope: [&[&str]; 6] = [
+            &["--embedding", "qwen/text-embedding-v4"],
+            &["--api-key", "secret"],
+            &["--endpoint", "https://embed.example"],
+            &["--device", "cpu"],
+            &["--embedding-concurrency", "4"],
+            &["--reset-paths"],
+        ];
+        for flags in non_scope {
+            assert!(!file_scope_flags_set(&index_args(flags)), "{flags:?}");
+        }
+        // Every flag that lands in the constructed RootPath counts.
+        let scope: [&[&str]; 11] = [
+            &["--glob", "*.rs"],
+            &["--iglob", "*.md"],
+            &["--type", "rust"],
+            &["--type-not", "javascript"],
+            &["--hidden"],
+            &["--no-ignore"],
+            &["--ignore-file", ".custom-ignore"],
+            &["--max-depth", "3"],
+            &["--max-filesize", "10MB"],
+            &["--follow"],
+            &["--include-nested-git"],
+        ];
+        for flags in scope {
+            assert!(file_scope_flags_set(&index_args(flags)), "{flags:?}");
+        }
+    }
+
+    #[test]
+    fn server_flags_set_still_covers_every_rejected_group() {
+        assert!(!server_flags_set(&index_args(&[])));
+        let rejected: [&[&str]; 7] = [
+            &["--embedding", "qwen/text-embedding-v4"],
+            &["--api-key", "secret"],
+            &["--endpoint", "https://embed.example"],
+            &["--device", "cpu"],
+            &["--include-nested-git"],
+            &["--embedding-concurrency", "4"],
+            &["--reset-paths"],
+        ];
+        for flags in rejected {
+            assert!(server_flags_set(&index_args(flags)), "{flags:?}");
+        }
+    }
+
+    #[test]
+    fn rootless_flag_conflict_full_condition_matrix() {
+        let configured = vec![RootPath::default()];
+        // Rootless + file-scope flag + recorded root paths: the flags would
+        // be silently dropped, so the guard fires.
+        let error = rootless_flag_conflict(&index_args(&["--include-nested-git"]), &configured)
+            .expect("rootless update over configured roots must fail fast");
+        assert!(matches!(error, CliError::Usage { .. }), "{error:?}");
+        assert!(error.to_string().contains("--reset-paths"), "{error}");
+        // --reset-paths rebuilds the root paths from the flags.
+        assert!(
+            rootless_flag_conflict(
+                &index_args(&["--include-nested-git", "--reset-paths"]),
+                &configured
+            )
+            .is_none()
+        );
+        // An explicit root path rebuilds the RootPath from the flags.
+        assert!(
+            rootless_flag_conflict(&index_args(&["--include-nested-git", "."]), &configured)
+                .is_none()
+        );
+        // No recorded root paths: the fallback root path honors the flags.
+        assert!(rootless_flag_conflict(&index_args(&["--include-nested-git"]), &[]).is_none());
+        // No file-scope flag set: nothing can be dropped.
+        assert!(rootless_flag_conflict(&index_args(&[]), &configured).is_none());
+    }
+
+    #[tokio::test]
+    async fn rootless_update_over_indexed_workspace_fails_fast_instead_of_dropping_flags() {
+        use tempfile::TempDir;
+        use zg_core::models::EmbeddingModel;
+        use zg_core::models::stub::StubEmbeddingModel;
+        use zg_core::service::facade::CreateZvecGrepOptions;
+
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "fixture content\n").unwrap();
+        let stub: Arc<dyn EmbeddingModel> = Arc::new(StubEmbeddingModel::new(64));
+        let setup = create_zvec_grep(CreateZvecGrepOptions {
+            root: Some(dir.path().to_path_buf()),
+            embedding: None,
+            embedding_model: Some(stub),
+            api_key: None,
+            endpoint: None,
+            model_cache_dir: None,
+        });
+        setup
+            .ensure_index(&ZvecGrepIndexOptions {
+                root: Some(dir.path()),
+                root_paths: Vec::new(),
+                rebuild: false,
+                reset_paths: false,
+                include_paths: Vec::new(),
+                exclude_paths: Vec::new(),
+                globs: Vec::new(),
+                insensitive_globs: Vec::new(),
+                file_types: Vec::new(),
+                excluded_file_types: Vec::new(),
+                hidden: None,
+                no_ignore: None,
+                ignore_files: Vec::new(),
+                max_depth: None,
+                max_file_size_bytes: None,
+                follow: None,
+                include_nested_git: None,
+                embedding_concurrency: None,
+                on_progress: None,
+                changed_paths: Vec::new(),
+                signal: None,
+            })
+            .unwrap();
+        let info = setup.workspace_info(Some(dir.path())).unwrap();
+        assert!(
+            !info.workspace_index.unwrap().root_paths.is_empty(),
+            "setup must record root paths"
+        );
+
+        // Rootless CLI run (no positional root) against the indexed
+        // workspace: the guard must fire before any indexing work.
+        let args = index_args(&["--include-nested-git"]);
+        let error = run_index_direct(&args, &dir.path().to_path_buf())
+            .await
+            .expect_err("rootless update must fail fast instead of dropping the flag");
+        assert!(matches!(error, CliError::Usage { .. }), "{error:?}");
+        assert!(error.to_string().contains("--reset-paths"), "{error}");
     }
 }
