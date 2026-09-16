@@ -90,7 +90,3 @@ let hits = svc.context(&ZvecGrepContextOptions {
     ..Default::default()
 })?;
 ```
-
-## Status
-
-Port phases 0, A–I are complete (facade, daemon, MCP, CLI, auth, standalone storage, ONNX + llama-cpp local backends). Since then: C# + VB structured extraction, hybrid primary query groups with an opt-in `--fuse` flag (TS parity), and a streaming index pipeline (batched metadata writes, bounded memory).
