@@ -24,6 +24,7 @@ jobs:
         with:
           path: ~/.zvec-grep/models
           key: embedding-models-v1
+      # service_facade is feature-gated (test-support): skipped here by design, covered by the --all-features run below.
       - run: cargo test --workspace --locked
       - run: cargo test --workspace --locked --all-features
       - run: cargo test --workspace --locked --no-default-features

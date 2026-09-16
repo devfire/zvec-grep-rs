@@ -56,6 +56,7 @@ cargo clippy --workspace --all-targets  # warning-free; deny lints (unwrap/expec
 `Dockerfile` ships a portable multi-stage `zg` image (`$ORIGIN` rpath, no `LD_LIBRARY_PATH`).
 
 Integration tests in `zg-server`/`zg` use `zg-core`'s `test-support` feature (`StubEmbeddingModel`: deterministic SHA-256-hash vectors — for tests only, not retrieval quality).
+Run the full suite with `cargo test --workspace --all-features`; default-feature runs intentionally skip feature-gated integration tests such as `service_facade`.
 
 ## Use
 
