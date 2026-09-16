@@ -20,3 +20,11 @@
 - Facade splits: oversized modules become `name/` dir + slim re-export facade (`cli.rs` → 93 LOC + 12 modules); moves are pure, zero behavior change
 - Feature-gated backends: `#[cfg(feature)]` backend modules + factory `BackendUnavailable` fallback; default build stays hermetic (no C++ toolchain)
 - Rustdoc: never link private items from public docs (deny warnings); use literal code spans
+
+## Root-Scope Policy Flags
+- Shape: `Option<bool>` beside `follow` in `RootPath` + `ZvecGrepIndexOptions`, serde `default` + `skip_serializing_if = "Option::is_none"`; `None`/`Some(false)` opt out, `Some(true)` opts in.
+- Manifest: raw-JSON `is_optional_boolean` validation precedes serde (missing/null/bool ok; string/number/object → `MANIFEST.INVALID`); manifest key camelCase, status key snake_case.
+- Scanner: early-return on opt-in before allocating/probing; never bypass other filters (ignore, hidden, depth, size, symlink, `.git`/`.zvec-grep` hard-skips).
+- CLI: `bool_flag` wiring for both root/options literals; reject with `--drop` and in server/auto-server dispatch (single rejection site).
+- MCP: `IndexInput` per-request overrides rejected via `reject_index_overrides`; `RootPathOutput` copies field with exhaustive destructure (no `..`) so omitted fields fail compilation.
+- No new policy enums, scanner params, traits, or locks; assign new field explicitly in every touched literal, never hide with `..Default::default()`.

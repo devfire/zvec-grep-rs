@@ -10,6 +10,11 @@ Cargo workspace consisting of three primary crates:
 - `zg` (`crates/zg`): CLI application (`clap`) orchestrating local search, daemon management, and MCP client/server commands.
 - Local inference backends (`onnx`, `llama` features) are opt-in and off by default; gating rules: `mem:conventions`, versions: `mem:tech_stack`
 
+## Indexing Policy
+
+- Nested Git repositories excluded by default; `--include-nested-git` opts one parent workspace into traversal.
+- Policy carried as `RootPath.include_nested_git: Option<bool>` (manifest key `includeNestedGit`, status key `include_nested_git`); full, incremental, and watcher scans share stored roots; MCP per-request overrides rejected.
+
 ## Key References
 - Language, build system, and dependencies: `mem:tech_stack`
 - Development, test, and system execution commands: `mem:suggested_commands`
