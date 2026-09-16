@@ -84,6 +84,19 @@ pub(crate) const DEFAULT_IGNORED_FILE_PATTERNS: &[&str] = &[
 
 pub(crate) const HARD_SKIP_HIDDEN_NAMES: &[&str] = &[".git", ".zvec-grep"];
 
+/// Path shape used by scanner policy checks.
+///
+/// Replaces bare `is_directory: bool` parameters at scanner boundaries so
+/// call sites state intent instead of a bare boolean. Distinct from
+/// `FileKind`, the Text/Code/Data content classification in `crate::types`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathKind {
+    /// A regular file.
+    File,
+    /// A directory.
+    Dir,
+}
+
 /// Files plus skip diagnostics from one scan (mirrors `ScanResult`).
 #[derive(Debug, Clone, Default)]
 pub struct ScanResult {

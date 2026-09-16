@@ -18,7 +18,7 @@ use super::ignore::{
     IgnoreRule, default_ignore_rules, ignore_rules_for_directory, ignored_path_explicitly_included,
     match_ignore_rules, read_configured_ignore_rules, read_gitignore_rules,
 };
-use super::types::{CancelFlag, ScanOptions, ScanResult, throw_if_cancelled};
+use super::types::{CancelFlag, PathKind, ScanOptions, ScanResult, throw_if_cancelled};
 use super::types::{HARD_SKIP_HIDDEN_NAMES, display_relative, file_name_of, known_files_by_path};
 use super::types::{matching_root_paths, parent_display, path_outside_root, strip_root_prefix};
 
@@ -89,7 +89,7 @@ pub fn scan_file_path(
             false,
             &rules,
         ) || !selection.matches(&relative_path)
-            || has_excluded_nested_git_ancestor(&root, absolute_path, false)?
+            || has_excluded_nested_git_ancestor(&root, absolute_path, PathKind::File)?
         {
             continue;
         }
@@ -110,7 +110,8 @@ pub fn scan_file_path(
 }
 
 /// True when `absolute_path` could affect the index (mirrors
-/// `pathCanAffectIndex`).
+/// `pathCanAffectIndex`). `kind` picks directory-vs-file semantics for the
+/// recursive gate, max-depth bounds, and the nested-git ancestor check.
 ///
 /// # Errors
 ///
@@ -118,8 +119,9 @@ pub fn scan_file_path(
 pub fn path_can_affect_index(
     root_paths: &[RootPath],
     absolute_path: &str,
-    is_directory: bool,
+    kind: PathKind,
 ) -> EngineResult<bool> {
+    let is_directory = matches!(kind, PathKind::Dir);
     for configured in root_paths {
         let root = normalize_root_path(configured);
         if path_outside_root(&root.absolute_path, absolute_path) {
@@ -150,7 +152,7 @@ pub fn path_can_affect_index(
             &file_name_of(absolute_path),
             is_directory,
             &rules,
-        ) || has_excluded_nested_git_ancestor(&root, absolute_path, is_directory)?
+        ) || has_excluded_nested_git_ancestor(&root, absolute_path, kind)?
         {
             continue;
         }
@@ -203,7 +205,7 @@ pub fn scan_directory_path(
                 &file_name_of(absolute_path),
                 true,
                 &parent_rules,
-            ) || has_excluded_nested_git_ancestor(&root, absolute_path, true)?)
+            ) || has_excluded_nested_git_ancestor(&root, absolute_path, PathKind::Dir)?)
         {
             continue;
         }
@@ -315,10 +317,7 @@ fn walk(
             {
                 continue;
             }
-            if !root.include_nested_git.unwrap_or(false)
-                && is_nested_git_repository_directory(&absolute_path)
-                && !nested_git_repository_explicitly_included(&relative_path, root)
-            {
+            if nested_git_repository_blocked(root, &absolute_path, &relative_path) {
                 continue;
             }
             let real_directory = real_path_of(&absolute_path);
@@ -438,31 +437,25 @@ fn scan_root_path(
 fn has_excluded_nested_git_ancestor(
     root: &RootPath,
     absolute_path: &str,
-    include_target: bool,
+    kind: PathKind,
 ) -> EngineResult<bool> {
-    if root.include_nested_git.unwrap_or(false) {
-        return Ok(false);
-    }
     let path_from_root = strip_root_prefix(&root.absolute_path, absolute_path);
     let segments: Vec<&str> = path_from_root
         .split('/')
         .filter(|s| !s.is_empty())
         .collect();
-    let directories = if include_target {
-        segments.as_slice()
-    } else {
-        segments
+    let directories = match kind {
+        PathKind::Dir => segments.as_slice(),
+        PathKind::File => segments
             .get(..segments.len().saturating_sub(1))
-            .unwrap_or(&[])
+            .unwrap_or(&[]),
     };
     let mut current = PathBuf::from(&root.absolute_path);
     for segment in directories {
         current.push(segment);
         let current_display = to_display_path(&current);
         let relative_directory = display_relative(&root.absolute_path, &current_display);
-        if is_nested_git_repository_directory(&current_display)
-            && !nested_git_repository_explicitly_included(&relative_directory, root)
-        {
+        if nested_git_repository_blocked(root, &current_display, &relative_directory) {
             return Ok(true);
         }
     }
@@ -488,6 +481,20 @@ fn nested_git_repository_explicitly_included(relative_path: &str, root: &RootPat
     })
 }
 
+/// Shared nested-git exclusion gate: a directory is blocked when the root
+/// does not traverse nested repositories (`None`/`Some(false)`), the
+/// directory is itself a git repository, and no root include pattern
+/// explicitly covers it.
+fn nested_git_repository_blocked(
+    root: &RootPath,
+    absolute_directory: &str,
+    relative_directory: &str,
+) -> bool {
+    !root.traverses_nested_git()
+        && is_nested_git_repository_directory(absolute_directory)
+        && !nested_git_repository_explicitly_included(relative_directory, root)
+}
+
 fn dedupe_files(files: Vec<FileInfo>) -> Vec<FileInfo> {
     let mut seen = HashSet::new();
     let mut out = Vec::with_capacity(files.len());
@@ -505,7 +512,7 @@ mod tests {
     use std::path::Path;
 
     use super::{path_can_affect_index, scan_directory_path, scan_file_path, scan_root_paths};
-    use crate::pipeline::indexing::scanner::types::ScanOptions;
+    use crate::pipeline::indexing::scanner::types::{PathKind, ScanOptions};
     use crate::types::RootPath;
 
     fn write(path: &Path, contents: &str) {
@@ -617,11 +624,11 @@ mod tests {
             .expect("dir scan");
         assert_eq!(dir_scan.files.len(), 2);
         assert!(
-            path_can_affect_index(&roots, &deep, false).expect("affect file"),
+            path_can_affect_index(&roots, &deep, PathKind::File).expect("affect file"),
             "enabled policy tracks nested file"
         );
         assert!(
-            path_can_affect_index(&roots, &repo_a, true).expect("affect dir"),
+            path_can_affect_index(&roots, &repo_a, PathKind::Dir).expect("affect dir"),
             "enabled policy tracks nested repository directory"
         );
 
@@ -639,11 +646,11 @@ mod tests {
                 .is_empty()
         );
         assert!(
-            !path_can_affect_index(&disabled, &deep, false).expect("affect file"),
+            !path_can_affect_index(&disabled, &deep, PathKind::File).expect("affect file"),
             "disabled policy ignores nested file"
         );
         assert!(
-            !path_can_affect_index(&disabled, &repo_a, true).expect("affect dir"),
+            !path_can_affect_index(&disabled, &repo_a, PathKind::Dir).expect("affect dir"),
             "disabled policy ignores nested repository directory"
         );
 

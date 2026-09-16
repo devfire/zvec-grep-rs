@@ -15,5 +15,5 @@ pub mod types;
 pub mod walk;
 
 pub use file_info::create_scan_diagnostics;
-pub use types::{CancelFlag, ScanOptions, ScanResult};
+pub use types::{CancelFlag, PathKind, ScanOptions, ScanResult};
 pub use walk::{path_can_affect_index, scan_directory_path, scan_file_path, scan_root_paths};

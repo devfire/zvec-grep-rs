@@ -20,7 +20,7 @@ use std::time::Duration;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
-use zg_core::pipeline::indexing::scanner::path_can_affect_index;
+use zg_core::pipeline::indexing::scanner::{PathKind, path_can_affect_index};
 use zg_core::types::RootPath;
 
 use crate::change_set::{
@@ -368,7 +368,12 @@ fn should_track(shared: &Shared, absolute: &str, is_directory: bool) -> bool {
     };
     let roots =
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| source())).unwrap_or_default();
-    path_can_affect_index(&roots, absolute, is_directory).unwrap_or(true)
+    let kind = if is_directory {
+        PathKind::Dir
+    } else {
+        PathKind::File
+    };
+    path_can_affect_index(&roots, absolute, kind).unwrap_or(true)
 }
 
 async fn classify_loop(
