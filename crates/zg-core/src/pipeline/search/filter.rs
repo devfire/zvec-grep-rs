@@ -5,7 +5,8 @@ use crate::storage::{StorageSearchFilter, WorkspaceIndexStorage};
 use crate::types::{FileInfo, ResolvedSearchPlan, SearchPlan};
 use crate::utils::file_selection::{FileTypesMatcher, OrderedGlobs};
 use crate::utils::glob::{
-    is_absolute_path_pattern, normalize_path_for_match, path_pattern_matches,
+    CompiledGlob, has_path_glob, is_absolute_path_pattern, normalize_path_for_match,
+    normalize_path_pattern,
 };
 
 /// Storage filter plus whether the file-id dimension resolved to an empty
@@ -22,11 +23,18 @@ pub(crate) fn search_plan_to_storage_filter(
     storage: &dyn WorkspaceIndexStorage,
     file_type_matcher: &FileTypesMatcher,
 ) -> ResolvedPlanFilter {
-    let file_ids = resolve_filtered_file_ids(plan, &storage.list_files(), file_type_matcher);
     let symbol_types = if plan.plan.symbol_types.is_empty() {
         None
     } else {
         Some(plan.plan.symbol_types.clone())
+    };
+    // Fast path: with no file-id dimension constraints there is nothing to
+    // enumerate (mirrors the `None` from `resolve_filtered_file_ids` without
+    // cloning metadata). Symbol-only plans still filter on `symbol_types`.
+    let file_ids = if !file_id_constrained(plan) && file_type_matcher.is_empty() {
+        None
+    } else {
+        resolve_filtered_file_ids(plan, &storage.list_file_refs(), file_type_matcher)
     };
     match (file_ids, symbol_types) {
         (None, None) => ResolvedPlanFilter {
@@ -66,20 +74,20 @@ fn file_id_constrained(plan: &ResolvedSearchPlan) -> bool {
 
 fn resolve_filtered_file_ids(
     plan: &ResolvedSearchPlan,
-    files: &[FileInfo],
+    files: &[&FileInfo],
     file_type_matcher: &FileTypesMatcher,
 ) -> Option<Vec<FileId>> {
-    let include_matchers: Vec<_> = plan
+    let include_matchers: Vec<CompiledPathFilter> = plan
         .plan
         .include_paths
         .iter()
-        .map(|pattern| compile_path_filter(pattern))
+        .map(|pattern| CompiledPathFilter::new(pattern))
         .collect();
-    let exclude_matchers: Vec<_> = plan
+    let exclude_matchers: Vec<CompiledPathFilter> = plan
         .plan
         .exclude_paths
         .iter()
-        .map(|pattern| compile_path_filter(pattern))
+        .map(|pattern| CompiledPathFilter::new(pattern))
         .collect();
     let has_modified = plan.plan.modified_after.is_some() || plan.plan.modified_before.is_some();
     let has_shared = !plan.plan.globs.is_empty()
@@ -93,9 +101,10 @@ fn resolve_filtered_file_ids(
         files
             .iter()
             .filter(|file| {
+                let file: &FileInfo = file;
                 let included = include_matchers.is_empty()
-                    || include_matchers.iter().any(|matcher| matcher(file));
-                let excluded = exclude_matchers.iter().any(|matcher| matcher(file));
+                    || include_matchers.iter().any(|matcher| matcher.matches(file));
+                let excluded = exclude_matchers.iter().any(|matcher| matcher.matches(file));
                 included
                     && !excluded
                     && globs.matches(&file.relative_path)
@@ -123,14 +132,74 @@ fn matches_modified_time_filter(file: &FileInfo, plan: &SearchPlan) -> bool {
     true
 }
 
-fn compile_path_filter(pattern: &str) -> impl Fn(&FileInfo) -> bool + '_ {
-    let absolute = is_absolute_path_pattern(pattern);
-    move |file: &FileInfo| {
-        let path = if absolute {
-            normalize_path_for_match(&file.absolute_path)
+/// Include/exclude path pattern compiled once per query: wildcard patterns
+/// reuse the shared [`CompiledGlob`]; literal patterns keep exact/path-prefix
+/// semantics without per-file regex work. Empty patterns match nothing, as do
+/// patterns whose regex fails to compile.
+struct CompiledPathFilter {
+    absolute: bool,
+    kind: CompiledPathKind,
+}
+
+enum CompiledPathKind {
+    /// Empty pattern: matches nothing.
+    Never,
+    /// Literal pattern: exact match or anything underneath `prefix` (`None`
+    /// for trailing-slash patterns, mirroring `path_pattern_matches`).
+    Literal {
+        expected: String,
+        prefix: Option<String>,
+    },
+    /// Glob pattern: precompiled matcher (invalid patterns match nothing).
+    Glob { matcher: CompiledGlob },
+}
+
+impl CompiledPathFilter {
+    fn new(pattern: &str) -> Self {
+        let absolute = is_absolute_path_pattern(pattern);
+        let normalized = normalize_path_pattern(pattern);
+        let kind = if normalized.is_empty() {
+            CompiledPathKind::Never
+        } else if has_path_glob(&normalized) {
+            CompiledPathKind::Glob {
+                matcher: CompiledGlob::new(pattern, false),
+            }
         } else {
-            normalize_path_for_match(&file.relative_path)
+            let prefix = if normalized.ends_with('/') {
+                None
+            } else {
+                Some(format!("{normalized}/"))
+            };
+            CompiledPathKind::Literal {
+                expected: normalized,
+                prefix,
+            }
         };
-        path_pattern_matches(pattern, &path)
+        Self { absolute, kind }
+    }
+
+    fn matches(&self, file: &FileInfo) -> bool {
+        match &self.kind {
+            CompiledPathKind::Never => false,
+            CompiledPathKind::Literal { expected, prefix } => {
+                let path = if self.absolute {
+                    normalize_path_for_match(&file.absolute_path)
+                } else {
+                    normalize_path_for_match(&file.relative_path)
+                };
+                path == *expected
+                    || prefix
+                        .as_deref()
+                        .is_some_and(|prefix| path.starts_with(prefix))
+            }
+            CompiledPathKind::Glob { matcher } => {
+                let path = if self.absolute {
+                    file.absolute_path.as_str()
+                } else {
+                    file.relative_path.as_str()
+                };
+                matcher.matches(path)
+            }
+        }
     }
 }

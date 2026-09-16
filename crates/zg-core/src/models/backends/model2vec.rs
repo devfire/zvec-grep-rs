@@ -397,9 +397,9 @@ fn tokenize_text(
             detail: err.to_string(),
         })
     })?;
-    let mut ids: Vec<u32> = encoding.get_ids().to_vec();
-    let was_truncated = ids.len() > max_input_tokens;
-    ids.truncate(max_input_tokens);
+    let raw_ids = encoding.get_ids();
+    let was_truncated = raw_ids.len() > max_input_tokens;
+    let mut ids: Vec<u32> = raw_ids.iter().copied().take(max_input_tokens).collect();
     if let Some(unk) = unk_id {
         ids.retain(|id| *id != unk);
     }

@@ -42,32 +42,74 @@ fn is_token_dense_text(text: Option<&str>, max_input_tokens: usize) -> bool {
         return false;
     }
     if len <= TOKEN_DENSE_WINDOW_CHARS {
-        return is_token_dense_window(text, 0, len);
-    }
-    let last_window_start = len - TOKEN_DENSE_WINDOW_CHARS;
-    let mut start = 0usize;
-    while start <= last_window_start {
-        if is_token_dense_window(text, start, TOKEN_DENSE_WINDOW_CHARS) {
-            return true;
+        let required = len.saturating_mul(TOKEN_DENSE_PERCENT).div_ceil(100);
+        let mut dense = 0usize;
+        for ch in text.chars() {
+            if is_dense_char(ch) {
+                dense += 1;
+                if dense >= required {
+                    return true;
+                }
+            }
         }
-        start += TOKEN_DENSE_WINDOW_STEP_CHARS;
+        return false;
     }
-    !last_window_start.is_multiple_of(TOKEN_DENSE_WINDOW_STEP_CHARS)
-        && is_token_dense_window(text, last_window_start, TOKEN_DENSE_WINDOW_CHARS)
-}
-
-fn is_token_dense_window(text: &str, start: usize, length: usize) -> bool {
-    let required = length.saturating_mul(TOKEN_DENSE_PERCENT).div_ceil(100);
+    let required = TOKEN_DENSE_WINDOW_CHARS
+        .saturating_mul(TOKEN_DENSE_PERCENT)
+        .div_ceil(100);
+    let mut leading = text.chars();
+    let mut trailing = text.chars();
     let mut dense = 0usize;
-    for ch in text.chars().skip(start).take(length) {
-        if !(ch.is_ascii_alphabetic() || ch == ' ' || ch == '\t') {
+    for ch in leading.by_ref().take(TOKEN_DENSE_WINDOW_CHARS) {
+        if is_dense_char(ch) {
             dense += 1;
             if dense >= required {
                 return true;
             }
         }
     }
+    let last_window_start = len - TOKEN_DENSE_WINDOW_CHARS;
+    let mut window_start = 0usize;
+    while window_start.saturating_add(TOKEN_DENSE_WINDOW_STEP_CHARS) <= last_window_start {
+        let dropped = trailing
+            .by_ref()
+            .take(TOKEN_DENSE_WINDOW_STEP_CHARS)
+            .filter(|ch| is_dense_char(*ch))
+            .count();
+        dense = dense.saturating_sub(dropped);
+        for ch in leading.by_ref().take(TOKEN_DENSE_WINDOW_STEP_CHARS) {
+            if is_dense_char(ch) {
+                dense += 1;
+                if dense >= required {
+                    return true;
+                }
+            }
+        }
+        window_start = window_start.saturating_add(TOKEN_DENSE_WINDOW_STEP_CHARS);
+    }
+    if window_start != last_window_start {
+        let delta = last_window_start.saturating_sub(window_start);
+        let dropped = trailing
+            .by_ref()
+            .take(delta)
+            .filter(|ch| is_dense_char(*ch))
+            .count();
+        dense = dense.saturating_sub(dropped);
+        for ch in leading.by_ref().take(delta) {
+            if is_dense_char(ch) {
+                dense += 1;
+                if dense >= required {
+                    return true;
+                }
+            }
+        }
+    }
     false
+}
+
+#[must_use]
+fn is_dense_char(ch: char) -> bool {
+    !(ch.is_ascii_alphabetic() || ch == ' ' || ch == '\t')
 }
 
 #[cfg(test)]

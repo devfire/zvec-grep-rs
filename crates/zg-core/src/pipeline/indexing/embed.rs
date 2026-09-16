@@ -14,11 +14,11 @@ use crate::utils::timing::TimingCollector;
 
 use super::context::{
     IndexContext, IndexProgressSink, IndexStats, PreparedFile, PreparedFragment, ProgressBase,
-    error_to_message, file_failure_reason, throw_if_index_cancelled,
+    error_to_message, file_failure_reason, is_cancelled_error, throw_if_index_cancelled,
 };
 use super::prepare::{
-    commit_file, commit_vectors, describe_prepared_files, finished_file_detail, mark_file_failed,
-    prepare_file, record_file_failed,
+    PurePrepareOutcome, commit_file, commit_vectors, describe_prepared_files, finished_file_detail,
+    mark_file_failed, read_and_prepare_pure, record_file_failed,
 };
 use super::progress::{
     lock_stats, lock_stats_mut, report_download_progress, report_indexing, thread_progress_sink,
@@ -82,204 +82,177 @@ pub(crate) fn index_files(
         throw_if_index_cancelled(ctx)?;
     }
 
-    let mut units: Vec<Vec<PreparedFile>> = Vec::new();
+    // Bounded streaming preparation: parallel pure phase (`fs::read` plus the
+    // Step 3 hash-carrying extraction in-thread, sharing only `Send + Sync`
+    // inputs) over a bounded lookahead window, then a serial apply phase
+    // preserving input-order failures and fragment-count unit membership.
+    // Workers run only the pure `read_and_prepare_pure` phase, so they never
+    // borrow `ctx`; failure marking, unit batching, and stats stay on the
+    // main thread. Complete units embed and commit before more files prepare,
+    // earlier storage writes are visible while later files still prepare and
+    // live owned text/vectors stay bounded independent of the file count.
+    let prepare_width = std::thread::available_parallelism()
+        .map(|cores| cores.get())
+        .unwrap_or(1)
+        .max(1);
+    let prepare_model = Arc::clone(&ctx.embedding_model);
+    let prepare_cancel = ctx.cancel.clone();
+    let wave_size = scheduler.policy().max.max(1);
+    // Bounded lookahead feeding both stages: a constant multiple of the
+    // parallel widths, never of the file count. Live owned payload is at most
+    // one prepare window plus queued complete units (each holding at most
+    // `max_batch` fragments) plus one embed wave.
+    let prepare_window = prepare_width.max(wave_size).saturating_mul(2).max(1);
+    let total = files.len();
+    let abort = Arc::new(AtomicBool::new(false));
+    let mut prepare_elapsed_ms = 0.0;
+    let mut embed_elapsed_ms = 0.0;
+    // Wave-granularity progress replaces the per-file "reading ..." detail so
+    // workers never contend on the shared stats lock; counters are unchanged
+    // (failures land in the serial apply below).
+    let mut prepared_done = 0usize;
     let mut batch: Vec<PreparedFile> = Vec::new();
     let mut batch_fragments = 0usize;
-    for file in &files {
+    let mut ready: Vec<Vec<PreparedFile>> = Vec::new();
+    for file_window in files.chunks(prepare_window) {
         throw_if_index_cancelled(ctx)?;
         report_indexing(
             ctx,
             &lock_stats(&stats),
-            Some(format!("reading {}", file.relative_path)),
+            Some(format!(
+                "preparing {} of {} files",
+                prepared_done.saturating_add(file_window.len()),
+                total
+            )),
             progress_base,
-            files.len(),
+            total,
             Some(scheduler.snapshot()),
         );
-        let prepared = timings.time("index_prepare", || prepare_file(file, ctx))?;
-        match prepared {
-            Err(reason) => {
-                record_file_failed(&mut lock_stats_mut(&stats), file, Some(reason));
-                report_indexing(
-                    ctx,
-                    &lock_stats(&stats),
-                    Some(format!("failed {}", file.relative_path)),
-                    progress_base,
-                    files.len(),
-                    Some(scheduler.snapshot()),
+        let window_started = Instant::now();
+        let mut window_outcomes: Vec<PurePrepareOutcome> = Vec::with_capacity(file_window.len());
+        std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(file_window.len());
+            for file in file_window {
+                let model = Arc::clone(&prepare_model);
+                let cancel = prepare_cancel.clone();
+                handles.push(
+                    scope.spawn(move || read_and_prepare_pure(file, &*model, cancel.as_ref())),
                 );
             }
-            Ok(prepared) => {
-                if prepared.fragments.is_empty() {
-                    let committed = timings.time("index_commit", || {
-                        commit_file(ctx, &prepared, &[], 0, &stats)
-                    })?;
+            for (file, handle) in file_window.iter().zip(handles) {
+                match handle.join() {
+                    Ok(outcome) => window_outcomes.push(outcome),
+                    Err(_) => window_outcomes.push(Err(Box::new((
+                        file.clone(),
+                        EngineError::new(
+                            EngineErrorCode::IndexingEmbeddingThreadFailed,
+                            "prepare worker thread failed",
+                        ),
+                    )))),
+                }
+            }
+        });
+        prepare_elapsed_ms += window_started.elapsed().as_secs_f64() * 1000.0;
+        prepared_done = prepared_done.saturating_add(file_window.len());
+        for (file, outcome) in file_window.iter().zip(window_outcomes) {
+            throw_if_index_cancelled(ctx)?;
+            match outcome {
+                Err(failure) => {
+                    let (failed_file, error) = *failure;
+                    if is_cancelled_error(&error) {
+                        throw_if_index_cancelled(ctx)?;
+                        return Err(error);
+                    }
+                    let reason = mark_file_failed(ctx.storage, &failed_file, &error, "prepare");
+                    record_file_failed(&mut lock_stats_mut(&stats), &failed_file, Some(reason));
+                    ctx.storage.flush()?;
                     report_indexing(
                         ctx,
                         &lock_stats(&stats),
-                        Some(finished_file_detail(committed, &file.relative_path)),
+                        Some(format!("failed {}", failed_file.relative_path)),
                         progress_base,
-                        files.len(),
+                        total,
                         Some(scheduler.snapshot()),
                     );
-                    continue;
                 }
-                if prepared.fragments.len() > max_batch {
-                    flush_batch(&mut batch, &mut batch_fragments, &mut units);
-                    units.push(vec![prepared]);
-                    continue;
-                }
-                if batch_fragments > 0 && batch_fragments + prepared.fragments.len() > max_batch {
-                    flush_batch(&mut batch, &mut batch_fragments, &mut units);
-                }
-                batch_fragments += prepared.fragments.len();
-                batch.push(prepared);
-                if batch_fragments == max_batch {
-                    flush_batch(&mut batch, &mut batch_fragments, &mut units);
+                Ok(prepared) => {
+                    if prepared.fragments.is_empty() {
+                        let committed = timings.time("index_commit", || {
+                            commit_file(ctx, &prepared, &[], 0, &stats)
+                        })?;
+                        report_indexing(
+                            ctx,
+                            &lock_stats(&stats),
+                            Some(finished_file_detail(committed, &file.relative_path)),
+                            progress_base,
+                            total,
+                            Some(scheduler.snapshot()),
+                        );
+                        continue;
+                    }
+                    push_prepared(
+                        prepared,
+                        &mut batch,
+                        &mut batch_fragments,
+                        &mut ready,
+                        max_batch,
+                    );
                 }
             }
         }
+        // `window_outcomes` drops here: consumed files release their owned
+        // text before the next window prepares.
+        //
+        // Embed and commit complete units before preparing more, so completed
+        // writes are observable while later windows still prepare. The
+        // trailing partial batch stays queued: unit membership is decided by
+        // fragment counts alone, identical to whole-repo batching.
+        while ready.len() >= wave_size {
+            if abort.load(Ordering::Relaxed) {
+                break;
+            }
+            let wave: Vec<Vec<PreparedFile>> = ready.drain(..wave_size.min(ready.len())).collect();
+            embed_and_commit_wave(
+                wave,
+                ctx,
+                &stats,
+                &scheduler,
+                &abort,
+                timings,
+                progress_base,
+                total,
+                &mut embed_elapsed_ms,
+            )?;
+        }
+        if abort.load(Ordering::Relaxed) {
+            break;
+        }
     }
-    flush_batch(&mut batch, &mut batch_fragments, &mut units);
-
-    // Parallel embedding in bounded waves; serial commit in file order.
-    let abort = Arc::new(AtomicBool::new(false));
-    let embed_started = Instant::now();
-    let wave_size = scheduler.policy().max.max(1);
-    let mut outcomes: Vec<(Vec<PreparedFile>, UnitOutcome)> = Vec::with_capacity(units.len());
-    for wave in units.chunks(wave_size) {
+    flush_batch(&mut batch, &mut batch_fragments, &mut ready);
+    while !ready.is_empty() {
         if abort.load(Ordering::Relaxed) {
             break;
         }
         throw_if_index_cancelled(ctx)?;
-        std::thread::scope(|scope| {
-            let mut handles = Vec::with_capacity(wave.len());
-            for unit in wave {
-                let scheduler = Arc::clone(&scheduler);
-                let model = Arc::clone(&ctx.embedding_model);
-                let abort = Arc::clone(&abort);
-                let on_progress = ctx.on_progress.clone();
-                let cancel = ctx.cancel.clone();
-                let stats = Arc::clone(&stats);
-                let total = files.len();
-                handles.push(scope.spawn(move || {
-                    embed_unit(
-                        unit,
-                        &*model,
-                        &scheduler,
-                        &abort,
-                        cancel.as_ref(),
-                        on_progress.as_ref(),
-                        &stats,
-                        progress_base,
-                        total,
-                    )
-                }));
-            }
-            for (unit, handle) in wave.iter().zip(handles) {
-                match handle.join() {
-                    Ok(outcome) => outcomes.push((unit.clone(), outcome)),
-                    Err(_) => {
-                        abort.store(true, Ordering::Relaxed);
-                        outcomes.push((
-                            unit.clone(),
-                            UnitOutcome::Failed(EngineError::new(
-                                EngineErrorCode::IndexingEmbeddingThreadFailed,
-                                "embedding worker thread failed",
-                            )),
-                        ));
-                    }
-                }
-            }
-        });
-        if let Some(error) = outcomes.iter().find_map(|(_, outcome)| match outcome {
-            UnitOutcome::Failed(error)
-                if should_fail_fast_embedding_error(error, &*ctx.embedding_model) =>
-            {
-                Some(error.clone())
-            }
-            UnitOutcome::Failed(_) | UnitOutcome::Embedded(_) => None,
-        }) {
-            return Err(error);
-        }
+        let wave: Vec<Vec<PreparedFile>> = ready.drain(..wave_size.min(ready.len())).collect();
+        embed_and_commit_wave(
+            wave,
+            ctx,
+            &stats,
+            &scheduler,
+            &abort,
+            timings,
+            progress_base,
+            total,
+            &mut embed_elapsed_ms,
+        )?;
     }
-    timings.add(
-        "index_embedding",
-        embed_started.elapsed().as_secs_f64() * 1000.0,
-        1,
-    );
-    throw_if_index_cancelled(ctx)?;
-
-    for (unit, outcome) in &outcomes {
-        throw_if_index_cancelled(ctx)?;
-        match outcome {
-            UnitOutcome::Embedded(results) => {
-                for (prepared, result) in unit.iter().zip(results.iter()) {
-                    match result {
-                        FileOutcome::Embedded(embed) => {
-                            let file_vectors: Vec<IndexedFragment> = prepared
-                                .fragments
-                                .iter()
-                                .zip(embed.vectors.iter())
-                                .map(|(fragment, vector)| IndexedFragment {
-                                    fragment: fragment.fragment.clone(),
-                                    vector: vector.clone(),
-                                })
-                                .collect();
-                            let committed = timings.time("index_commit", || {
-                                commit_vectors(
-                                    ctx,
-                                    prepared,
-                                    &file_vectors,
-                                    embed.truncated_fragment_count,
-                                    &stats,
-                                )
-                            })?;
-                            report_indexing(
-                                ctx,
-                                &lock_stats(&stats),
-                                Some(finished_file_detail(
-                                    committed,
-                                    &prepared.file.relative_path,
-                                )),
-                                progress_base,
-                                files.len(),
-                                Some(scheduler.snapshot()),
-                            );
-                        }
-                        FileOutcome::Failed(reason) => {
-                            record_file_failed(
-                                &mut lock_stats_mut(&stats),
-                                &prepared.file,
-                                Some(reason.clone()),
-                            );
-                            report_indexing(
-                                ctx,
-                                &lock_stats(&stats),
-                                Some(finished_file_detail(false, &prepared.file.relative_path)),
-                                progress_base,
-                                files.len(),
-                                Some(scheduler.snapshot()),
-                            );
-                        }
-                    }
-                }
-            }
-            UnitOutcome::Failed(error) => {
-                for prepared in unit {
-                    let reason = mark_file_failed(ctx.storage, &prepared.file, error, "embed");
-                    record_file_failed(&mut lock_stats_mut(&stats), &prepared.file, Some(reason));
-                    report_indexing(
-                        ctx,
-                        &lock_stats(&stats),
-                        Some(finished_file_detail(false, &prepared.file.relative_path)),
-                        progress_base,
-                        files.len(),
-                        Some(scheduler.snapshot()),
-                    );
-                }
-            }
-        }
+    if !files.is_empty() {
+        timings.add("index_prepare", prepare_elapsed_ms, files.len() as u64);
     }
+    // One `index_embedding` entry (count 1, hence count-free in
+    // `TimingCollector::entries`): per-wave wall-clock accumulates locally.
+    timings.add("index_embedding", embed_elapsed_ms, 1);
     throw_if_index_cancelled(ctx)?;
     Ok(lock_stats(&stats))
 }
@@ -294,6 +267,206 @@ fn flush_batch(
     }
     units.push(std::mem::take(batch));
     *count = 0;
+}
+
+/// Batches one prepared file into fragment-count units for the streaming loop:
+/// oversized singles flush through, otherwise the file joins the open batch,
+/// flushing on overflow or exactly-full. Only the open batch carries across
+/// producer-window boundaries, so unit membership and input order match
+/// whole-repo batching exactly.
+fn push_prepared(
+    prepared: PreparedFile,
+    batch: &mut Vec<PreparedFile>,
+    batch_fragments: &mut usize,
+    ready: &mut Vec<Vec<PreparedFile>>,
+    max_batch: usize,
+) {
+    if prepared.fragments.len() > max_batch {
+        flush_batch(batch, batch_fragments, ready);
+        ready.push(vec![prepared]);
+        return;
+    }
+    if *batch_fragments > 0 && *batch_fragments + prepared.fragments.len() > max_batch {
+        flush_batch(batch, batch_fragments, ready);
+    }
+    *batch_fragments += prepared.fragments.len();
+    batch.push(prepared);
+    if *batch_fragments == max_batch {
+        flush_batch(batch, batch_fragments, ready);
+    }
+}
+
+/// Embeds one bounded wave of complete units in parallel, then commits the
+/// owned results serially in input order. Units are borrowed by workers and
+/// moved into the commit phase after joining, so no `unit.clone()` ever
+/// materializes; vectors and fragments move into storage payloads without
+/// re-cloning. Embedding wall-clock accumulates into `embed_elapsed_ms`; the
+/// caller records `index_embedding` once (count 1).
+#[allow(clippy::too_many_arguments)]
+fn embed_and_commit_wave(
+    wave: Vec<Vec<PreparedFile>>,
+    ctx: &mut IndexContext<'_>,
+    stats: &Arc<Mutex<IndexStats>>,
+    scheduler: &Arc<EmbeddingScheduler>,
+    abort: &AtomicBool,
+    timings: &mut TimingCollector,
+    progress_base: Option<ProgressBase>,
+    total: usize,
+    embed_elapsed_ms: &mut f64,
+) -> EngineResult<()> {
+    throw_if_index_cancelled(ctx)?;
+    let started = Instant::now();
+    let outcomes: Vec<UnitOutcome> = std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(wave.len());
+        for unit in &wave {
+            let scheduler = Arc::clone(scheduler);
+            let model = Arc::clone(&ctx.embedding_model);
+            let abort_ref = abort;
+            let on_progress = ctx.on_progress.clone();
+            let cancel = ctx.cancel.clone();
+            let stats = Arc::clone(stats);
+            handles.push(scope.spawn(move || {
+                embed_unit(
+                    unit,
+                    &*model,
+                    &scheduler,
+                    abort_ref,
+                    cancel.as_ref(),
+                    on_progress.as_ref(),
+                    &stats,
+                    progress_base,
+                    total,
+                )
+            }));
+        }
+        handles
+            .into_iter()
+            .map(|handle| match handle.join() {
+                Ok(outcome) => outcome,
+                Err(_) => {
+                    abort.store(true, Ordering::Relaxed);
+                    UnitOutcome::Failed(EngineError::new(
+                        EngineErrorCode::IndexingEmbeddingThreadFailed,
+                        "embedding worker thread failed",
+                    ))
+                }
+            })
+            .collect()
+    });
+    *embed_elapsed_ms += started.elapsed().as_secs_f64() * 1000.0;
+    if let Some(error) = outcomes.iter().find_map(|outcome| match outcome {
+        UnitOutcome::Failed(error)
+            if should_fail_fast_embedding_error(error, &*ctx.embedding_model) =>
+        {
+            Some(error.clone())
+        }
+        UnitOutcome::Failed(_) | UnitOutcome::Embedded(_) => None,
+    }) {
+        return Err(error);
+    }
+    for (unit, outcome) in wave.into_iter().zip(outcomes) {
+        throw_if_index_cancelled(ctx)?;
+        match outcome {
+            UnitOutcome::Embedded(results) => {
+                for (mut prepared, result) in unit.into_iter().zip(results) {
+                    match result {
+                        FileOutcome::Embedded(embed) => {
+                            if embed.vectors.len() != prepared.fragments.len() {
+                                let error = EngineError::new(
+                                    EngineErrorCode::StorageEntityVectorCountMismatch,
+                                    "embedding returned mismatched entity/vector counts",
+                                )
+                                .with_context(format!(
+                                    "fileId={} fragmentCount={} vectorCount={}",
+                                    prepared.file.id.as_str(),
+                                    prepared.fragments.len(),
+                                    embed.vectors.len()
+                                ));
+                                let reason =
+                                    mark_file_failed(ctx.storage, &prepared.file, &error, "commit");
+                                record_file_failed(
+                                    &mut lock_stats_mut(stats),
+                                    &prepared.file,
+                                    Some(reason),
+                                );
+                                ctx.storage.flush()?;
+                                report_indexing(
+                                    ctx,
+                                    &lock_stats(stats),
+                                    Some(finished_file_detail(false, &prepared.file.relative_path)),
+                                    progress_base,
+                                    total,
+                                    Some(scheduler.snapshot()),
+                                );
+                                continue;
+                            }
+                            let truncated_fragment_count = embed.truncated_fragment_count;
+                            let fragments = std::mem::take(&mut prepared.fragments);
+                            let file_vectors: Vec<IndexedFragment> = fragments
+                                .into_iter()
+                                .zip(embed.vectors)
+                                .map(|(fragment, vector)| IndexedFragment {
+                                    fragment: fragment.fragment,
+                                    vector,
+                                })
+                                .collect();
+                            let committed = timings.time("index_commit", || {
+                                commit_vectors(
+                                    ctx,
+                                    &prepared.file,
+                                    &file_vectors,
+                                    truncated_fragment_count,
+                                    stats,
+                                )
+                            })?;
+                            report_indexing(
+                                ctx,
+                                &lock_stats(stats),
+                                Some(finished_file_detail(
+                                    committed,
+                                    &prepared.file.relative_path,
+                                )),
+                                progress_base,
+                                total,
+                                Some(scheduler.snapshot()),
+                            );
+                        }
+                        FileOutcome::Failed(reason) => {
+                            record_file_failed(
+                                &mut lock_stats_mut(stats),
+                                &prepared.file,
+                                Some(reason),
+                            );
+                            report_indexing(
+                                ctx,
+                                &lock_stats(stats),
+                                Some(finished_file_detail(false, &prepared.file.relative_path)),
+                                progress_base,
+                                total,
+                                Some(scheduler.snapshot()),
+                            );
+                        }
+                    }
+                }
+            }
+            UnitOutcome::Failed(error) => {
+                for prepared in unit {
+                    let reason = mark_file_failed(ctx.storage, &prepared.file, &error, "embed");
+                    record_file_failed(&mut lock_stats_mut(stats), &prepared.file, Some(reason));
+                    report_indexing(
+                        ctx,
+                        &lock_stats(stats),
+                        Some(finished_file_detail(false, &prepared.file.relative_path)),
+                        progress_base,
+                        total,
+                        Some(scheduler.snapshot()),
+                    );
+                }
+                ctx.storage.flush()?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Embeds one unit (batch or oversized single file) with the TS fallback
@@ -421,22 +594,34 @@ fn embed_unit_contents(
         on_model_progress,
         Some(abort),
     )?;
+    let total_fragments: usize = unit.iter().map(|file| file.fragments.len()).sum();
+    if result.vectors.len() != total_fragments {
+        return Err(EngineError::new(
+            EngineErrorCode::StorageEntityVectorCountMismatch,
+            "embedding returned mismatched entity/vector counts",
+        )
+        .with_context(format!(
+            "unitFiles={} fragmentCount={} vectorCount={}",
+            unit.len(),
+            total_fragments,
+            result.vectors.len()
+        )));
+    }
+    // Global input-order truncation indices; per-file attribution below.
     let truncated: HashSet<usize> = result.truncated.into_iter().collect();
+    // Consume the vectors in input order without re-cloning per-file windows.
+    let mut vectors = result.vectors.into_iter();
     let mut offset = 0usize;
     let mut out = Vec::with_capacity(unit.len());
     for file in unit {
         let end = offset + file.fragments.len();
-        let vectors = result
-            .vectors
-            .get(offset..end)
-            .map(|window| window.to_vec())
-            .unwrap_or_default();
+        let file_vectors: Vec<Vec<f32>> = vectors.by_ref().take(file.fragments.len()).collect();
         let truncated_fragment_count = (offset..end)
             .filter(|index| truncated.contains(index))
             .count();
         offset = end;
         out.push(FileOutcome::Embedded(FileEmbed {
-            vectors,
+            vectors: file_vectors,
             truncated_fragment_count,
         }));
     }

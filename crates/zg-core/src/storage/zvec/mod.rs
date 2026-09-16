@@ -33,7 +33,7 @@ use codec::{
     StoredFragment, doc_to_stored_fragment, fragment_to_doc, fragment_to_entity, public_entity_ids,
     validate_fragment_groups,
 };
-use filter::{build_filter, quote_filter_string};
+use filter::quote_filter_string;
 use schema::create_entities_schema;
 use search::{search_fts as run_fts, search_vector as run_vector};
 use store::{FileMetaStore, FileRecord};
@@ -105,7 +105,7 @@ impl ZvecWorkspaceIndexStorage {
         }
         let meta = FileMetaStore::open(&paths.files_meta_path, read_only)?;
         let mut file_ids_by_path = HashMap::new();
-        for record in meta.list() {
+        for record in meta.records().values() {
             file_ids_by_path.insert(
                 normalize_absolute_path(&record.info.absolute_path),
                 record.info.id.as_str().to_owned(),
@@ -170,15 +170,12 @@ impl ZvecWorkspaceIndexStorage {
         Ok(())
     }
 
-    fn file_infos(&self) -> HashMap<String, FileInfo> {
-        self.meta
-            .list()
-            .into_iter()
-            .map(|record| (record.info.id.as_str().to_owned(), record.info))
-            .collect()
-    }
-
-    fn stored_entity(&self, pk: &str, operation: &str) -> EngineResult<Option<StoredEntity>> {
+    fn stored_entity(
+        &self,
+        pk: &str,
+        operation: &str,
+        files: &HashMap<String, FileRecord>,
+    ) -> EngineResult<Option<StoredEntity>> {
         let collection = self.require_collection(operation)?;
         let docs = collection
             .fetch_with_options(&[pk], None, false)
@@ -196,8 +193,7 @@ impl ZvecWorkspaceIndexStorage {
         let Some(doc) = doc else {
             return Ok(None);
         };
-        let files = self.file_infos();
-        let Some(mut stored) = doc_to_stored_fragment(doc, &files)? else {
+        let Some(mut stored) = doc_to_stored_fragment(doc, files)? else {
             return Ok(None);
         };
         loop {
@@ -220,7 +216,7 @@ impl ZvecWorkspaceIndexStorage {
                     let Some(major) = major else {
                         return Ok(None);
                     };
-                    let Some(next) = doc_to_stored_fragment(major, &files)? else {
+                    let Some(next) = doc_to_stored_fragment(major, files)? else {
                         return Ok(None);
                     };
                     stored = next;
@@ -261,58 +257,88 @@ impl ZvecWorkspaceIndexStorage {
         Ok(())
     }
 
-    fn upsert_docs(&mut self, file_id: &FileId, docs: &[Doc]) -> EngineResult<()> {
-        let collection = self.require_collection("replaceFile")?;
-        for (batch_index, batch) in docs.chunks(ZVEC_UPSERT_BATCH_SIZE).enumerate() {
-            let refs: Vec<&Doc> = batch.iter().collect();
-            let result = collection.upsert(&refs).map_err(|error| {
+    /// Upserts flattened document batches, attributing each failing document
+    /// to its owning file. `owners[i]` parallels the flattened document
+    /// stream; `batchStart` is the flattened offset of the failing chunk.
+    fn upsert_docs(&mut self, batches: &[(&FileId, &[Doc])]) -> EngineResult<()> {
+        let mut flat: Vec<&Doc> = Vec::new();
+        let mut owners: Vec<&FileId> = Vec::new();
+        for (file_id, docs) in batches {
+            for doc in *docs {
+                flat.push(doc);
+                owners.push(*file_id);
+            }
+        }
+        if flat.is_empty() {
+            return Ok(());
+        }
+        let collection = self.require_collection("replaceFiles")?;
+        for (chunk_index, chunk) in flat.chunks(ZVEC_UPSERT_BATCH_SIZE).enumerate() {
+            let batch_start = chunk_index * ZVEC_UPSERT_BATCH_SIZE;
+            let result = collection.upsert(chunk).map_err(|error| {
                 zvec_error_with_source(
                     EngineErrorCode::StorageZvecUpsertFailed,
                     "zvec failed to upsert entity documents",
-                    format!("fileId={}", file_id.as_str()),
+                    format!(
+                        "fileId={}",
+                        owners
+                            .get(batch_start)
+                            .map(|file_id| file_id.as_str())
+                            .unwrap_or_default()
+                    ),
                     error,
                 )
             })?;
-            let failed = result.results.iter().find(|status| !status.is_success());
-            match failed {
-                Some(status) => {
-                    return Err(zvec_error(
-                        EngineErrorCode::StorageZvecUpsertFailed,
-                        "zvec failed to upsert entity documents",
-                        format!(
-                            "fileId={} batchStart={} batchSize={} code={} message={}",
-                            file_id.as_str(),
-                            batch_index * ZVEC_UPSERT_BATCH_SIZE,
-                            batch.len(),
-                            status.code,
-                            status.message
-                        ),
-                    ));
-                }
-                None if result.error_count > 0 => {
-                    return Err(zvec_error(
-                        EngineErrorCode::StorageZvecUpsertFailed,
-                        "zvec failed to upsert entity documents",
-                        format!(
-                            "fileId={} batchStart={} batchSize={} errorCount={}",
-                            file_id.as_str(),
-                            batch_index * ZVEC_UPSERT_BATCH_SIZE,
-                            batch.len(),
-                            result.error_count
-                        ),
-                    ));
-                }
-                None => {}
+            if let Some((offset, status)) = result
+                .results
+                .iter()
+                .enumerate()
+                .find(|(_, status)| !status.is_success())
+            {
+                let owner = owners
+                    .get(batch_start + offset)
+                    .map(|file_id| file_id.as_str())
+                    .or_else(|| owners.get(batch_start).map(|file_id| file_id.as_str()))
+                    .unwrap_or_default();
+                return Err(zvec_error(
+                    EngineErrorCode::StorageZvecUpsertFailed,
+                    "zvec failed to upsert entity documents",
+                    format!(
+                        "fileId={owner} batchStart={batch_start} batchSize={} code={} message={}",
+                        chunk.len(),
+                        status.code,
+                        status.message
+                    ),
+                ));
+            }
+            if result.error_count > 0 {
+                let owner = owners
+                    .get(batch_start)
+                    .map(|file_id| file_id.as_str())
+                    .unwrap_or_default();
+                return Err(zvec_error(
+                    EngineErrorCode::StorageZvecUpsertFailed,
+                    "zvec failed to upsert entity documents",
+                    format!(
+                        "fileId={owner} batchStart={batch_start} batchSize={} errorCount={}",
+                        chunk.len(),
+                        result.error_count
+                    ),
+                ));
             }
         }
         Ok(())
     }
 
-    fn docs_to_hits(&self, docs: &[Doc], path: StorageSearchPath) -> Vec<StorageSearchHit> {
-        let files = self.file_infos();
+    fn docs_to_hits(
+        &self,
+        docs: &[Doc],
+        files: &HashMap<String, FileRecord>,
+        path: StorageSearchPath,
+    ) -> Vec<StorageSearchHit> {
         let mut hits = Vec::with_capacity(docs.len());
         for doc in docs {
-            let stored = match doc_to_stored_fragment(doc, &files) {
+            let stored = match doc_to_stored_fragment(doc, files) {
                 Ok(stored) => stored,
                 Err(_) => continue,
             };
@@ -326,6 +352,76 @@ impl ZvecWorkspaceIndexStorage {
             }
         }
         hits
+    }
+
+    /// Follows group links for batch-decoded fragments, fetching missing major
+    /// documents in rounds via `fetch_with_options`. Fragments whose chain
+    /// cannot be resolved (missing or malformed records) are omitted, mirroring
+    /// [`stored_entity`](Self::stored_entity). Never assumes engine fetch order.
+    fn resolve_group_chains(
+        collection: &Collection,
+        files: &HashMap<String, FileRecord>,
+        initial: Vec<Doc>,
+        stored: &mut [Option<StoredFragment>],
+    ) {
+        let mut all_docs = initial;
+        let mut requested: HashSet<String> = HashSet::new();
+        let mut fetch_failed = false;
+        loop {
+            let mut by_pk: HashMap<&str, &Doc> = HashMap::with_capacity(all_docs.len());
+            for doc in &all_docs {
+                let pk = doc.get_pk().unwrap_or_default();
+                if !pk.is_empty() {
+                    by_pk.entry(pk).or_insert(doc);
+                }
+            }
+            let mut missing: Vec<String> = Vec::new();
+            for slot in stored.iter_mut() {
+                let Some(current) = slot.as_mut() else {
+                    continue;
+                };
+                loop {
+                    let group = current.fragment.group.clone();
+                    match group {
+                        Some(target) if target != current.fragment.entity.id.as_str() => {
+                            let Some(doc) = by_pk.get(target.as_str()) else {
+                                if !fetch_failed && !requested.contains(&target) {
+                                    if !missing.contains(&target) {
+                                        missing.push(target);
+                                    }
+                                } else {
+                                    *slot = None;
+                                }
+                                break;
+                            };
+                            match doc_to_stored_fragment(doc, files) {
+                                Ok(Some(next)) => *current = next,
+                                Ok(None) | Err(_) => {
+                                    *slot = None;
+                                    break;
+                                }
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+            }
+            if missing.is_empty() {
+                break;
+            }
+            let refs: Vec<&str> = missing.iter().map(String::as_str).collect();
+            match collection.fetch_with_options(&refs, None, false) {
+                Ok(more) => {
+                    all_docs.extend(more);
+                }
+                Err(_) => {
+                    fetch_failed = true;
+                }
+            }
+            for target in missing {
+                requested.insert(target);
+            }
+        }
     }
 }
 
@@ -355,7 +451,7 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
             return Vec::new();
         }
         self.meta
-            .list()
+            .sorted_records()
             .into_iter()
             .filter(|record| {
                 path_has_prefix(
@@ -363,16 +459,27 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
                     &prefixes,
                 )
             })
-            .map(|record| record.info)
+            .map(|record| record.info.clone())
             .collect()
     }
 
     fn list_files(&self) -> Vec<FileInfo> {
         self.meta
-            .list()
+            .sorted_records()
             .into_iter()
-            .map(|record| record.info)
+            .map(|record| record.info.clone())
             .collect()
+    }
+
+    fn list_file_refs(&self) -> Vec<&FileInfo> {
+        let mut refs: Vec<&FileInfo> = self
+            .meta
+            .records()
+            .values()
+            .map(|record| &record.info)
+            .collect();
+        refs.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+        refs
     }
 
     fn list_entities_by_file(
@@ -385,26 +492,65 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
         };
         let offset = options.offset.unwrap_or(0);
         let limit = options.limit.unwrap_or(record.entity_ids.len());
-        let ids: Vec<String> = record
+        let selected: Vec<&str> = record
             .entity_ids
             .iter()
             .skip(offset)
             .take(limit)
-            .cloned()
+            .map(String::as_str)
             .collect();
-        let mut entities = Vec::with_capacity(ids.len());
-        for id in &ids {
-            match self.stored_entity(id, "listEntitiesByFile") {
-                Ok(Some(entity)) => entities.push(entity),
-                Ok(None) => {}
-                Err(_) => {}
+        if selected.is_empty() {
+            return Vec::new();
+        }
+        let collection = match self.require_collection("listEntitiesByFile") {
+            Ok(collection) => collection,
+            Err(_) => return Vec::new(),
+        };
+        let files = self.meta.records();
+        let docs = match collection.fetch_with_options(&selected, None, false) {
+            Ok(docs) => docs,
+            Err(_) => {
+                // A poisoned batch (e.g. one bad key) must not drop the whole
+                // listing: fall back to per-id fetches with per-entity omission.
+                let mut entities = Vec::with_capacity(selected.len());
+                for id in &selected {
+                    if let Ok(Some(entity)) = self.stored_entity(id, "listEntitiesByFile", files) {
+                        entities.push(entity);
+                    }
+                }
+                return entities;
+            }
+        };
+        let mut by_pk: HashMap<&str, &Doc> = HashMap::with_capacity(docs.len());
+        for doc in &docs {
+            let pk = doc.get_pk().unwrap_or_default();
+            if !pk.is_empty() {
+                by_pk.entry(pk).or_insert(doc);
             }
         }
-        entities
+        // Decode in metadata id order without assuming engine fetch order;
+        // missing or malformed records are omitted.
+        let mut stored: Vec<Option<StoredFragment>> = Vec::with_capacity(selected.len());
+        for id in &selected {
+            stored.push(
+                by_pk
+                    .get(id)
+                    .and_then(|doc| doc_to_stored_fragment(doc, files).ok().flatten()),
+            );
+        }
+        Self::resolve_group_chains(collection, files, docs, &mut stored);
+        stored
+            .into_iter()
+            .flatten()
+            .map(|fragment| StoredEntity {
+                entity: fragment_to_entity(&fragment.fragment),
+                file: fragment.file,
+            })
+            .collect()
     }
 
     fn get_entity(&self, entity_id: &EntityId) -> Option<StoredEntity> {
-        self.stored_entity(entity_id.as_str(), "getEntity")
+        self.stored_entity(entity_id.as_str(), "getEntity", self.meta.records())
             .unwrap_or(None)
     }
 
@@ -414,10 +560,9 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
         limit: usize,
         filter: Option<&StorageSearchFilter>,
     ) -> EngineResult<Vec<StorageSearchHit>> {
-        let _ = build_filter(filter).as_deref();
         let collection = self.require_collection("searchFts")?;
         let docs = run_fts(collection, query, limit, filter)?;
-        Ok(self.docs_to_hits(&docs, StorageSearchPath::Fts))
+        Ok(self.docs_to_hits(&docs, self.meta.records(), StorageSearchPath::Fts))
     }
 
     fn search_vector(
@@ -428,7 +573,7 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
     ) -> EngineResult<Vec<StorageSearchHit>> {
         let collection = self.require_collection("searchVector")?;
         let docs = run_vector(collection, vector, limit, filter)?;
-        Ok(self.docs_to_hits(&docs, StorageSearchPath::Vector))
+        Ok(self.docs_to_hits(&docs, self.meta.records(), StorageSearchPath::Vector))
     }
 
     fn replace_file(
@@ -437,27 +582,43 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
         entries: &[IndexedFragment],
         diagnostics: Option<&FileIndexDiagnostics>,
     ) -> EngineResult<()> {
-        self.assert_writable("replaceFile")?;
-        validate_fragment_groups(&file.id, entries.iter().map(|entry| &entry.fragment))?;
-        let dirty = FileRecord {
-            info: FileInfo {
-                absolute_path: normalize_absolute_path(&file.absolute_path),
-                index_status: Some(FileIndexStatus {
-                    indexed_time: None,
-                    entity_count: 0,
-                    ..FileIndexStatus::default()
-                }),
-                ..file.clone()
-            },
-            entity_ids: Vec::new(),
-        };
-        self.remember_file(&dirty);
-        self.meta.upsert(dirty)?;
-        self.delete_file_documents(&file.id, "replaceFile")?;
-        let entity_ids: Vec<String> =
-            public_entity_ids(entries.iter().map(|entry| &entry.fragment));
-        let indexed = FileRecord {
-            info: FileInfo {
+        self.replace_files_batch(&[(file.clone(), entries.to_vec(), diagnostics.copied())])
+    }
+
+    fn replace_files_batch(
+        &mut self,
+        batch: &[(FileInfo, Vec<IndexedFragment>, Option<FileIndexDiagnostics>)],
+    ) -> EngineResult<()> {
+        self.assert_writable("replaceFiles")?;
+        if batch.is_empty() {
+            return Ok(());
+        }
+        // Prevalidate and encode every entry before destructive work, keeping
+        // per-file fragment indices (each file restarts at zero, as before).
+        struct Encoded {
+            file_id: FileId,
+            pending: FileRecord,
+            indexed: FileRecord,
+            docs: Vec<Doc>,
+        }
+        let mut encoded: Vec<Encoded> = Vec::with_capacity(batch.len());
+        for (file, entries, diagnostics) in batch {
+            validate_fragment_groups(&file.id, entries.iter().map(|entry| &entry.fragment))?;
+            let entity_ids: Vec<String> =
+                public_entity_ids(entries.iter().map(|entry| &entry.fragment));
+            let pending = FileRecord {
+                info: FileInfo {
+                    absolute_path: normalize_absolute_path(&file.absolute_path),
+                    index_status: Some(FileIndexStatus {
+                        indexed_time: None,
+                        entity_count: 0,
+                        ..FileIndexStatus::default()
+                    }),
+                    ..file.clone()
+                },
+                entity_ids: Vec::new(),
+            };
+            let indexed_info = FileInfo {
                 absolute_path: normalize_absolute_path(&file.absolute_path),
                 index_status: Some(FileIndexStatus {
                     indexed_time: Some(UnixMillis::now()),
@@ -470,10 +631,7 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
                     ..FileIndexStatus::default()
                 }),
                 ..file.clone()
-            },
-            entity_ids,
-        };
-        if !entries.is_empty() {
+            };
             let mut docs = Vec::with_capacity(entries.len());
             for (index, entry) in entries.iter().enumerate() {
                 let fragment_index = i32::try_from(index).map_err(|error| {
@@ -485,26 +643,69 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
                     .with_source(error)
                 })?;
                 docs.push(fragment_to_doc(
-                    &indexed.info,
+                    &indexed_info,
                     &entry.fragment,
                     &entry.vector,
                     fragment_index,
                 )?);
             }
-            self.upsert_docs(&file.id, &docs)?;
+            encoded.push(Encoded {
+                file_id: file.id.clone(),
+                pending,
+                indexed: FileRecord {
+                    info: indexed_info,
+                    entity_ids,
+                },
+                docs,
+            });
+        }
+        // Pending metadata for all N, then the first snapshot. A checkpoint
+        // failure aborts the batch as the operation error: error paths below
+        // never flush, so cancellation cannot publish queued work.
+        for staged in &encoded {
+            self.remember_file(&staged.pending);
+            self.meta.upsert(staged.pending.clone())?;
+        }
+        self.meta.flush()?;
+        for staged in &encoded {
+            self.delete_file_documents(&staged.file_id, "replaceFiles")?;
+        }
+        let doc_batches: Vec<(&FileId, &[Doc])> = encoded
+            .iter()
+            .filter(|staged| !staged.docs.is_empty())
+            .map(|staged| (&staged.file_id, staged.docs.as_slice()))
+            .collect();
+        if !doc_batches.is_empty() {
+            self.upsert_docs(&doc_batches)?;
             self.needs_optimize = true;
         }
-        self.remember_file(&indexed);
-        self.meta.upsert(indexed)?;
+        for staged in &encoded {
+            self.remember_file(&staged.indexed);
+            self.meta.upsert(staged.indexed.clone())?;
+        }
+        self.meta.flush()?;
         Ok(())
     }
 
     fn mark_file_failed(&mut self, file: &FileInfo, error: &str) -> EngineResult<()> {
         self.assert_writable("markFileFailed")?;
-        self.delete_file_documents(&file.id, "markFileFailed")?;
+        let previous = self.meta.get(file.id.as_str()).cloned();
+        let merged_content_hash = match file.content_hash.clone() {
+            Some(hash) => Some(hash),
+            None => match previous.as_ref() {
+                Some(record)
+                    if record.info.size_bytes == file.size_bytes
+                        && record.info.last_modified_time == file.last_modified_time =>
+                {
+                    record.info.content_hash.clone()
+                }
+                Some(_) | None => None,
+            },
+        };
         let failed = FileRecord {
             info: FileInfo {
                 absolute_path: normalize_absolute_path(&file.absolute_path),
+                content_hash: merged_content_hash,
                 index_status: Some(FileIndexStatus {
                     indexed_time: None,
                     entity_count: 0,
@@ -516,25 +717,47 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
             entity_ids: Vec::new(),
         };
         self.remember_file(&failed);
-        let persisted = self.meta.get(file.id.as_str()).cloned().unwrap_or(failed);
-        self.meta.upsert(persisted)?;
+        self.meta.upsert(failed.clone())?;
+        self.delete_file_documents(&file.id, "markFileFailed")?;
+        self.meta.upsert(failed)?;
         Ok(())
     }
 
     fn delete_file(&mut self, file_id: &FileId) -> EngineResult<()> {
-        self.assert_writable("deleteFile")?;
-        let existing = self.meta.get(file_id.as_str()).cloned();
-        self.delete_file_documents(file_id, "deleteFile")?;
-        if let Some(record) = existing {
-            self.file_ids_by_path
-                .remove(&normalize_absolute_path(&record.info.absolute_path));
+        self.delete_files_batch(std::slice::from_ref(file_id))
+    }
+
+    fn delete_files_batch(&mut self, file_ids: &[FileId]) -> EngineResult<()> {
+        self.assert_writable("deleteFiles")?;
+        if file_ids.is_empty() {
+            return Ok(());
         }
-        self.meta.remove(file_id.as_str())?;
+        let existing: Vec<Option<FileRecord>> = file_ids
+            .iter()
+            .map(|file_id| self.meta.get(file_id.as_str()).cloned())
+            .collect();
+        for file_id in file_ids {
+            self.delete_file_documents(file_id, "deleteFiles")?;
+        }
+        for (file_id, record) in file_ids.iter().zip(existing) {
+            if let Some(record) = record {
+                self.file_ids_by_path
+                    .remove(&normalize_absolute_path(&record.info.absolute_path));
+            }
+            self.meta.remove(file_id.as_str())?;
+        }
+        self.meta.flush()?;
         Ok(())
+    }
+
+    fn flush(&mut self) -> EngineResult<()> {
+        self.meta.flush()
     }
 
     fn finalize_writes(&mut self) -> EngineResult<()> {
         self.assert_writable("finalizeWrites")?;
+        // Finalization checkpoint: publish staged metadata before optimizing.
+        self.meta.flush()?;
         if self.needs_optimize {
             let collection = self.require_collection("finalizeWrites")?;
             collection.optimize().map_err(|error| {
@@ -551,6 +774,9 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
     }
 
     fn close(&mut self) {
+        // Shutdown checkpoint: best-effort only, never the sole checkpoint —
+        // batch ops and finalization flush explicitly; close stays infallible.
+        let _ = self.meta.flush();
         if self.needs_optimize {
             if let Some(collection) = self.collection.as_ref() {
                 let _ = collection.optimize();
