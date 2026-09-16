@@ -77,7 +77,7 @@ impl FileMetaStore {
         &self.records
     }
 
-    /// Borrowed records sorted by relative path, mirroring [`list`] without cloning.
+    /// Borrowed records sorted by relative path, mirroring [`list`](Self::list) without cloning.
     #[must_use]
     pub fn sorted_records(&self) -> Vec<&FileRecord> {
         let mut records: Vec<&FileRecord> = self.records.values().collect();

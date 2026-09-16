@@ -6,9 +6,9 @@ Rust port of [zvec-grep](https://github.com/zvec-ai/zvec-grep): local-first hybr
 
 Think of it as grep that understands meaning, not just exact text.
 
-You point it at a folder. It walks the files, cuts code into chunks (functions and such), turns each chunk into a number list called an embedding using a small local model, and saves those plus a regular keyword index on disk.
+You point it at a folder. It walks the files, parses code into real chunks (functions, classes) with tree-sitter — C, C++, C#, Go, Java, JavaScript, Python, Rust, TypeScript, VB, plus plain text, markdown, and images — turns each chunk into a number list called an embedding using a small local model, and saves those plus a regular keyword index on disk. Indexing streams in bounded batches, so memory stays flat no matter how big the repo is.
 
-When you ask a question, it looks things up two ways: plain keyword match and meaning match by comparing embeddings. It can also run ripgrep if you want exact strings. Then it merges all that and shows you the best hits with file names and line numbers.
+When you ask a question, it looks things up two ways: plain keyword match and meaning match by comparing embeddings, then ranks both together and shows the best hits with file names and line numbers. Pass `--rg` for exact strings only, or `--fuse` to collapse everything into one merged list.
 
 Two ways to run it: normally `zg query` talks to a little background daemon that keeps your repos indexed and watches for file changes. Or pass `--mode direct` and it just does everything right there in one go, no daemon.
 
@@ -26,13 +26,13 @@ It all goes through the same daemon and the same index as the command line, so y
 
 - `zg-core` — engine: scan → tree-sitter extract → embed → index → hybrid search, exposed through the sync `ZvecGrepService` facade (`create_zvec_grep`). Typed errors (`ModelError`, `StorageError`, …) with golden-tested `ZVEC_GREP.ENGINE.*` wire codes; newtypes for domain concepts (`ModelReference`, `RootKey`, `Generation`, …).
 - `zg-server` — loopback daemon: one actor task per workspace root over a shared job scheduler and LRU embedding-model pool, filesystem watchers with debounced change sets, read-session cache with idle TTL, HTTP endpoint (loopback-only, bearer-token, body-cap guards) plus MCP over stdio and StreamableHTTP.
-- `zg` — CLI at parity with the TS surface: `query` (incl. `--rg`, `--hybrid`, path filters, `--refresh`, `--mode direct|server|auto`), `index` (`--drop`/`--rebuild` + `--yes`), `status` (`--check-ready`), `config model|provider set`, `auth grant|status|revoke`, `server on|off|status|run|--stdio`, `install`/`uninstall` (IDE MCP configs), `help`, `version`, `completions`.
+- `zg` — CLI at parity with the TS surface: `query` (incl. `--rg`, `--hybrid`, `--fuse`, path filters, `--refresh`, `--mode direct|server|auto`), `index` (`--drop`/`--rebuild` + `--yes`), `status` (`--check-ready`), `config model|provider set`, `auth grant|status|revoke`, `server on|off|status|run|--stdio`, `install`/`uninstall` (IDE MCP configs), `help`, `version`, `completions`.
 
 ## What works
 
 - **Multi-root daemon**: concurrent per-root actors (`DaemonBackend` + `RuntimeManager`), canonical `RootKey` resolution with alias dedupe, idle eviction (30 min default), cooperative cancellation, deterministic shutdown.
 - **MCP**: 6 tools — `zvec_grep_search`, `zvec_grep_index`, `zvec_grep_index_drop`, `zvec_grep_rg`, `zvec_grep_index_status`, `zvec_grep_server_status` — with `agent|full` toolsets and validated input bounds at the boundary.
-- **Embeddings**: pure-Rust `model2vec` (`local/potion-retrieval-32m`, dim 512), ONNX (`local/bge-small-en-v1.5`, `local/all-minilm-l6-v2`, dim 384; `--features onnx`), GGUF via llama.cpp (`local/embeddinggemma-300m` dim 768, `local/qwen3-embedding-0.6b` dim 1024; `--features llama`), and remote Qwen (`qwen/text-embedding-v4`, `qwen/qwen3.7-text-embedding` dim 1024, `qwen/qwen3-vl-embedding` dim 2560) requiring API key + workspace grant (fails closed without a permit). Vector-parity gate (cosine >= 0.999 vs TS goldens) covers all local backends.
+- **Embeddings**: pure-Rust `model2vec` (default `local/potion-retrieval-32m`, dim 512), ONNX (`local/bge-small-en-v1.5`, `local/all-minilm-l6-v2`, dim 384; `--features onnx`), GGUF via llama.cpp (`local/embeddinggemma-300m` dim 768, `local/qwen3-embedding-0.6b` dim 1024; `--features llama`), plus code-oriented and multilingual locals (`local/jina-embeddings-v2-base-code`, `local/gte-modernbert-base`, `local/nomic-embed-text-v1.5`, `local/multilingual-e5-small`, `local/potion-code-16m-v2`, `local/potion-multilingual-128m`), and remote Qwen (`qwen/text-embedding-v4`, `qwen/qwen3.7-text-embedding` dim 1024, `qwen/qwen3-vl-embedding` dim 2560) requiring API key + workspace grant (fails closed without a permit). Vector-parity gate (cosine >= 0.999 vs TS goldens) covers all local backends.
 - **Authorization**: workspace-scoped remote-embedding grants (`zg auth`), enforced in both direct and daemon paths.
 - **Storage**: standalone — Rust indexes never share collections with the TS implementation; a TS-generation `files.zvec` is refused loudly (`STORAGE.FOREIGN_TS_INDEX_PRESENT`), never migrated.
 
@@ -93,4 +93,4 @@ let hits = svc.context(&ZvecGrepContextOptions {
 
 ## Status
 
-Port phases 0, A–I per `RUST_PORT_OF_ZVEC_GREP_PLAN.md` are complete (facade, daemon, MCP, CLI, auth, standalone storage, ONNX + llama-cpp local backends). See `docs/ts-divergence.md` for deliberate divergences from the TS implementation.
+Port phases 0, A–I are complete (facade, daemon, MCP, CLI, auth, standalone storage, ONNX + llama-cpp local backends). Since then: C# + VB structured extraction, hybrid primary query groups with an opt-in `--fuse` flag (TS parity), and a streaming index pipeline (batched metadata writes, bounded memory).

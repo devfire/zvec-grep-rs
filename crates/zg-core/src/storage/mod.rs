@@ -104,7 +104,7 @@ pub trait WorkspaceIndexStorage: private::Sealed + Send {
     fn list_files(&self) -> Vec<FileInfo>;
 
     /// Borrowed file metadata in relative-path order, for hot paths that must
-    /// not clone the whole index (mirrors [`list_files`] without cloning).
+    /// not clone the whole index (mirrors [`list_files`](Self::list_files) without cloning).
     fn list_file_refs(&self) -> Vec<&FileInfo>;
 
     fn list_entities_by_file(
