@@ -173,9 +173,21 @@ async fn run_server_run(args: ServerArgs) -> Result<(), CliError> {
     eprintln!("zvec-grep server listening on {address}");
     let mut lock = lock;
     lock.mark_ready().await;
-    tokio::signal::ctrl_c().await.map_err(|error| {
-        CliError::daemon_unavailable(format!("failed to wait for shutdown signal: {error}"))
-    })?;
+    // ONE process-level shutdown signal: HTTP `POST /control/shutdown`
+    // cancels the server token; the OS path is Ctrl-C. Either wakes this
+    // task, which then runs the single cleanup sequence below (stop
+    // listener, close backend, release instance lock).
+    let shutdown = server.shutdown_token();
+    tokio::select! {
+        () = shutdown.cancelled() => {},
+        result = tokio::signal::ctrl_c() => {
+            result.map_err(|error| {
+                CliError::daemon_unavailable(format!(
+                    "failed to wait for shutdown signal: {error}"
+                ))
+            })?;
+        }
+    }
     eprintln!("shutting down");
     server.close().await;
     backend.close().await;

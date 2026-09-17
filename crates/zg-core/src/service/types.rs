@@ -22,28 +22,69 @@ use crate::types::{
 pub type AbortCheck = Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// Options accepted by [`crate::service::facade::ZvecGrepService::ensure_index`].
+///
+/// Defaults: index the bound root with the stored (or default) discovery
+/// settings — no rebuild, no path reset, full index run. Every filter and
+/// concurrency cap is `None`/empty, meaning "keep the workspace default".
+///
+/// Invariants:
+/// - `root_paths` non-empty wins over `root`, `reset_paths`, and stored
+///   paths; entries are validated (`SCANNER.*` codes on overlap/stat
+///   failures). Otherwise `reset_paths == false` (default) keeps the
+///   manifest's stored root paths, while `true` replaces them.
+/// - `max_file_size_bytes`: `Some(0)` is rejected with
+///   `LEXICAL.SEARCH_FAILED` (see
+///   [`crate::file_size_policy::validate_max_file_size_bytes`]); oversized
+///   values clamp to 512 MiB
+///   ([`crate::file_size_policy::HARD_MAX_FILE_SIZE_BYTES`]).
+/// - `max_depth`: `None` (default) searches without a depth limit.
+/// - `changed_paths` empty (default) runs a full index; non-empty scopes an
+///   incremental update to those paths.
+/// - `embedding_concurrency`: `None` (default) auto-sizes the embed pool.
 #[derive(Default)]
 pub struct ZvecGrepIndexOptions<'a> {
+    /// Workspace root override; `None` (default) uses the bound root.
     pub root: Option<&'a std::path::Path>,
+    /// Explicit root set; non-empty wins over `root` and stored paths.
     pub root_paths: Vec<RootPathSpec<'a>>,
+    /// Force a full reindex even when the index is fresh.
     pub rebuild: bool,
+    /// Replace stored root paths instead of keeping them.
     pub reset_paths: bool,
+    /// Directory-prefix whitelist.
     pub include_paths: Vec<String>,
+    /// Directory-prefix blacklist.
     pub exclude_paths: Vec<String>,
+    /// Case-sensitive glob filters (`!` negates, last match wins).
     pub globs: Vec<String>,
+    /// Case-insensitive glob filters (`--iglob` semantics).
     pub insensitive_globs: Vec<String>,
+    /// Ripgrep file-type names to include (`--type`).
     pub file_types: Vec<String>,
+    /// Ripgrep file-type names to exclude (`--type-not`).
     pub excluded_file_types: Vec<String>,
+    /// Search hidden files; `None` (default) keeps the workspace default.
     pub hidden: Option<bool>,
+    /// Ignore `.gitignore`/`.ignore` rules; `None` keeps the default.
     pub no_ignore: Option<bool>,
+    /// Extra ignore files (`--ignore-file`).
     pub ignore_files: Vec<String>,
+    /// Maximum directory depth below each searched path; `None` is unlimited.
     pub max_depth: Option<u32>,
+    /// Per-file size cap override in bytes; `Some(0)` is rejected, oversized
+    /// values clamp to 512 MiB.
     pub max_file_size_bytes: Option<u64>,
+    /// Follow symlinks when `Some(true)`.
     pub follow: Option<bool>,
+    /// Descend into nested git repositories when `Some(true)`.
     pub include_nested_git: Option<bool>,
+    /// Embed parallelism; `None` (default) auto-sizes.
     pub embedding_concurrency: Option<usize>,
+    /// Progress sink; `None` (default) reports nothing.
     pub on_progress: Option<IndexProgressSink>,
+    /// Empty (default) runs a full index; non-empty scopes an incremental update.
     pub changed_paths: Vec<std::path::PathBuf>,
+    /// Abort probe; `None` (default) runs to completion.
     pub signal: Option<AbortCheck>,
 }
 
@@ -83,8 +124,28 @@ pub struct EmbeddingInfo {
 }
 
 /// Options accepted by [`crate::service::facade::ZvecGrepService::context`].
-#[derive(Default)]
+///
+/// Defaults: no query (the caller must supply one), `limit: None` (per-group
+/// default of 10 for up to 3 groups, else the 30-item total budget split
+/// across groups), `fuse: false`, `trace: false`, and `auto_update: true`
+/// (a stale index is refreshed before searching).
+///
+/// Query rules: at least one non-blank primary (`query`/`queries`) or extra
+/// route (`routes`/`fts`/`vector`) is required, else `CONTEXT.EMPTY_QUERY`;
+/// a blank extra route query is rejected with `SERVICE.EMPTY_ROUTE_QUERY`.
+/// Every query input is trimmed and blank primaries are dropped before the
+/// check, so whitespace-only queries count as absent.
+///
+/// Time filters: `modified_after` later than `modified_before` is rejected
+/// with `SEARCH_PLAN.INVALID_MODIFIED_TIME_RANGE`; negative epoch millis is
+/// rejected with `SEARCH_PLAN.INVALID_MODIFIED_TIME_FILTER`.
+///
+/// `auto_update` defaults to `true`. Read sessions
+/// ([`ReadSession::context`](crate::service::facade::ReadSession::context))
+/// never refresh: the flag is ignored there (forced off) and the search runs
+/// on the open handle.
 pub struct ZvecGrepContextOptions<'a> {
+    /// Workspace root override; `None` (default) uses the bound root.
     pub root: Option<&'a std::path::Path>,
     /// Primary natural-language query.
     pub query: Option<String>,
@@ -98,28 +159,78 @@ pub struct ZvecGrepContextOptions<'a> {
     pub vector: Vec<String>,
     /// Fuse all groups into one.
     pub fuse: bool,
+    /// Per-group item cap; `None` (default) uses the 10-item default (or the
+    /// split 30-item total budget past 3 groups). `Some(n)` wins verbatim.
     pub limit: Option<usize>,
+    /// Attach per-item trace payloads.
     pub trace: bool,
+    /// Entity id to track across ranking (diagnostics only, not a filter).
     pub track_entity_id: Option<EntityId>,
+    /// Prefer symbol-defined entities when ranking.
     pub prefer_symbol: bool,
+    /// Restrict symbol preference to these symbol types (empty = all).
     pub symbol_types: Vec<CodeSymbolType>,
+    /// Directory-prefix whitelist.
     pub include_paths: Vec<String>,
+    /// Directory-prefix blacklist.
     pub exclude_paths: Vec<String>,
+    /// Case-sensitive glob filters (`!` negates, last match wins).
     pub globs: Vec<String>,
+    /// Case-insensitive glob filters.
     pub insensitive_globs: Vec<String>,
+    /// Ripgrep file-type names to include.
     pub file_types: Vec<String>,
+    /// Ripgrep file-type names to exclude.
     pub excluded_file_types: Vec<String>,
+    /// Only items modified at/after this timestamp; must not be later than
+    /// `modified_before` (`SEARCH_PLAN.INVALID_MODIFIED_TIME_RANGE`).
     pub modified_after: Option<UnixMillis>,
+    /// Only items modified at/before this timestamp.
     pub modified_before: Option<UnixMillis>,
     /// Exhaustive lexical path.
     pub rg: Option<RgOptions>,
-    /// Refresh a stale index before searching (default true).
+    /// Refresh a stale index before searching (default true). Ignored
+    /// (forced off) by read sessions, which search the open handle.
     pub auto_update: bool,
+    /// Abort probe; `None` (default) runs to completion.
     pub signal: Option<AbortCheck>,
+}
+
+impl<'a> Default for ZvecGrepContextOptions<'a> {
+    fn default() -> Self {
+        Self {
+            root: None,
+            query: None,
+            queries: Vec::new(),
+            routes: Vec::new(),
+            fts: Vec::new(),
+            vector: Vec::new(),
+            fuse: false,
+            limit: None,
+            trace: false,
+            track_entity_id: None,
+            prefer_symbol: false,
+            symbol_types: Vec::new(),
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            globs: Vec::new(),
+            insensitive_globs: Vec::new(),
+            file_types: Vec::new(),
+            excluded_file_types: Vec::new(),
+            modified_after: None,
+            modified_before: None,
+            rg: None,
+            auto_update: true,
+            signal: None,
+        }
+    }
 }
 
 impl ZvecGrepContextOptions<'_> {
     /// True unless the caller explicitly disabled auto-refresh.
+    ///
+    /// Read sessions ignore this flag: [`ReadSession::context`](crate::service::facade::ReadSession::context)
+    /// never refreshes and searches the open handle instead.
     #[must_use]
     pub fn wants_auto_update(&self) -> bool {
         self.auto_update
@@ -127,13 +238,24 @@ impl ZvecGrepContextOptions<'_> {
 }
 
 /// Options for the exhaustive lexical (`rg`) path.
+///
+/// All flags default off; `None` caps mean "no cap". The flags feed the
+/// in-process lexical search (`fixedStrings` → literals, `ignoreCase` /
+/// `smartCase` → case folding, `maxCount` → per-file match cap,
+/// `contextLines` → lines before and after each match).
 #[derive(Debug, Clone, Default)]
 pub struct RgOptions {
+    /// Exhaustive-path pattern override; `None` (default) adds no pattern.
     pub pattern: Option<String>,
+    /// Case-insensitive matching (`--ignore-case`).
     pub case_insensitive: bool,
+    /// Case-insensitive unless the pattern has an uppercase letter.
     pub smart_case: bool,
+    /// Treat the pattern as a literal (`--fixed-strings`).
     pub fixed_strings: bool,
+    /// Maximum matches per file; `None` (default) is unlimited.
     pub max_count: Option<usize>,
+    /// Context lines before and after each match; `None` (default) is none.
     pub context_lines: Option<usize>,
 }
 
@@ -350,5 +472,10 @@ mod tests {
     fn options_are_send() {
         assert_send::<ZvecGrepIndexOptions<'static>>();
         assert_send::<ZvecGrepContextOptions<'static>>();
+    }
+
+    #[test]
+    fn context_options_default_enables_auto_update() {
+        assert!(ZvecGrepContextOptions::default().wants_auto_update());
     }
 }

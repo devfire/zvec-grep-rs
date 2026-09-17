@@ -168,6 +168,14 @@ impl DaemonHttpServer {
         *self.bound.lock_ignore_poison()
     }
 
+    /// Process-level shutdown signal, cancelled by `POST /control/shutdown`.
+    /// The daemon main task selects on this token (or Ctrl-C) and then runs
+    /// the single cleanup sequence. Cloning is cheap; the token is never
+    /// replaced.
+    pub fn shutdown_token(&self) -> CancellationToken {
+        self.state.shutdown.clone()
+    }
+
     /// Stops the listener, closes the backend (actors, in-flight work,
     /// models), and awaits the serve task. Idempotent.
     pub async fn close(&self) {
@@ -229,13 +237,11 @@ async fn shutdown(State(state): State<Arc<AppState>>, headers: HeaderMap) -> imp
         )
             .into_response();
     }
-    let backend = state.backend.clone();
-    let shutdown = state.shutdown.clone();
-    // Reply first, then stop — mirroring TS `setImmediate(onShutdown)`.
-    tokio::spawn(async move {
-        backend.close().await;
-        shutdown.cancel();
-    });
+    // Signal the shared process-level token and return: the daemon main task
+    // observes it and runs the single cleanup sequence (stop listener, close
+    // backend, release instance lock). No partial cleanup runs here, so the
+    // Ctrl-C and HTTP paths cannot diverge.
+    state.shutdown.cancel();
     (
         StatusCode::ACCEPTED,
         axum::Json(json!({ "status": "stopping" })),

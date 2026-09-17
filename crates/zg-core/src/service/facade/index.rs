@@ -10,17 +10,20 @@ use super::signal::{finish_signal_watch, spawn_signal_watch};
 use crate::config::EmbeddingRuntimeConfig;
 use crate::error::EngineResult;
 use crate::manifest::{
-    CURRENT_MANIFEST_VERSION, WorkspaceManifest, read_workspace_manifest, write_workspace_manifest,
+    CURRENT_MANIFEST_VERSION, WorkspaceManifest, delete_workspace_manifest,
+    read_workspace_manifest, write_workspace_manifest,
 };
 use crate::paths::to_display_path;
 use crate::pipeline::indexing::scanner::CancelFlag;
 use crate::service::root::{
-    WorkspaceIndexLocation, has_workspace_index, reset_workspace_index, workspace_index_location,
+    WorkspaceIndexLocation, acquire_index_maintenance_guard, has_workspace_index,
+    reset_workspace_index, workspace_index_location,
 };
 use crate::service::types::{RootPathSpec, ZvecGrepIndexOptions};
 use crate::service::workspace_index::{
     IndexMode, IndexOptions, WorkspaceIndex, WorkspaceIndexOptions, is_workspace_indexed,
 };
+use crate::storage::layout::delete_workspace_index_storage;
 use crate::types::{CURRENT_INDEX_VERSION, RootPath, UnixMillis, WorkspaceIndexInfo};
 
 impl ZvecGrepService {
@@ -44,9 +47,19 @@ impl ZvecGrepService {
         let existing = read_workspace_manifest(&home)?;
         let model = self.model_for_manifest(existing.as_ref())?;
 
-        if options.rebuild || !is_indexed(existing.as_ref()) {
-            reset_workspace_index(&location)?;
-        }
+        // Exclusive maintenance guard spanning deletes + manifest write: the
+        // same write lock `WorkspaceIndex::open` takes below. A live
+        // reader/writer or concurrent rebuild fails BUSY here instead of
+        // racing us. Dropped before `open`, which acquires the same lock for
+        // creation + the indexing run.
+        let maintenance = if options.rebuild || !is_indexed(existing.as_ref()) {
+            let guard = acquire_index_maintenance_guard(&home, "index.rebuild")?;
+            delete_workspace_manifest(&home)?;
+            delete_workspace_index_storage(&home)?;
+            Some(guard)
+        } else {
+            None
+        };
         let existing = if options.rebuild { None } else { existing };
 
         let root_paths = self.resolve_root_paths(&location, options, existing.as_ref())?;
@@ -81,7 +94,8 @@ impl ZvecGrepService {
                 }),
         };
         write_workspace_manifest(&home, &manifest)?;
-
+        // Handoff: replacement storage creation takes the same write lock.
+        drop(maintenance);
         let cancel = CancelFlag::new();
         let watcher = spawn_signal_watch(options.signal.clone(), &cancel);
         let mut index = WorkspaceIndex::open(

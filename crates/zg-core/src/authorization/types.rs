@@ -169,6 +169,14 @@ pub struct RemoteEmbeddingPermit {
     pub operation_id: String,
 }
 /// A remote-embedding request the guard checks.
+///
+/// The workspace binding is resolved server-side: `workspace_roots` names
+/// the workspace the caller acts for, and both fingerprints MUST be the
+/// canonical fingerprints over those roots (see
+/// `create_remote_embedding_request`). The guard re-canonicalizes and
+/// recomputes them, rejecting any request whose claimed fingerprints
+/// disagree. A grant or permit for one workspace therefore never authorizes
+/// traffic for another.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteEmbeddingRequest {
     pub provider: String,
@@ -177,6 +185,12 @@ pub struct RemoteEmbeddingRequest {
     pub purpose: super::error::RemoteEmbeddingPurpose,
     pub content_kinds: Vec<ContentKind>,
     pub content_count: usize,
+    /// Canonical workspace roots this request acts for.
+    pub workspace_roots: Vec<String>,
+    /// Fingerprint over `workspace_roots` (must match a server-side recompute).
+    pub workspace_fingerprint: WorkspaceFingerprint,
+    /// Fingerprint over `[workspaceFingerprint, provider, model, endpoint]`.
+    pub target_fingerprint: TargetFingerprint,
 }
 
 /// Content kind carried by a request (`text` / `image`).

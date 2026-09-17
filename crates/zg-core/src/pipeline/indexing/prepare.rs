@@ -146,8 +146,8 @@ fn model_accepts_content(model: &dyn EmbeddingModel, content: &Content) -> bool 
 
 pub(crate) fn commit_file(
     ctx: &mut IndexContext<'_>,
-    prepared: &PreparedFile,
-    vectors: &[Vec<f32>],
+    prepared: PreparedFile,
+    vectors: Vec<Vec<f32>>,
     truncated_fragment_count: usize,
     stats: &Arc<Mutex<IndexStats>>,
 ) -> EngineResult<bool> {
@@ -168,22 +168,19 @@ pub(crate) fn commit_file(
         ctx.storage.flush()?;
         return Ok(false);
     }
-    let file_vectors: Vec<IndexedFragment> = prepared
-        .fragments
-        .iter()
-        .zip(vectors.iter())
+    // Destructure by value so fragments and vectors move into the storage
+    // payload: no per-item `fragment` + `vector` clones, only one
+    // `IndexedFragment` allocation sized to the fragment count.
+    let PreparedFile { file, fragments } = prepared;
+    let file_vectors: Vec<IndexedFragment> = fragments
+        .into_iter()
+        .zip(vectors)
         .map(|(fragment, vector)| IndexedFragment {
-            fragment: fragment.fragment.clone(),
-            vector: vector.clone(),
+            fragment: fragment.fragment,
+            vector,
         })
         .collect();
-    commit_vectors(
-        ctx,
-        &prepared.file,
-        &file_vectors,
-        truncated_fragment_count,
-        stats,
-    )
+    commit_vectors(ctx, &file, &file_vectors, truncated_fragment_count, stats)
 }
 
 pub(crate) fn commit_vectors(

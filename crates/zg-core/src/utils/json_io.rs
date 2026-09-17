@@ -76,7 +76,7 @@ pub fn write_json_file<T: Serialize>(
     })?;
     #[cfg(unix)]
     if let Some(mode) = modes.directory_mode {
-        apply_mode(parent, mode);
+        apply_mode(parent, mode)?;
     }
 
     let tmp = path.with_extension(format!(
@@ -85,17 +85,23 @@ pub fn write_json_file<T: Serialize>(
         uuid::Uuid::new_v4().simple()
     ));
     let write_result = (|| -> EngineResult<()> {
-        let file = fs::File::create(&tmp).map_err(|error| {
-            crate::error::EngineError::new(
-                crate::error::EngineErrorCode::JsonWriteFailed,
-                format!("failed to write {}", path.display()),
-            )
-            .with_context(format!("error={error}"))
-            .with_source(error)
-        })?;
+        // `create_new` never truncates a pre-existing file: a tmp-name
+        // collision surfaces as an error instead of silent corruption.
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .map_err(|error| {
+                crate::error::EngineError::new(
+                    crate::error::EngineErrorCode::JsonWriteFailed,
+                    format!("failed to write {}", path.display()),
+                )
+                .with_context(format!("error={error}"))
+                .with_source(error)
+            })?;
         #[cfg(unix)]
         if let Some(mode) = modes.file_mode {
-            apply_mode(&tmp, mode);
+            apply_mode(&tmp, mode)?;
         }
         // Stream pretty JSON through a buffer instead of materializing the
         // whole document as a `String`: a constant-factor win with
@@ -125,7 +131,26 @@ pub fn write_json_file<T: Serialize>(
             .with_context(format!("error={error}"))
             .with_source(error)
         })?;
-        drop(writer);
+        let file = writer.into_inner().map_err(|error| {
+            let error = error.into_error();
+            crate::error::EngineError::new(
+                crate::error::EngineErrorCode::JsonWriteFailed,
+                format!("failed to write {}", path.display()),
+            )
+            .with_context(format!("error={error}"))
+            .with_source(error)
+        })?;
+        // Persist file contents before the rename: a crash mid-write leaves
+        // the old destination intact instead of a truncated file.
+        file.sync_all().map_err(|error| {
+            crate::error::EngineError::new(
+                crate::error::EngineErrorCode::JsonWriteFailed,
+                format!("failed to fsync {}", path.display()),
+            )
+            .with_context(format!("error={error}"))
+            .with_source(error)
+        })?;
+        drop(file);
         fs::rename(&tmp, path).map_err(|error| {
             crate::error::EngineError::new(
                 crate::error::EngineErrorCode::JsonWriteFailed,
@@ -134,6 +159,8 @@ pub fn write_json_file<T: Serialize>(
             .with_context(format!("error={error}"))
             .with_source(error)
         })?;
+        // Persist the directory entry so the rename survives a crash.
+        sync_parent_dir(parent)?;
         Ok(())
     })();
 
@@ -145,9 +172,36 @@ pub fn write_json_file<T: Serialize>(
 }
 
 #[cfg(unix)]
-fn apply_mode(path: &Path, mode: u32) {
+fn apply_mode(path: &Path, mode: u32) -> EngineResult<()> {
     use std::os::unix::fs::PermissionsExt;
-    let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode));
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|error| {
+        crate::error::EngineError::new(
+            crate::error::EngineErrorCode::JsonWriteFailed,
+            format!("failed to chmod {}", path.display()),
+        )
+        .with_context(format!("error={error}"))
+        .with_source(error)
+    })
+}
+
+/// Persists a directory entry so a just-completed rename survives a crash.
+fn sync_parent_dir(dir: &Path) -> EngineResult<()> {
+    let handle = fs::File::open(dir).map_err(|error| {
+        crate::error::EngineError::new(
+            crate::error::EngineErrorCode::JsonWriteFailed,
+            format!("failed to fsync {}", dir.display()),
+        )
+        .with_context(format!("error={error}"))
+        .with_source(error)
+    })?;
+    handle.sync_all().map_err(|error| {
+        crate::error::EngineError::new(
+            crate::error::EngineErrorCode::JsonWriteFailed,
+            format!("failed to fsync {}", dir.display()),
+        )
+        .with_context(format!("error={error}"))
+        .with_source(error)
+    })
 }
 
 #[cfg(test)]

@@ -10,6 +10,7 @@
 
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
+use zg_core::error::EngineError;
 use zg_core::lexical::LexicalSearchResult;
 use zg_core::models::EmbeddingModelInfo;
 use zg_core::service::facade::ReadSession;
@@ -97,8 +98,33 @@ pub(crate) struct FinishedIndex {
     pub(crate) revision: Generation,
     /// Whether the run reconciled fully.
     pub(crate) force_full: bool,
-    /// Fresh status on success; `None` keeps the previous cache.
-    pub(crate) ok: Option<FinishedOk>,
+    /// Run outcome: failure and successful no-op are distinct variants so
+    /// a failed run can never read as fresh.
+    pub(crate) outcome: IndexOutcome,
+}
+
+/// Outcome of one index run. `Completed` and `Noop` may advance the
+/// indexed revision; `Failed` must not (the next run retries).
+#[derive(Debug)]
+pub(crate) enum IndexOutcome {
+    /// Run completed; carries the fresh status and scan diagnostics.
+    /// Boxed: FinishedOk is ~350 bytes, the other variants are tiny.
+    Completed(Box<FinishedOk>),
+    /// Empty take: nothing was pending, the stamped revision is fresh.
+    Noop,
+    /// Run failed; the stamped revision stays dirty.
+    Failed(IndexRunFailure),
+}
+
+/// Index-run failure payload at the library boundary (thiserror).
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum IndexRunFailure {
+    /// Typed engine failure from the blocking index body.
+    #[error("index run engine failure: {0}")]
+    Engine(#[from] EngineError),
+    /// The blocking index task panicked or failed to join.
+    #[error("index run task failure: {0}")]
+    Join(String),
 }
 
 /// Successful run payload.

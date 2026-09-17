@@ -7,8 +7,10 @@
 //! through the execution layer.
 
 use std::collections::BTreeMap;
+use std::ops::Deref;
 use std::sync::Arc;
 
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use zg_core::pipeline::indexing::IndexProgressSink;
 use zg_core::pipeline::indexing::scanner::CancelFlag;
@@ -20,25 +22,76 @@ use super::id::JobId;
 use super::scheduler::JobScheduler;
 use crate::sync::MutexExt;
 
+/// Lifetime-bound bridge between async cancellation and the sync index
+/// body: holds the [`CancelFlag`] the blocking code polls plus the
+/// background waiter that trips it the moment `token` is cancelled.
+///
+/// Dropping the bridge aborts the waiter, so hold it for the whole run and
+/// drop it once the job reaches terminal. A detached waiter would pend on
+/// `token` forever whenever the job completes without cancellation — one
+/// leaked task per job. This is the single documented adaptation point
+/// between [`CancellationToken`] and [`CancelFlag`].
+pub struct CancellationBridge {
+    flag: CancelFlag,
+    waiter: Option<JoinHandle<()>>,
+}
+
+impl CancellationBridge {
+    /// The bridged flag the blocking code polls.
+    #[must_use]
+    pub fn flag(&self) -> &CancelFlag {
+        &self.flag
+    }
+
+    /// True once the background waiter finished (pre-cancelled token, or
+    /// the token fired and the flag was tripped). Lets tests prove no
+    /// waiter is left pending behind a completed job.
+    #[must_use]
+    pub fn waiter_finished(&self) -> bool {
+        self.waiter.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+}
+
+impl Deref for CancellationBridge {
+    type Target = CancelFlag;
+
+    fn deref(&self) -> &Self::Target {
+        &self.flag
+    }
+}
+
+impl Drop for CancellationBridge {
+    fn drop(&mut self) {
+        // The job reached terminal (or the run was abandoned): abort the
+        // waiter so no per-job task outlives the job.
+        if let Some(waiter) = self.waiter.take() {
+            waiter.abort();
+        }
+    }
+}
+
 /// Bridges async cancellation into the sync index body. Returns a
-/// [`CancelFlag`] the blocking code polls; a background task trips it the
-/// moment `token` is cancelled and exits once the flag trips or the token
-/// fires, whichever comes first. This is the single documented adaptation
-/// point between [`CancellationToken`] and [`CancelFlag`].
+/// `CancellationBridge` guarding the [`CancelFlag`] the blocking code
+/// polls (derefs to it, so `cancel()` / `is_cancelled()` keep working);
+/// hold the guard for the job's lifetime and drop it once the job reaches
+/// terminal so the background waiter is aborted instead of leaked.
 #[must_use]
-pub fn bridge_cancellation(token: &CancellationToken) -> CancelFlag {
+pub fn bridge_cancellation(token: &CancellationToken) -> CancellationBridge {
     let flag = CancelFlag::new();
     if token.is_cancelled() {
         flag.cancel();
-        return flag;
+        return CancellationBridge { flag, waiter: None };
     }
     let flag_clone = flag.clone();
     let token_clone = token.clone();
-    tokio::spawn(async move {
+    let waiter = tokio::spawn(async move {
         token_clone.cancelled().await;
         flag_clone.cancel();
     });
-    flag
+    CancellationBridge {
+        flag,
+        waiter: Some(waiter),
+    }
 }
 
 pub(crate) fn progress_reporter(scheduler: &JobScheduler, id: &JobId) -> IndexProgressSink {
@@ -80,4 +133,30 @@ pub(crate) fn fields<const N: usize>(entries: [(&str, LogField); N]) -> BTreeMap
         .into_iter()
         .map(|(key, value)| (key.to_owned(), value))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn bridge_trips_flag_on_cancel_and_spawns_no_waiter_when_precancelled() {
+        let token = CancellationToken::new();
+        let bridge = bridge_cancellation(&token);
+        assert!(!bridge.is_cancelled());
+        assert!(!bridge.waiter_finished());
+        token.cancel();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !bridge.is_cancelled() && tokio::time::Instant::now() < deadline {
+            tokio::task::yield_now().await;
+        }
+        assert!(bridge.is_cancelled());
+        assert!(bridge.waiter_finished());
+        drop(bridge);
+        let precancelled = bridge_cancellation(&token);
+        assert!(precancelled.is_cancelled());
+        assert!(precancelled.waiter_finished());
+    }
 }

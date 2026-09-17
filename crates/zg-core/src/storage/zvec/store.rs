@@ -7,7 +7,9 @@
 //! map through [`crate::utils::json_io`] only when dirty.
 
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -44,26 +46,52 @@ pub struct FileMetaStore {
 impl FileMetaStore {
     /// Loads records from `path`; a missing file starts empty unless
     /// `read_only`, which mirrors the TypeScript missing-store error.
+    /// A corrupt file is quarantined to `<path>.corrupt.<unix-seconds>`
+    /// (skipped in `read_only` mode) and reported with
+    /// `STORAGE.FILE_META_CORRUPT` carrying the path and quarantine
+    /// location, so one bad byte never bricks the index.
     ///
     /// # Errors
     ///
-    /// Returns `STORAGE.ZVEC_FILE_META_MISSING` when a read-only store file is absent, or a JSON
+    /// Returns `STORAGE.ZVEC_FILE_META_MISSING` when a read-only store file is absent,
+    /// `STORAGE.FILE_META_CORRUPT` when persisted records fail to parse, or a JSON
     /// I/O error when persisted records cannot be read.
     pub fn open(path: &Path, read_only: bool) -> EngineResult<Self> {
-        if read_only && !path.exists() {
-            return Err(EngineError::new(
-                EngineErrorCode::StorageZvecFileMetaMissing,
-                "zvec file metadata storage does not exist",
-            )
-            .with_context(format!("path={}", path.display())));
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if read_only {
+                    return Err(EngineError::new(
+                        EngineErrorCode::StorageZvecFileMetaMissing,
+                        "zvec file metadata storage does not exist",
+                    )
+                    .with_context(format!("path={}", path.display())));
+                }
+                return Ok(Self {
+                    path: path.to_path_buf(),
+                    read_only,
+                    records: HashMap::new(),
+                    dirty: false,
+                });
+            }
+            Err(error) => {
+                return Err(EngineError::new(
+                    EngineErrorCode::JsonReadFailed,
+                    format!("failed to read {}", path.display()),
+                )
+                .with_context(format!("error={error}"))
+                .with_source(error));
+            }
+        };
+        match serde_json::from_str::<HashMap<String, FileRecord>>(&text) {
+            Ok(records) => Ok(Self {
+                path: path.to_path_buf(),
+                read_only,
+                records,
+                dirty: false,
+            }),
+            Err(error) => Err(quarantine_corrupt_file_meta(path, read_only, error)),
         }
-        let records: HashMap<String, FileRecord> = json_io::read_json_file(path, HashMap::new())?;
-        Ok(Self {
-            path: path.to_path_buf(),
-            read_only,
-            records,
-            dirty: false,
-        })
     }
 
     #[must_use]
@@ -158,4 +186,63 @@ impl FileMetaStore {
         }
         Ok(())
     }
+}
+
+/// Reports a corrupt file-metadata document, quarantining the original to
+/// `<path>.corrupt.<unix-seconds>` so the next open starts clean instead of
+/// re-reading the same bad byte. Quarantine is skipped in `read_only` mode
+/// (a read must not mutate the store); the error context always carries the
+/// source path plus the quarantine location or the reason it was skipped.
+fn quarantine_corrupt_file_meta(
+    path: &Path,
+    read_only: bool,
+    error: serde_json::Error,
+) -> EngineError {
+    if read_only {
+        return EngineError::new(
+            EngineErrorCode::StorageFileMetaCorrupt,
+            "zvec file metadata is corrupt",
+        )
+        .with_context(format!(
+            "path={} quarantine=skipped(read-only) error={error}",
+            path.display(),
+        ))
+        .with_source(error);
+    }
+    let quarantine = corrupt_quarantine_path(path);
+    match fs::rename(path, &quarantine) {
+        Ok(()) => EngineError::new(
+            EngineErrorCode::StorageFileMetaCorrupt,
+            "zvec file metadata is corrupt; quarantined",
+        )
+        .with_context(format!(
+            "path={} quarantine={} error={error}",
+            path.display(),
+            quarantine.display(),
+        ))
+        .with_source(error),
+        Err(rename_error) => EngineError::new(
+            EngineErrorCode::StorageFileMetaCorrupt,
+            "zvec file metadata is corrupt; quarantine failed",
+        )
+        .with_context(format!(
+            "path={} quarantine={} error={error} quarantineError={rename_error}",
+            path.display(),
+            quarantine.display(),
+        ))
+        .with_source(error),
+    }
+}
+
+/// Sibling of `path` with `.corrupt.<unix-seconds>` appended, e.g.
+/// `files.json` becomes `files.json.corrupt.1758048000`. Falls back to
+/// epoch zero when the clock is unavailable.
+fn corrupt_quarantine_path(path: &Path) -> PathBuf {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or_default();
+    let mut quarantine = path.as_os_str().to_os_string();
+    quarantine.push(format!(".corrupt.{timestamp}"));
+    PathBuf::from(quarantine)
 }

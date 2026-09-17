@@ -9,8 +9,10 @@ use crate::error::EngineResult;
 use crate::manifest::{delete_workspace_manifest, workspace_manifest_path};
 use crate::paths::to_display_path;
 use crate::storage::layout::{
-    delete_workspace_index_storage, has_workspace_index_storage, workspace_index_path,
+    delete_workspace_index_storage, has_workspace_index_storage,
+    resolve_workspace_index_storage_paths, workspace_index_path,
 };
+use crate::utils::lock::{Guard, LockMode, LockOptions, acquire_read_write_lock};
 
 /// Directory holding the manifest and index storage.
 pub const ZVEC_GREP_DIR: &str = ".zvec-grep";
@@ -82,13 +84,42 @@ pub fn workspace_index_location(root: &str) -> EngineResult<WorkspaceIndexLocati
     })
 }
 
+/// Acquires the exclusive storage write lock for index maintenance (reset /
+/// rebuild): the same lock [`crate::service::workspace_index::WorkspaceIndex::open`]
+/// takes in write mode. A live reader/writer or concurrent rebuild holds it,
+/// so maintenance fails with `LOCK.BUSY` instead of racing it. Hold the
+/// returned guard across deletes and manifest writes; release before opening
+/// replacement storage (which takes the same lock for the indexing run).
+///
+/// The lock path matches storage open exactly (resolved storage path plus
+/// `LOCK`), so either side sees the other.
+///
+/// # Errors
+///
+/// Returns `LOCK.BUSY` when another owner holds the lock, or
+/// `LOCK.UNAVAILABLE` when the lock directory cannot be created.
+pub fn acquire_index_maintenance_guard(home: &Path, operation: &str) -> EngineResult<Guard> {
+    let paths = resolve_workspace_index_storage_paths(home);
+    acquire_read_write_lock(
+        &paths.storage_path.join("LOCK"),
+        LockMode::Write,
+        &LockOptions::new(operation),
+    )
+}
+
 /// Deletes the manifest and index storage (mirrors `resetWorkspaceIndex`).
 ///
 /// # Errors
 ///
-/// Returns an error when the manifest or index storage cannot be deleted.
+/// Returns `LOCK.BUSY` when a live reader/writer holds the storage lock, or
+/// an error when the manifest or index storage cannot be deleted.
 pub fn reset_workspace_index(location: &WorkspaceIndexLocation) -> EngineResult<()> {
     let home = Path::new(&location.home);
+    // Exclusive guard across both deletes: a live indexer holds this lock via
+    // storage open, so reset fails instead of unlinking data beneath it. A
+    // bare existence check would time-of-check/to-time-of-use race; holding
+    // the guard is the exclusion.
+    let _guard = acquire_index_maintenance_guard(home, "index.reset")?;
     delete_workspace_manifest(home)?;
     delete_workspace_index_storage(home)?;
     Ok(())
@@ -136,4 +167,83 @@ pub fn has_workspace_manifest(location: &WorkspaceIndexLocation) -> bool {
 #[must_use]
 pub fn has_workspace_index(location: &WorkspaceIndexLocation) -> bool {
     has_workspace_manifest(location) && has_workspace_index_storage(Path::new(&location.home))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ids::FileId;
+    use crate::storage::{StorageOptions, create_workspace_index_storage};
+    use crate::types::{
+        FileFormat, FileInfo, FileKind, SearchMetric, WorkspaceIndexEmbeddingSchema,
+    };
+
+    fn test_location(home: &Path) -> WorkspaceIndexLocation {
+        WorkspaceIndexLocation {
+            root: to_display_path(home.parent().expect("parent")),
+            home: to_display_path(home),
+            manifest_path: to_display_path(&home.join("manifest.json")),
+            index_path: to_display_path(&home.join("index.zvec")),
+        }
+    }
+
+    fn dummy_schema() -> WorkspaceIndexEmbeddingSchema {
+        WorkspaceIndexEmbeddingSchema {
+            provider: "test".to_owned(),
+            model: "dummy".to_owned(),
+            dimension: 4,
+            metric: SearchMetric::Cosine,
+        }
+    }
+
+    #[test]
+    fn reset_fails_busy_under_live_writer() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let home = dir.path().join(".zvec-grep");
+        std::fs::create_dir_all(&home).expect("mkdir");
+        let location = test_location(&home);
+        let schema = dummy_schema();
+        let mut storage = create_workspace_index_storage(StorageOptions::ReadWrite {
+            storage_path: &home,
+            embedding: &schema,
+        })
+        .expect("open storage");
+        // Seed persisted state: one file record (flush writes files.json) plus
+        // a manifest, mirroring a live indexed workspace.
+        let absolute_path = home.join("seed.txt").to_string_lossy().into_owned();
+        std::fs::write(&absolute_path, "0123456789abcdef").expect("seed file");
+        storage
+            .replace_file(
+                &FileInfo {
+                    id: FileId::from_raw("seed".to_owned()),
+                    absolute_path,
+                    relative_path: "seed.txt".to_owned(),
+                    root_path: home.to_string_lossy().into_owned(),
+                    size_bytes: 16,
+                    last_modified_time: crate::types::UnixMillis::from_millis(1_700_000_000_000),
+                    content_hash: Some("hash-seed".to_owned()),
+                    kind: FileKind::Text,
+                    format: FileFormat::parse("text"),
+                    index_status: None,
+                },
+                &[],
+                None,
+            )
+            .expect("seed record");
+        storage.flush().expect("flush meta");
+        std::fs::write(home.join("manifest.json"), "{}").expect("seed manifest");
+        assert!(has_workspace_index_storage(&home));
+
+        let error =
+            reset_workspace_index(&location).expect_err("reset under live writer must fail");
+        assert_eq!(error.code().to_string(), "ZVEC_GREP.ENGINE.LOCK.BUSY");
+        // Live data survives the refused reset.
+        assert!(has_workspace_index_storage(&home));
+        assert!(home.join("manifest.json").is_file());
+
+        drop(storage);
+        reset_workspace_index(&location).expect("reset after close");
+        assert!(!has_workspace_index_storage(&home));
+        assert!(!home.join("manifest.json").exists());
+    }
 }

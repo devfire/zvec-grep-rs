@@ -35,10 +35,10 @@ pub(crate) fn expand_context_item(
     if lines.is_empty() {
         return;
     }
-    let start = start_line.max(1).min(lines.len() + 1);
+    let start = start_line.max(1).min(lines.len().saturating_add(1));
     let end = end_line.max(1).min(lines.len());
     let window_start = start.saturating_sub(options.before_context).max(1);
-    let window_end = (end + options.after_context).min(lines.len());
+    let window_end = end.saturating_add(options.after_context).min(lines.len());
     if window_start > window_end {
         return;
     }

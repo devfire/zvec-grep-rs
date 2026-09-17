@@ -24,9 +24,10 @@ pub use prompt::{
 };
 pub use store::{
     DOCUMENT_VERSION, GRANT_FILE, RemoteEmbeddingAuthorizationStore, SIGNING_KEY_ENV_VAR,
+    SIGNING_KEY_FILE,
 };
 pub use target::{
-    canonicalize_workspace_roots, create_remote_embedding_target,
+    canonicalize_workspace_roots, create_remote_embedding_request, create_remote_embedding_target,
     remote_embedding_target_fingerprint, workspace_fingerprint,
 };
 pub use types::{

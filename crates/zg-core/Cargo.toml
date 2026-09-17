@@ -73,3 +73,10 @@ workspace = true
 [[test]]
 name = "service_facade"
 required-features = ["test-support"]
+# The cache seed embeds nothing itself (`prepare` only downloads); it needs
+# both heavy backends because the parity gate covers two ONNX and two GGUF
+# models. required-features makes Cargo skip the target by declaration
+# without `--all-features` instead of failing at runtime.
+[[example]]
+name = "warm_model_cache"
+required-features = ["onnx", "llama"]

@@ -43,6 +43,44 @@ jobs:
       - run: cargo test --workspace --locked --all-features
       - run: cargo test --workspace --locked --no-default-features
 
+  vector-parity-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Same ORT cache as `test`: the gate builds `--all-features`.
+      - name: Cache ONNX Runtime (ort-sys)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ort.pyke.io
+            ~/Library/Caches/ort.pyke.io
+          key: ort-sys-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ort-sys-${{ runner.os }}-
+      # Own key (not the `test` job's `embedding-models-v1`): the gate needs
+      # all four parity models, while the shared key is populated by whatever
+      # the test suite downloads. Sharing deadlocks warm-on-miss on a partial
+      # hit — warm skips, the gate fails, and the failed post never repairs
+      # the cache.
+      - name: Cache embedding models
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.zvec-grep/models
+          key: embedding-models-parity-v1
+      # On a cold cache the gate would fail by design
+      # (`ZVEC_REQUIRE_MODELS=1` turns skips into hard failures), so
+      # populate the cache first. Warm hits skip the download entirely.
+      - name: Warm model cache (cache miss only)
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: cargo run -p zg-core --locked --all-features --example warm_model_cache
+      # Sign-off gate: fails on zero models checked — a cache miss without
+      # the warm step above must never silently pass.
+      - name: Vector parity gate (coverage required)
+        run: cargo test -p zg-core --locked --all-features --test vector_parity
+        env:
+          ZVEC_REQUIRE_MODELS: 1
+
   clippy:
     strategy:
       fail-fast: false

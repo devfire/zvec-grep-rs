@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use crate::error::{
-    DetailEntry, DetailValue, EngineError, EngineErrorCode, EngineResult, error_details,
+    DetailEntry, DetailValue, EngineError, EngineErrorCode, EngineResult, codes, error_details,
     workspace_index_detail,
 };
 use crate::models::EmbeddingModel;
@@ -46,6 +46,12 @@ pub struct IndexOptions {
 }
 
 /// One opened workspace index.
+///
+/// Single-owner close: [`close`](WorkspaceIndex::close) consumes the handle, so a
+/// `&mut` re-close is impossible at compile time. The explicit close is the only
+/// owner of storage shutdown; [`Drop`] only backstops a handle dropped without
+/// close. Every method rejects a closed handle with
+/// `SERVICE.READ_SESSION_CLOSED` instead of touching closed storage.
 pub struct WorkspaceIndex {
     info: WorkspaceIndexInfo,
     storage: Box<dyn WorkspaceIndexStorage>,
@@ -110,10 +116,12 @@ impl WorkspaceIndex {
     ///
     /// # Errors
     ///
-    /// Returns `WORKSPACE_INDEX.READ_ONLY` for a read-only handle,
+    /// Returns `SERVICE.READ_SESSION_CLOSED` when the handle is closed,
+    /// `WORKSPACE_INDEX.READ_ONLY` for a read-only handle,
     /// `WORKSPACE_INDEX.EMBEDDING_MODEL_REQUIRED` without a model, or an indexing error when the
     /// run fails.
     pub fn index(&mut self, options: &IndexOptions) -> EngineResult<IndexResult> {
+        self.require_open()?;
         if self.storage.read_only() {
             return Err(EngineError::new(
                 EngineErrorCode::WorkspaceIndexReadOnly,
@@ -140,8 +148,10 @@ impl WorkspaceIndex {
     ///
     /// # Errors
     ///
-    /// Returns an error when the workspace root paths cannot be scanned.
+    /// Returns `SERVICE.READ_SESSION_CLOSED` when the handle is closed, or an error when the
+    /// workspace root paths cannot be scanned.
     pub fn status(&self) -> EngineResult<WorkspaceIndexStatus> {
+        self.require_open()?;
         get_workspace_index_status(&self.info, &self.storage.list_files(), None)
     }
 
@@ -149,8 +159,10 @@ impl WorkspaceIndex {
     ///
     /// # Errors
     ///
-    /// Returns an error when the plan is invalid or embedding recall or storage search fails.
+    /// Returns `SERVICE.READ_SESSION_CLOSED` when the handle is closed, or an error when the
+    /// plan is invalid or embedding recall or storage search fails.
     pub fn search_plan(&self, plan: &SearchPlan) -> EngineResult<SearchPlanResult> {
+        self.require_open()?;
         search_workspace_index(
             plan,
             &SearchContext {
@@ -161,13 +173,27 @@ impl WorkspaceIndex {
         )
     }
 
-    /// Closes the underlying storage handle (idempotent, mirrors `close`).
-    pub fn close(&mut self) {
+    /// Rejects use after close with `SERVICE.READ_SESSION_CLOSED`.
+    fn require_open(&self) -> EngineResult<()> {
         if self.closed {
-            return;
+            return Err(EngineError::new(
+                codes::service_read_session_closed(),
+                "workspace index is already closed",
+            ));
         }
-        self.storage.close();
-        self.closed = true;
+        Ok(())
+    }
+
+    /// Closes the underlying storage handle (mirrors `close`).
+    ///
+    /// Consuming close is the single-owner primitive: the one owner calls this
+    /// once, and [`Drop`] skips the already-closed handle. A second close is a
+    /// compile-time move error, not a runtime state.
+    pub fn close(mut self) {
+        if !self.closed {
+            self.storage.close();
+            self.closed = true;
+        }
     }
 
     fn require_embedding_model(&self, operation: &str) -> EngineResult<Arc<dyn EmbeddingModel>> {
@@ -181,6 +207,17 @@ impl WorkspaceIndex {
                 operation,
             ))
         })
+    }
+}
+
+impl Drop for WorkspaceIndex {
+    /// Backstop for handles dropped without [`close`](WorkspaceIndex::close):
+    /// shuts storage down once. Explicit close sets `closed`, so this is a
+    /// no-op on the single-owner path.
+    fn drop(&mut self) {
+        if !self.closed {
+            self.storage.close();
+        }
     }
 }
 
@@ -316,4 +353,132 @@ fn require_workspace_index_embedding(
         "workspace index has not been built",
     )
     .with_context(detail))
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use crate::ids::FileId;
+    use crate::types::{FileFormat, FileInfo, FileKind, RootPath, SearchMetric, UnixMillis};
+
+    fn test_schema() -> WorkspaceIndexEmbeddingSchema {
+        WorkspaceIndexEmbeddingSchema {
+            provider: "test".to_owned(),
+            model: "dummy".to_owned(),
+            dimension: 4,
+            metric: SearchMetric::Cosine,
+        }
+    }
+
+    fn test_info(storage_path: &std::path::Path) -> WorkspaceIndexInfo {
+        WorkspaceIndexInfo {
+            id: "test".to_owned(),
+            name: "test".to_owned(),
+            path: storage_path.to_string_lossy().into_owned(),
+            root_paths: vec![RootPath {
+                absolute_path: storage_path.to_string_lossy().into_owned(),
+                recursive: true,
+                ..RootPath::default()
+            }],
+            index_policy: None,
+            embedding: Some(Some(test_schema())),
+            index_version: Some(CURRENT_INDEX_VERSION),
+            created_time: UnixMillis::now(),
+            updated_time: UnixMillis::now(),
+        }
+    }
+
+    /// One indexed file record so `files.json` exists: `close`/`drop` only
+    /// checkpoint staged writes, so a never-written store has no metadata
+    /// file and a read-only reopen correctly fails with FILE_META_MISSING.
+    fn seed_file_info(storage_path: &std::path::Path) -> FileInfo {
+        let absolute_path = storage_path.join("seed.txt").to_string_lossy().into_owned();
+        std::fs::write(&absolute_path, "0123456789abcdef").expect("write seed file");
+        FileInfo {
+            id: FileId::from_raw("seed".to_owned()),
+            absolute_path,
+            relative_path: "seed.txt".to_owned(),
+            root_path: storage_path.to_string_lossy().into_owned(),
+            size_bytes: 16,
+            last_modified_time: UnixMillis::from_millis(1_700_000_000_000),
+            content_hash: Some("hash-seed".to_owned()),
+            kind: FileKind::Text,
+            format: FileFormat::parse("text"),
+            index_status: None,
+        }
+    }
+
+    /// A handle already in the post-close state: consuming `close(self)` makes
+    /// this unreachable at runtime, so tests construct it to prove the guard.
+    fn closed_index(dir: &tempfile::TempDir) -> WorkspaceIndex {
+        let storage_path = dir.path().join("storage");
+        let schema = test_schema();
+        let storage = create_workspace_index_storage(StorageOptions::ReadWrite {
+            storage_path: &storage_path,
+            embedding: &schema,
+        })
+        .expect("open test storage");
+        WorkspaceIndex {
+            info: test_info(&storage_path),
+            storage,
+            embedding: schema,
+            embedding_model: None,
+            closed: true,
+        }
+    }
+
+    #[test]
+    fn close_then_index_errors() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mut index = closed_index(&dir);
+        let error = index
+            .index(&IndexOptions::default())
+            .expect_err("index after close errors");
+        assert_eq!(*error.code(), EngineErrorCode::ServiceReadSessionClosed);
+    }
+
+    #[test]
+    fn close_then_status_errors() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let index = closed_index(&dir);
+        let error = index.status().expect_err("status after close errors");
+        assert_eq!(*error.code(), EngineErrorCode::ServiceReadSessionClosed);
+    }
+
+    #[test]
+    fn double_close_is_noop() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        closed_index(&dir).close();
+    }
+
+    #[test]
+    fn drop_without_close_leaves_storage_reusable() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let storage_path = dir.path().join("storage");
+        let info = test_info(&storage_path);
+        let mut index = WorkspaceIndex::open(
+            info.clone(),
+            WorkspaceIndexOptions {
+                mode: IndexMode::Write,
+                embedding_model: None,
+            },
+        )
+        .expect("open test index");
+        // Checkpoint one file record so `files.json` exists for the
+        // read-only reopen below.
+        index
+            .storage
+            .replace_file(&seed_file_info(&storage_path), &[], None)
+            .expect("seed test storage");
+        drop(index);
+        let reopened = WorkspaceIndex::open(
+            info,
+            WorkspaceIndexOptions {
+                mode: IndexMode::Read,
+                embedding_model: None,
+            },
+        )
+        .expect("reopen after drop");
+        reopened.status().expect("status after reopen");
+    }
 }

@@ -7,9 +7,9 @@ use std::time::Instant;
 
 use crate::error::{EngineError, EngineErrorCode, EngineResult};
 use crate::models::embeddings::EmbeddingResult;
-use crate::models::{EmbeddingModel, EmbeddingModelProgress, ModelLoadSink};
+use crate::models::{EmbeddingInput, EmbeddingModel, EmbeddingModelProgress, ModelLoadSink};
 use crate::storage::IndexedFragment;
-use crate::types::{Content, FileInfo};
+use crate::types::FileInfo;
 use crate::utils::timing::TimingCollector;
 
 use super::context::{
@@ -25,8 +25,8 @@ use super::progress::{
     thread_report,
 };
 use super::retry::{
-    EmbeddingScheduler, embed_contents_with_retry, resolve_embedding_concurrency_policy,
-    should_fail_fast_embedding_error,
+    EmbeddingScheduler, content_to_input, embed_inputs_with_retry,
+    resolve_embedding_concurrency_policy, should_fail_fast_embedding_error,
 };
 use super::scanner::CancelFlag;
 
@@ -178,7 +178,7 @@ pub(crate) fn index_files(
                 Ok(prepared) => {
                     if prepared.fragments.is_empty() {
                         let committed = timings.time("index_commit", || {
-                            commit_file(ctx, &prepared, &[], 0, &stats)
+                            commit_file(ctx, prepared, Vec::new(), 0, &stats)
                         })?;
                         report_indexing(
                             ctx,
@@ -316,6 +316,15 @@ fn embed_and_commit_wave(
 ) -> EngineResult<()> {
     throw_if_index_cancelled(ctx)?;
     let started = Instant::now();
+    // Operation's canonical root set for authorization: derived from the
+    // indexed workspace, never the process working directory. Cloned per
+    // worker below; an empty set fails closed in authorizing backends.
+    let workspace_roots: Vec<String> = ctx
+        .workspace_index
+        .root_paths
+        .iter()
+        .map(|root| root.absolute_path.clone())
+        .collect();
     let outcomes: Vec<UnitOutcome> = std::thread::scope(|scope| {
         let mut handles = Vec::with_capacity(wave.len());
         for unit in &wave {
@@ -325,10 +334,12 @@ fn embed_and_commit_wave(
             let on_progress = ctx.on_progress.clone();
             let cancel = ctx.cancel.clone();
             let stats = Arc::clone(stats);
+            let workspace_roots = workspace_roots.clone();
             handles.push(scope.spawn(move || {
                 embed_unit(
                     unit,
                     &*model,
+                    &workspace_roots,
                     &scheduler,
                     abort_ref,
                     cancel.as_ref(),
@@ -475,6 +486,7 @@ fn embed_and_commit_wave(
 fn embed_unit(
     unit: &[PreparedFile],
     model: &dyn EmbeddingModel,
+    workspace_roots: &[String],
     scheduler: &Arc<EmbeddingScheduler>,
     abort: &AtomicBool,
     cancel: Option<&CancelFlag>,
@@ -492,6 +504,7 @@ fn embed_unit(
         return match embed_fragments(
             &prepared.fragments,
             model,
+            workspace_roots,
             scheduler,
             abort,
             cancel,
@@ -521,6 +534,7 @@ fn embed_unit(
     match embed_unit_contents(
         unit,
         model,
+        workspace_roots,
         scheduler,
         abort,
         cancel,
@@ -546,6 +560,7 @@ fn embed_unit(
                 match embed_fragments(
                     &prepared.fragments,
                     model,
+                    workspace_roots,
                     scheduler,
                     abort,
                     cancel,
@@ -568,26 +583,30 @@ fn embed_unit(
         }
     }
 }
-
 fn embed_unit_contents(
     unit: &[PreparedFile],
     model: &dyn EmbeddingModel,
+    workspace_roots: &[String],
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
     cancel: Option<&CancelFlag>,
     on_model_progress: Option<ModelLoadSink>,
 ) -> EngineResult<Vec<FileOutcome>> {
-    let contents: Vec<Content> = unit
+    // Borrowed input views over the prepared fragments: only the small
+    // `EmbeddingInput` descriptors (references) are collected — fragment text
+    // and image bytes are never cloned, so peak memory stays at one copy.
+    let inputs: Vec<EmbeddingInput<'_>> = unit
         .iter()
         .flat_map(|file| {
             file.fragments
                 .iter()
-                .map(|fragment| fragment.embedding_content.clone())
+                .map(|fragment| content_to_input(&fragment.embedding_content))
         })
         .collect();
-    let result = embed_contents_with_retry(
-        &contents,
+    let result = embed_inputs_with_retry(
+        &inputs,
         model,
+        workspace_roots,
         scheduler,
         abort,
         cancel,
@@ -631,10 +650,10 @@ fn embed_unit_contents(
 // ---------------------------------------------------------------------------
 // Embedding execution: batching, retry, adaptive scheduling.
 // ---------------------------------------------------------------------------
-
 fn embed_fragments(
     fragments: &[PreparedFragment],
     model: &dyn EmbeddingModel,
+    workspace_roots: &[String],
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
     cancel: Option<&CancelFlag>,
@@ -653,6 +672,7 @@ fn embed_fragments(
         match embed_fragment_batch(
             batch,
             model,
+            workspace_roots,
             start,
             scheduler,
             abort,
@@ -684,11 +704,11 @@ fn embed_fragments(
     }
     Ok(EmbeddingResult { vectors, truncated })
 }
-
 #[allow(clippy::too_many_arguments)]
 fn embed_fragment_batch(
     fragments: &[PreparedFragment],
     model: &dyn EmbeddingModel,
+    workspace_roots: &[String],
     start_index: usize,
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
@@ -696,13 +716,16 @@ fn embed_fragment_batch(
     on_model_progress: Option<ModelLoadSink>,
     on_terminal_failure: Option<&AtomicBool>,
 ) -> EngineResult<EmbeddingResult> {
-    let contents: Vec<Content> = fragments
+    // Borrowed views over the already-prepared fragments: no per-item
+    // `Content` clone, only reference-sized `EmbeddingInput` descriptors.
+    let inputs: Vec<EmbeddingInput<'_>> = fragments
         .iter()
-        .map(|fragment| fragment.embedding_content.clone())
+        .map(|fragment| content_to_input(&fragment.embedding_content))
         .collect();
-    match embed_contents_with_retry(
-        &contents,
+    match embed_inputs_with_retry(
+        &inputs,
         model,
+        workspace_roots,
         scheduler,
         abort,
         cancel,
@@ -717,6 +740,7 @@ fn embed_fragment_batch(
             embed_fragment_batch_one_by_one(
                 fragments,
                 model,
+                workspace_roots,
                 start_index,
                 scheduler,
                 abort,
@@ -732,6 +756,7 @@ fn embed_fragment_batch(
 fn embed_fragment_batch_one_by_one(
     fragments: &[PreparedFragment],
     model: &dyn EmbeddingModel,
+    workspace_roots: &[String],
     start_index: usize,
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
@@ -742,9 +767,11 @@ fn embed_fragment_batch_one_by_one(
     let mut vectors = Vec::with_capacity(fragments.len());
     let mut truncated = Vec::new();
     for (index, fragment) in fragments.iter().enumerate() {
-        match embed_contents_with_retry(
-            std::slice::from_ref(&fragment.embedding_content),
+        let input = content_to_input(&fragment.embedding_content);
+        match embed_inputs_with_retry(
+            std::slice::from_ref(&input),
             model,
+            workspace_roots,
             scheduler,
             abort,
             cancel,

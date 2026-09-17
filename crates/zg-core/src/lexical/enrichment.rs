@@ -207,9 +207,11 @@ fn file_info_for_structure(
     if !is_structurally_enrichable(&detected) {
         return None;
     }
-    if metadata.len()
-        > crate::file_size_policy::resolve_max_file_size_bytes(detected.kind, max_file_size_bytes)
-    {
+    if crate::file_size_policy::file_size_exceeds_cap(
+        absolute_path,
+        metadata.len(),
+        max_file_size_bytes,
+    ) {
         return None;
     }
     let absolute = crate::paths::normalize_path(absolute_path);

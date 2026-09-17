@@ -193,6 +193,7 @@ define_engine_error_codes! {
     StorageDocFieldFailed => "STORAGE.DOC_FIELD_FAILED",
     StorageDuplicateFragmentId => "STORAGE.DUPLICATE_FRAGMENT_ID",
     StorageEntityVectorCountMismatch => "STORAGE.ENTITY_VECTOR_COUNT_MISMATCH",
+    StorageFileMetaCorrupt => "STORAGE.FILE_META_CORRUPT",
     StorageFileMetaReadOnly => "STORAGE.FILE_META_READ_ONLY",
     StorageForeignTsIndexPresent => "STORAGE.FOREIGN_TS_INDEX_PRESENT",
     StorageFragmentFileMismatch => "STORAGE.FRAGMENT_FILE_MISMATCH",
@@ -250,7 +251,12 @@ impl serde::Serialize for EngineErrorCode {
 ///
 /// The cause rides in an `Arc` (not a `Box`): `EngineError` is `Clone`
 /// (fail-fast paths clone the first failure), and `Arc` keeps that.
-#[derive(Debug, Clone)]
+///
+/// `Display` and `Debug` redact secrets (see [`redact_error_text`]): every
+/// `to_string()` / logging sink observes redacted text with no per-callsite
+/// work. The [`EngineError::message`] / [`EngineError::context`] accessors
+/// stay raw for programmatic use; format or log through `Display`/`Debug`.
+#[derive(Clone)]
 pub struct EngineError {
     code: EngineErrorCode,
     message: String,
@@ -300,11 +306,48 @@ impl EngineError {
 
 impl fmt::Display for EngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.code, self.message)?;
+        // Redaction at the Display boundary (issue #22): `usize::MAX`
+        // disables truncation, so this pass only redacts. Idempotent with
+        // per-callsite `redact_error_text` (already-redacted markers are
+        // skipped by lookahead), so double redaction is a no-op.
+        let message = redact_error_text(&self.message, usize::MAX);
+        write!(f, "{}: {}", self.code, message)?;
         if let Some(context) = &self.context {
+            let context = redact_error_text(context, usize::MAX);
             write!(f, "\n{context}")?;
         }
         Ok(())
+    }
+}
+
+impl fmt::Debug for EngineError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Same boundary as `Display`: `{:?}` logging must never leak secrets.
+        // Destructure fully so a future field forces a redaction decision here.
+        let Self {
+            code,
+            message,
+            context,
+            source,
+        } = self;
+        let message = redact_error_text(message, usize::MAX).into_owned();
+        let context: Option<String> = context
+            .as_deref()
+            .map(|context| redact_error_text(context, usize::MAX).into_owned());
+        // Redact the rendered source while keeping `Error::source()` typed:
+        // `{:?}` of the cause is re-redacted through the same pass as
+        // `Display`, so a credential-bearing `serde_json::Error` (or any
+        // cause) never leaks via the `source` field.
+        let source: Option<String> = source.as_deref().map(|cause| {
+            let raw = format!("{cause:?}");
+            redact_error_text(&raw, usize::MAX).into_owned()
+        });
+        f.debug_struct("EngineError")
+            .field("code", code)
+            .field("message", &message)
+            .field("context", &context)
+            .field("source", &source)
+            .finish()
     }
 }
 
@@ -482,10 +525,29 @@ pub fn workspace_index_detail(name: &str) -> String {
 
 /// Redacts credentials from arbitrary error text, then truncates to `max_length`
 /// with an ellipsis. Returns a borrow when nothing needs redacting or cutting,
-/// so the common no-secret path allocates zero times. Mirrors the five passes
-/// of the TS implementation (the URL
-/// userinfo pass is a hand-rolled scanner because the Rust regex crate has no
-/// lookbehind).
+/// so the common no-secret path allocates zero times.
+///
+/// Passes, in order (each borrows when it matches nothing):
+/// 1. URL userinfo (`scheme://user@`, hand-rolled scanner: the Rust regex
+///    crate has no lookbehind).
+/// 2. Query params (`[?&]api_key=…`, `token=…`, …) — value runs to `&`.
+/// 3. Header lines (`x-api-key: …`, `x-auth-token: …`, `authorization: …`,
+///    except `bearer`/`basic` which the bearer pass owns).
+/// 4. Quoted `key=value` / `key: value` (pre-existing).
+/// 5. Unquoted `key=value` / `key: value` — value runs to whitespace or a
+///    structural delimiter (`& " ' , ; ) > ]`).
+/// 6. `Bearer` / `Basic` credentials (pre-existing).
+/// 7. Known-prefix tokens: AWS `AKIA…`, GitHub `ghp_/gho_/ghu_/ghs_/ghr_…`,
+///    Slack `xox…-…`, Google `AIza…`.
+/// 8. `sk-…` tokens (pre-existing).
+/// 9. PEM private-key blocks (whole `BEGIN…END` range), else the lone
+///    `BEGIN … PRIVATE KEY` armor line.
+///
+/// New value passes skip already-redacted markers (checked in code, since the
+/// `regex` crate has no look-around), so redacting twice — e.g. a per-callsite
+/// pass plus the [`EngineError`] `Display` boundary — is a no-op. Benign
+/// `key=value` detail pairs (`provider=…`, `model=…`, `count=3`) and plain URLs
+/// match no pass and keep borrowing.
 ///
 /// # Panics
 ///
@@ -511,23 +573,139 @@ pub fn redact_error_text(value: &str, max_length: usize) -> Cow<'_, str> {
         )
         .unwrap_or_else(|e| panic!("static redaction regex must compile: {e}"))
     });
+    static QUERY_PARAM: LazyLock<Regex> = LazyLock::new(|| {
+        // `?api_key=…` / `&token=…`: tight anchor (no gap allowed between
+        // `?`/`&` and the key) so `monkey=` / `keyboard=` never match, and
+        // the value stops at `&` so sibling params survive. The
+        // already-redacted guard lives in code (see below): the `regex`
+        // crate has no look-around.
+        Regex::new(
+            r#"(?i)([?&]["']?\b(?:(?:access|refresh|id)[_ -]?)?(?:api[_ -]?key|api[_ -]?secret|client[_ -]?secret|auth[_ -]?token|token|authorization|password|passwd|secret|key|auth)["']?\s*=)([^&\s"'#;]+)"#,
+        )
+        .unwrap_or_else(|e| panic!("static redaction regex must compile: {e}"))
+    });
+    static HEADER: LazyLock<Regex> = LazyLock::new(|| {
+        // `x-api-key: …` / `x-auth-token: …` / `authorization: …`, value to
+        // end of segment. `bearer`/`basic` are owned by the bearer pass
+        // (keeps `Bearer [redacted]` stable); `["']` stops quoted values
+        // for the quoted key/value pass. Both guards live in code (see
+        // below): the `regex` crate has no look-around.
+        Regex::new(r#"(?i)(\b(?:x-api-key|x-auth-token|authorization)\s*:\s*)([^\x0A\x0D\"'&,;]+)"#)
+            .unwrap_or_else(|e| panic!("static redaction regex must compile: {e}"))
+    });
+    static KEY_VALUE_UNQUOTED: LazyLock<Regex> = LazyLock::new(|| {
+        // Same key shapes without quotes: `api_key=s3cr3t`, `password: x`.
+        // `\b` keeps `monkey=` / `keyboard=` intact; the value stops at
+        // whitespace, quotes, or structural delimiters so trailing context
+        // (`&next=1`, `)`, `]`) survives. `bearer`/`basic` values are owned
+        // by the bearer pass (keeps `Authorization: Bearer [redacted]` stable).
+        // Both guards live in code (see below): the `regex` crate has no
+        // look-around.
+        Regex::new(
+            r#"(?i)(["']?\b(?:(?:access|refresh|id)[_ -]?)?(?:api[_ -]?key|api[_ -]?secret|client[_ -]?secret|auth[_ -]?token|token|authorization|password|passwd|secret|key|auth)["']?\s*[:=]\s*)([^\s"'&,;)>\]]+)"#,
+        )
+        .unwrap_or_else(|e| panic!("static redaction regex must compile: {e}"))
+    });
     static BEARER: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)\b(bearer|basic)\s+[a-z0-9._\-+/=]+")
             .unwrap_or_else(|e| panic!("static redaction regex must compile: {e}"))
+    });
+    static KNOWN_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+        // Provider-shaped tokens with no key context: AWS access key ids,
+        // GitHub / Slack / Google API tokens.
+        Regex::new(
+            r"(?i)\b(?:AKIA[0-9A-Z]{16}|gh[opsr]_[A-Za-z0-9_]{8,}|xox[abdeoprs]-[0-9A-Za-z\-]{8,}|AIza[0-9A-Za-z\-_]{35})\b",
+        )
+        .unwrap_or_else(|e| panic!("static redaction regex must compile: {e}"))
     });
     static SK_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?i)\bsk-[a-z0-9_\-]{8,}")
             .unwrap_or_else(|e| panic!("static redaction regex must compile: {e}"))
     });
+    static PEM_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
+        // Whole armor-to-armor range so key material between the lines goes too.
+        Regex::new(
+            r"(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
+        )
+        .unwrap_or_else(|e| panic!("static redaction regex must compile: {e}"))
+    });
+    static PEM_HEADER: LazyLock<Regex> = LazyLock::new(|| {
+        // Lone armor line with no closing `END` in scope.
+        Regex::new(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
+            .unwrap_or_else(|e| panic!("static redaction regex must compile: {e}"))
+    });
 
+    // Guards the `regex` crate cannot express as look-around: a value that
+    // is already `[redacted]` passes through (double redaction is a no-op),
+    // and a `bearer`/`basic`-led value stays owned by the bearer pass.
+    // Bearer token chars mirror the `BEARER` class below (`[a-z0-9._\-+/=]`,
+    // case-insensitive): `Bearer abc` skips, `bearertoken` still redacts.
+    fn is_redacted_value(value: &str) -> bool {
+        value.starts_with("[redacted")
+    }
+    fn is_bearer_value(value: &str) -> bool {
+        let bytes = value.as_bytes();
+        let prefix_len = if bytes
+            .get(..6)
+            .is_some_and(|p| p.eq_ignore_ascii_case(b"bearer"))
+        {
+            6
+        } else if bytes
+            .get(..5)
+            .is_some_and(|p| p.eq_ignore_ascii_case(b"basic"))
+        {
+            5
+        } else {
+            return false;
+        };
+        match bytes.get(prefix_len) {
+            None => true,
+            Some(next) => !matches!(
+                next,
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-' | b'+' | b'/' | b'='
+            ),
+        }
+    }
     // Each pass borrows when it matches nothing, so the common no-secret
     // path allocates zero times; only an actual redaction forces ownership
     // (reassigned solely in the `Owned` arm, where nothing borrows `out`).
     let mut out = redact_url_userinfo(value);
+    if let Cow::Owned(owned) = QUERY_PARAM.replace_all(&out, |caps: &regex::Captures| {
+        if is_redacted_value(&caps[2]) {
+            caps[0].to_owned()
+        } else {
+            format!("{}[redacted]", &caps[1])
+        }
+    }) {
+        out = Cow::Owned(owned);
+    }
+    if let Cow::Owned(owned) = HEADER.replace_all(&out, |caps: &regex::Captures| {
+        if is_redacted_value(&caps[2]) || is_bearer_value(&caps[2]) {
+            caps[0].to_owned()
+        } else {
+            format!("{}[redacted]", &caps[1])
+        }
+    }) {
+        out = Cow::Owned(owned);
+    }
+    if let Cow::Owned(owned) = KEY_VALUE.replace_all(&out, "$1\"[redacted]\"") {
+        out = Cow::Owned(owned);
+    }
+    if let Cow::Owned(owned) = KEY_VALUE_UNQUOTED.replace_all(&out, |caps: &regex::Captures| {
+        if is_redacted_value(&caps[2]) || is_bearer_value(&caps[2]) {
+            caps[0].to_owned()
+        } else {
+            format!("{}[redacted]", &caps[1])
+        }
+    }) {
+        out = Cow::Owned(owned);
+    }
     for (pattern, replacement) in [
-        (&KEY_VALUE, "$1\"[redacted]\""),
         (&BEARER, "$1 [redacted]"),
+        (&KNOWN_TOKEN, "[redacted]"),
         (&SK_TOKEN, "sk-[redacted]"),
+        (&PEM_BLOCK, "[redacted-private-key]"),
+        (&PEM_HEADER, "-----BEGIN [redacted] PRIVATE KEY-----"),
     ] {
         if let Cow::Owned(owned) = pattern.replace_all(&out, replacement) {
             out = Cow::Owned(owned);
@@ -547,7 +725,7 @@ fn redact_url_userinfo(value: &str) -> Cow<'_, str> {
     let bytes = value.as_bytes();
     let mut result = String::with_capacity(value.len());
     let mut cursor = 0usize;
-
+    let mut redacted = false;
     while let Some(offset) = value.get(cursor..).unwrap_or("").find("://") {
         let separator = cursor + offset;
         let mut start = separator;
@@ -585,11 +763,15 @@ fn redact_url_userinfo(value: &str) -> Cow<'_, str> {
             result.push_str(value.get(cursor..start).unwrap_or(""));
             result.push_str("[redacted]@");
             cursor = end + 1;
+            redacted = true;
         } else {
             let copy_through = (separator + 3).min(bytes.len());
             result.push_str(value.get(cursor..copy_through).unwrap_or(""));
             cursor = copy_through;
         }
+    }
+    if !redacted {
+        return Cow::Borrowed(value);
     }
     result.push_str(value.get(cursor..).unwrap_or(""));
     Cow::Owned(result)
@@ -662,5 +844,109 @@ mod tests {
             DetailEntry::Pair("missing", DetailValue::Null),
         ]);
         assert_eq!(details.as_deref(), Some("path=/tmp/x\ncount=3"));
+    }
+    #[test]
+    fn redacts_unquoted_key_value() {
+        let redacted = redact_error_text("request failed: api_key=s3cr3t123 tail", 200);
+        assert!(redacted.contains("api_key=[redacted]"));
+        assert!(!redacted.contains("s3cr3t123"));
+        let redacted = redact_error_text("login failed password: hunter2 retry", 200);
+        assert!(redacted.contains("password: [redacted]"));
+        assert!(!redacted.contains("hunter2"));
+        // Sibling params survive the value cut.
+        let redacted = redact_error_text("token=abc&next=1", 200);
+        assert_eq!(redacted.as_ref(), "token=[redacted]&next=1");
+    }
+
+    #[test]
+    fn redacts_query_params() {
+        let redacted = redact_error_text(
+            "https://api.example.com/v1?q=test&api_key=s3cr3t&lang=en",
+            200,
+        );
+        assert!(redacted.contains("api_key=[redacted]"));
+        assert!(redacted.contains("q=test"));
+        assert!(redacted.contains("lang=en"));
+        assert!(!redacted.contains("s3cr3t"));
+    }
+
+    #[test]
+    fn redacts_secret_headers() {
+        let redacted = redact_error_text("x-api-key: s3cr3t-value", 200);
+        assert_eq!(redacted.as_ref(), "x-api-key: [redacted]");
+        let redacted = redact_error_text("X-Auth-Token: abc123", 200);
+        assert_eq!(redacted.as_ref(), "X-Auth-Token: [redacted]");
+        // `bearer` stays owned by the bearer pass.
+        let redacted = redact_error_text("Authorization: Bearer abc123", 200);
+        assert!(redacted.contains("Bearer [redacted]"));
+        assert!(!redacted.contains("abc123"));
+    }
+
+    #[test]
+    fn redacts_known_prefix_tokens() {
+        let google = format!("key=AIza{}", "A".repeat(35));
+        let text = "AKIAIOSFODNN7EXAMPLE ghp_1234567890abcdef1234567890abcdef1234 \
+            xoxb-123456789012-1234567890123-AbCdEfGhIjKlMnOp sk-live-abcdefgh12345678 "
+            .to_owned()
+            + &google;
+        let redacted = redact_error_text(&text, 400);
+        assert!(!redacted.contains("AKIAIOSFODNN7EXAMPLE"));
+        assert!(!redacted.contains("ghp_1234567890abcdef1234567890abcdef1234"));
+        assert!(!redacted.contains("xoxb-123456789012-1234567890123-AbCdEfGhIjKlMnOp"));
+        assert!(!redacted.contains(&google));
+        assert!(redacted.contains("[redacted]"));
+    }
+
+    #[test]
+    fn redacts_pem_private_key() {
+        let nl = char::from(10);
+        let pem = format!(
+            "-----BEGIN RSA PRIVATE KEY-----{nl}MIIEowIBAAKCAQEA7bq3Z8{nl}-----END RSA PRIVATE KEY-----"
+        );
+        let redacted = redact_error_text(&pem, 400);
+        assert!(!redacted.contains("MIIEowIBAAKCAQEA7bq3Z8"));
+        assert!(redacted.contains("[redacted-private-key]"));
+        // Lone armor line without a closing END.
+        let redacted = redact_error_text("key -----BEGIN EC PRIVATE KEY----- tail", 200);
+        assert!(redacted.contains("-----BEGIN [redacted] PRIVATE KEY-----"));
+        // Non-key armor is not a secret.
+        assert!(matches!(
+            redact_error_text("-----BEGIN CERTIFICATE-----", 200),
+            Cow::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn leaves_normal_urls_and_details_intact() {
+        assert!(matches!(
+            redact_error_text("https://example.com/search?q=rust&lang=en&page=2", 200),
+            Cow::Borrowed(_)
+        ));
+        assert!(matches!(
+            redact_error_text("provider=qwen model=text-embedding-v4 purpose=query", 200),
+            Cow::Borrowed(_)
+        ));
+        assert!(matches!(
+            redact_error_text("monkey=banana keyboard=1 count=3", 200),
+            Cow::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn display_and_debug_redact_without_sink_changes() {
+        let error = EngineError::new(EngineErrorCode::ConfigInvalid, "bad key api_key=s3cr3t123")
+            .with_context("endpoint=https://example.invalid/e".to_owned());
+        // Programmatic accessors stay raw …
+        assert!(error.message().contains("s3cr3t123"));
+        // … while the logging boundary redacts every sink at once.
+        let shown = error.to_string();
+        assert!(shown.contains("api_key=[redacted]"));
+        assert!(!shown.contains("s3cr3t123"));
+        assert!(shown.contains("endpoint=https://example.invalid/e"));
+        let debugged = format!("{error:?}");
+        assert!(!debugged.contains("s3cr3t123"));
+        // Double redaction is a no-op (per-callsite pass + Display boundary).
+        let twice = redact_error_text(&shown, usize::MAX);
+        assert_eq!(twice.as_ref(), shown.as_str());
     }
 }

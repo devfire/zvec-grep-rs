@@ -13,12 +13,13 @@
 //! - `WatchManager` is owned by exactly one root actor task (never shared),
 //!   so callbacks are plain `Arc<dyn Fn>` values, not negotiated factories.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
 use zg_core::pipeline::indexing::scanner::{PathKind, path_can_affect_index};
 use zg_core::types::RootPath;
@@ -33,6 +34,19 @@ pub const DEFAULT_WATCH_DEBOUNCE: Duration = Duration::from_millis(750);
 
 /// Backstop before a busy batch flushes anyway; mirrors TS `maxWaitMs`.
 pub const DEFAULT_WATCH_MAX_WAIT: Duration = Duration::from_secs(5);
+
+/// Bounded raw-event queue. Bursts beyond this conflate into the overflow
+/// map (same-path events merge) and, past that, collapse to a single full
+/// reconcile — so a checkout/build storm degrades to ~one re-index instead
+/// of unbounded memory.
+const EVENT_QUEUE_CAPACITY: usize = 1024;
+
+/// Bounded cap for the conflated overflow map; see [`EVENT_QUEUE_CAPACITY`].
+const OVERFLOW_CONFLATED_CAPACITY: usize = 1024;
+
+/// Flush pokes carry no payload: at most one pending poke is ever needed.
+/// Extra pokes while one is queued are duplicates and merge away.
+const POKE_QUEUE_CAPACITY: usize = 1;
 
 /// Why a batch flushed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,7 +84,6 @@ pub struct WatchManagerOptions {
     /// Pending-state observer.
     pub on_pending: Option<WatchPending>,
 }
-
 struct RawEvent {
     path: PathBuf,
     kind: Option<ChangeKind>,
@@ -81,28 +94,42 @@ struct Shared {
     changes: Mutex<ChangeSet>,
     reconcile_requested: std::sync::atomic::AtomicBool,
     closed: std::sync::atomic::AtomicBool,
+    /// Set when roots may be stale (workspace change). The next blocking
+    /// classify step refreshes [`Shared::roots_cache`] off the async loop.
+    roots_stale: std::sync::atomic::AtomicBool,
+    /// Last good roots snapshot. Refreshed on workspace-change signals, not
+    /// per event, so the hot path never calls the [`RootPathsSource`]
+    /// service (a blocking manifest read) per event.
+    roots_cache: Mutex<Vec<RootPath>>,
+    /// Conflated drops when the bounded event queue is full: path budgets
+    /// stay bounded because same-path events merge here. Drained by the
+    /// classify task alongside the channel.
+    overflow: Mutex<HashMap<PathBuf, Option<ChangeKind>>>,
     on_changes: WatchChanges,
     on_pending: Option<WatchPending>,
     get_root_paths: Option<RootPathsSource>,
-    flush_poke: UnboundedSender<()>,
+    flush_poke: Sender<()>,
 }
 
 impl Shared {
     fn poke(&self) {
-        let _ = self.flush_poke.send(());
+        // Bounded with capacity one: `Full` means a poke is already queued,
+        // so the duplicate merges away instead of growing a backlog.
+        let _ = self.flush_poke.try_send(());
     }
 
     fn is_closed(&self) -> bool {
         self.closed.load(std::sync::atomic::Ordering::SeqCst)
     }
+
+    fn is_roots_stale(&self) -> bool {
+        self.roots_stale.load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
-/// Recursive filesystem watcher coalescing events into [`ChangeSetSnapshot`]
-/// batches. Owned by one root actor; `start` begins delivery, `close`
-/// stops it.
 pub struct WatchManager {
     shared: Arc<Shared>,
-    event_tx: UnboundedSender<RawEvent>,
+    event_tx: Sender<RawEvent>,
     debounce: Duration,
     max_wait: Duration,
     watcher: Option<RecommendedWatcher>,
@@ -113,8 +140,11 @@ impl WatchManager {
     /// Builds an idle manager; call [`WatchManager::start`] to watch.
     #[must_use]
     pub fn new(options: WatchManagerOptions) -> Self {
-        let (flush_poke, flush_rx) = unbounded_channel();
-        let (event_tx, event_rx) = unbounded_channel();
+        let (flush_poke, flush_rx) = channel(POKE_QUEUE_CAPACITY);
+        let (event_tx, event_rx) = channel(EVENT_QUEUE_CAPACITY);
+        // One blocking snapshot up front so the synchronous `inject_event`
+        // path filters with a warm cache; the async path refreshes off-loop.
+        let roots_cache = load_roots(&options.get_root_paths).unwrap_or_default();
         let shared = Arc::new(Shared {
             root: options.root.clone(),
             changes: Mutex::new(ChangeSet::new(ChangeSetOptions {
@@ -123,6 +153,9 @@ impl WatchManager {
             })),
             reconcile_requested: std::sync::atomic::AtomicBool::new(false),
             closed: std::sync::atomic::AtomicBool::new(false),
+            roots_stale: std::sync::atomic::AtomicBool::new(false),
+            roots_cache: Mutex::new(roots_cache),
+            overflow: Mutex::new(HashMap::new()),
             on_changes: options.on_changes,
             on_pending: options.on_pending,
             get_root_paths: options.get_root_paths,
@@ -143,7 +176,6 @@ impl WatchManager {
     }
 
     /// Starts the recursive notify watcher. Watching `.git` / `.zvec-grep`
-    /// is skipped at record time (see `record_raw()`).
     ///
     /// # Errors
     ///
@@ -165,7 +197,21 @@ impl WatchManager {
                             EventKind::Any | EventKind::Access(_) | EventKind::Other => None,
                         };
                         for path in event.paths {
-                            let _ = sender.send(RawEvent { path, kind });
+                            if shared.is_closed() {
+                                return;
+                            }
+                            // Bounded queue: a full queue conflates into the
+                            // overflow map (same-path events merge) instead
+                            // of growing memory without bound.
+                            match sender.try_send(RawEvent { path, kind }) {
+                                Ok(()) => {}
+                                Err(tokio::sync::mpsc::error::TrySendError::Full(event)) => {
+                                    coalesce_overflow(&shared, event);
+                                }
+                                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                    return;
+                                }
+                            }
                         }
                     }
                     Err(_) => {
@@ -227,8 +273,22 @@ impl WatchManager {
         self.shared
             .reconcile_requested
             .store(true, std::sync::atomic::Ordering::SeqCst);
+        // Reconciles often follow workspace changes; re-snapshot roots on the
+        // next blocking classify step rather than reading the manifest here.
+        self.shared
+            .roots_stale
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         set_pending(&self.shared, true);
         self.shared.poke();
+    }
+
+    /// Re-snapshots index roots from the [`RootPathsSource`]. Call after a
+    /// workspace change (manifest rewrite); per-event filtering uses the
+    /// cached snapshot instead. Blocking (reads the manifest): call from a
+    /// non-async context or infrequent path. The async classify path refreshes
+    /// automatically via the `Shared::roots_stale` flag and workspace-signal events.
+    pub fn refresh_roots(&self) {
+        refresh_roots_blocking(&self.shared);
     }
 
     /// Delivers whatever is pending right now, bypassing the debounce.
@@ -250,11 +310,7 @@ impl WatchManager {
         set_pending(&self.shared, false);
     }
 
-    fn spawn(
-        &mut self,
-        event_rx: tokio::sync::mpsc::UnboundedReceiver<RawEvent>,
-        flush_rx: tokio::sync::mpsc::UnboundedReceiver<()>,
-    ) {
+    fn spawn(&mut self, event_rx: Receiver<RawEvent>, flush_rx: Receiver<()>) {
         let shared = Arc::clone(&self.shared);
         self.tasks.push(tokio::spawn(async move {
             classify_loop(shared, event_rx).await;
@@ -299,7 +355,9 @@ fn set_pending(shared: &Shared, pending: bool) {
     }
 }
 
-/// Classifies one raw event and folds it into the pending set.
+/// Classifies one raw event and folds it into the pending set. Synchronous
+/// (used by `inject_event`/tests): filters against the cached roots
+/// snapshot, so it never calls the blocking [`RootPathsSource`] per event.
 fn record_raw(
     shared: &Arc<Shared>,
     path: &Path,
@@ -314,15 +372,11 @@ fn record_raw(
         });
     };
     // Never index internals.
-    if let Ok(relative) = Path::new(&absolute).strip_prefix(Path::new(&shared.root))
-        && relative.components().any(|component| {
-            matches!(
-                component.as_os_str().to_str(),
-                Some(".git") | Some(".zvec-grep")
-            )
-        })
-    {
+    if is_internal_path(&shared.root, &absolute) {
         return Ok(());
+    }
+    if is_workspace_signal(&absolute) {
+        refresh_roots_blocking(shared);
     }
     let metadata = std::fs::symlink_metadata(&absolute).ok();
     let is_directory =
@@ -334,7 +388,7 @@ fn record_raw(
             ChangeKind::Deleted
         }
     });
-    if !should_track(shared, &absolute, is_directory) {
+    if !should_track_cached(shared, &absolute, is_directory) {
         return Ok(());
     }
     let became_pending = {
@@ -353,9 +407,38 @@ fn record_raw(
     Ok(())
 }
 
-/// Fail-open filtering: `.gitignore` always tracks; unreadable rules or
-/// a failing predicate track rather than risk a missed change.
-fn should_track(shared: &Shared, absolute: &str, is_directory: bool) -> bool {
+/// True for paths under `.git` / `.zvec-grep`: never indexed. Pure string
+/// prefix check, safe on any thread.
+fn is_internal_path(root: &str, absolute: &str) -> bool {
+    if let Ok(relative) = Path::new(absolute).strip_prefix(Path::new(root))
+        && relative.components().any(|component| {
+            matches!(
+                component.as_os_str().to_str(),
+                Some(".git") | Some(".zvec-grep")
+            )
+        })
+    {
+        return true;
+    }
+    false
+}
+
+/// True for events that may change index scoping (ignore rules, workspace
+/// manifest): these refresh the cached roots snapshot instead of using it.
+fn is_workspace_signal(absolute: &str) -> bool {
+    matches!(
+        Path::new(absolute)
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some(".gitignore") | Some("manifest.json")
+    )
+}
+
+/// Fail-open filtering against the cached roots snapshot: `.gitignore`
+/// always tracks; unreadable rules or a failing predicate track rather
+/// than risk a missed change. Never calls the source: the hot path stays
+/// off blocking I/O.
+fn should_track_cached(shared: &Shared, absolute: &str, is_directory: bool) -> bool {
     if Path::new(absolute)
         .file_name()
         .and_then(|name| name.to_str())
@@ -363,11 +446,13 @@ fn should_track(shared: &Shared, absolute: &str, is_directory: bool) -> bool {
     {
         return true;
     }
-    let Some(source) = &shared.get_root_paths else {
+    if shared.get_root_paths.is_none() {
         return true;
-    };
-    let roots =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| source())).unwrap_or_default();
+    }
+    let roots = shared
+        .roots_cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let kind = if is_directory {
         PathKind::Dir
     } else {
@@ -376,21 +461,288 @@ fn should_track(shared: &Shared, absolute: &str, is_directory: bool) -> bool {
     path_can_affect_index(&roots, absolute, kind).unwrap_or(true)
 }
 
-async fn classify_loop(
-    shared: Arc<Shared>,
-    mut events: tokio::sync::mpsc::UnboundedReceiver<RawEvent>,
-) {
-    while let Some(event) = events.recv().await {
+/// Calls the roots source fail-open: a panicking source keeps the previous
+/// snapshot (`None` = keep, not clear) rather than risk a missed change.
+fn load_roots(source: &Option<RootPathsSource>) -> Option<Vec<RootPath>> {
+    let source = source.as_ref()?;
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| source())).ok()
+}
+
+/// Re-snapshots [`Shared::roots_cache`] and clears the stale flag. Blocking
+/// (reads the manifest): runs on a `spawn_blocking` thread, at construction,
+/// or via [`WatchManager::refresh_roots`] — never inline on the async loop.
+fn refresh_roots_blocking(shared: &Shared) {
+    if let Some(roots) = load_roots(&shared.get_root_paths) {
+        *shared
+            .roots_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = roots;
+    }
+    shared
+        .roots_stale
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Merges a same-path repeat into the conflated kind. `None` (unknown)
+/// stays unknown so the kind is re-derived; conflicting hints collapse to
+/// `Changed`, except create-then-delete which nets to `Deleted`.
+fn merge_kind(first: Option<ChangeKind>, second: Option<ChangeKind>) -> Option<ChangeKind> {
+    match (first, second) {
+        (None, _) | (_, None) => None,
+        (a, b) if a == b => a,
+        (Some(ChangeKind::Created), Some(ChangeKind::Deleted)) => Some(ChangeKind::Deleted),
+        (Some(ChangeKind::Deleted), Some(ChangeKind::Created)) => Some(ChangeKind::Changed),
+        (Some(ChangeKind::Created), Some(ChangeKind::Changed)) => Some(ChangeKind::Created),
+        _ => Some(ChangeKind::Changed),
+    }
+}
+
+/// Conflates a dropped (full-queue) event into the bounded overflow map.
+/// Same-path repeats merge; past capacity the storm collapses to one full
+/// reconcile so memory stays bounded no matter the burst size.
+fn coalesce_overflow(shared: &Arc<Shared>, event: RawEvent) {
+    let mut overflow = shared
+        .overflow
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if overflow.len() >= OVERFLOW_CONFLATED_CAPACITY && !overflow.contains_key(&event.path) {
+        overflow.clear();
+        drop(overflow);
+        shared
+            .changes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .require_full_reconcile();
+        shared
+            .reconcile_requested
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        set_pending(shared, true);
+        shared.poke();
+        return;
+    }
+    overflow
+        .entry(event.path)
+        .and_modify(|kind| *kind = merge_kind(*kind, event.kind))
+        .or_insert(event.kind);
+}
+
+/// Drains raw events, conflates same-path repeats, and classifies the batch
+/// on a blocking thread: `symlink_metadata` plus the roots-source snapshot
+/// never run on the tokio worker. One poke per batch keeps the bounded flush
+/// queue from queueing behind a burst, so the flush path cannot starve.
+async fn classify_loop(shared: Arc<Shared>, mut events: Receiver<RawEvent>) {
+    loop {
         if shared.is_closed() {
             return;
         }
-        let _ = record_raw(&shared, &event.path, event.kind, None);
+        // Conflate the burst: overflow leftovers plus whatever is queued.
+        let mut batch: HashMap<PathBuf, Option<ChangeKind>> = shared
+            .overflow
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .drain()
+            .collect();
+        let mut drained = 0;
+        while let Ok(event) = events.try_recv() {
+            batch
+                .entry(event.path)
+                .and_modify(|kind| *kind = merge_kind(*kind, event.kind))
+                .or_insert(event.kind);
+            drained += 1;
+            if drained >= EVENT_QUEUE_CAPACITY {
+                break;
+            }
+        }
+        if batch.is_empty() {
+            // Nothing queued: wait for at least one event. `None` means every
+            // sender is gone (shutting down).
+            let Some(event) = events.recv().await else {
+                return;
+            };
+            if shared.is_closed() {
+                return;
+            }
+            batch.insert(event.path, event.kind);
+            while let Ok(event) = events.try_recv() {
+                batch
+                    .entry(event.path)
+                    .and_modify(|kind| *kind = merge_kind(*kind, event.kind))
+                    .or_insert(event.kind);
+                drained += 1;
+                if drained >= EVENT_QUEUE_CAPACITY {
+                    break;
+                }
+            }
+            // Anything that overflowed while we waited joins the same batch.
+            for (path, kind) in shared
+                .overflow
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .drain()
+            {
+                batch
+                    .entry(path)
+                    .and_modify(|current| *current = merge_kind(*current, kind))
+                    .or_insert(kind);
+            }
+        }
+        if shared.is_closed() {
+            return;
+        }
+        // Blocking FS + roots work leaves the async loop entirely.
+        let worker = Arc::clone(&shared);
+        let classified = tokio::task::spawn_blocking(move || classify_batch(&worker, batch)).await;
+        if shared.is_closed() {
+            return;
+        }
+        match classified {
+            Ok(entries) => fold_classified(&shared, &entries),
+            Err(_) => {
+                // A panicking classifier cannot be trusted: reconcile
+                // everything (mirrors the watcher-error path, no new error
+                // taxonomy needed).
+                shared
+                    .changes
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .require_full_reconcile();
+                shared
+                    .reconcile_requested
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                set_pending(&shared, true);
+                shared.poke();
+            }
+        }
     }
+}
+
+/// Classified survivor: absolute path plus the values `ChangeSet::add` needs.
+struct ClassifiedEntry {
+    absolute: String,
+    kind: ChangeKind,
+    is_directory: bool,
+}
+
+/// Blocking half of classification (runs in `spawn_blocking`): refreshes
+/// the roots snapshot on workspace signals, stats each path, and filters
+/// against the snapshot. Returns only survivors for the async fold step.
+fn classify_batch(
+    shared: &Arc<Shared>,
+    batch: HashMap<PathBuf, Option<ChangeKind>>,
+) -> Vec<ClassifiedEntry> {
+    // Refresh only on signals that survive filtering: the roots source is a
+    // blocking manifest read (storage open), and internal writes
+    // (`.zvec-grep` storage, lock files, the per-run manifest rewrite) must
+    // never trigger it — the index's own writes would re-open storage on
+    // every batch and hold read locks across maintenance (drop/reset).
+    // Mirrors `record_raw`, which returns before the refresh for internals.
+    let needs_refresh = shared.is_roots_stale()
+        || batch.keys().any(|path| {
+            path.is_absolute()
+                && is_workspace_signal_lossy(path)
+                && !is_internal_path(&shared.root, &path.to_string_lossy())
+        });
+    if needs_refresh {
+        refresh_roots_blocking(shared);
+    }
+    let roots = shared
+        .roots_cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let has_source = shared.get_root_paths.is_some();
+    let mut out = Vec::new();
+    for (path, kind_hint) in &batch {
+        let absolute = path.to_string_lossy().into_owned();
+        if !path.is_absolute() {
+            continue;
+        }
+        if is_internal_path(&shared.root, &absolute) {
+            continue;
+        }
+        let metadata = std::fs::symlink_metadata(path).ok();
+        let is_directory = metadata.as_ref().is_some_and(|metadata| metadata.is_dir());
+        let kind = kind_hint.unwrap_or_else(|| {
+            if metadata.is_some() {
+                ChangeKind::Changed
+            } else {
+                ChangeKind::Deleted
+            }
+        });
+        if should_track_roots(&absolute, is_directory, has_source, &roots) {
+            out.push(ClassifiedEntry {
+                absolute,
+                kind,
+                is_directory,
+            });
+        }
+    }
+    out
+}
+
+/// Workspace-signal check on a pre-`String` path (blocking thread side).
+fn is_workspace_signal_lossy(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some(".gitignore") | Some("manifest.json")
+    )
+}
+
+/// [`should_track_cached`] without the cache lock: the blocking batch owns
+/// a cloned snapshot, so per-event filtering borrows it.
+fn should_track_roots(
+    absolute: &str,
+    is_directory: bool,
+    has_source: bool,
+    roots: &[RootPath],
+) -> bool {
+    if Path::new(absolute)
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some(".gitignore")
+    {
+        return true;
+    }
+    if !has_source {
+        return true;
+    }
+    let kind = if is_directory {
+        PathKind::Dir
+    } else {
+        PathKind::File
+    };
+    path_can_affect_index(roots, absolute, kind).unwrap_or(true)
+}
+
+/// Async fold half: merges one classified batch into the pending set with a
+/// single lock hold and a single (coalesced) poke.
+fn fold_classified(shared: &Arc<Shared>, entries: &[ClassifiedEntry]) {
+    if entries.is_empty() {
+        return;
+    }
+    let became_pending = {
+        let mut changes = shared
+            .changes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let was_empty = changes.is_empty();
+        for entry in entries {
+            // Paths are verified absolute by `classify_batch`; budget
+            // widening never errors, so only relative-path failures (which
+            // cannot happen here) are dropped.
+            let _ = changes.add(&entry.absolute, entry.kind, entry.is_directory);
+        }
+        was_empty && !changes.is_empty()
+    };
+    if became_pending {
+        set_pending(shared, true);
+    }
+    shared.poke();
 }
 
 async fn flush_loop(
     shared: Arc<Shared>,
-    mut pokes: tokio::sync::mpsc::UnboundedReceiver<()>,
+    mut pokes: Receiver<()>,
     debounce: Duration,
     max_wait: Duration,
 ) {
@@ -406,6 +758,8 @@ async fn flush_loop(
                 return;
             }
             // Drain the burst: new pokes mean new events arrived mid-sleep.
+            // Bounded to one pending poke, so this is at most one extra
+            // iteration per burst and never a backlog to starve behind.
             let mut fresh = false;
             while pokes.try_recv().is_ok() {
                 fresh = true;
@@ -418,9 +772,10 @@ async fn flush_loop(
     }
 }
 
-/// Snapshots the pending set and delivers it. A panicking receiver is
-/// contained: the batch merges back with a forced full reconcile and a
-/// new flush is scheduled (mirrors TS `flush`'s catch path).
+/// Drains the pending set and delivers it. Snapshot and drain happen under
+/// one lock acquisition; delivery runs outside the lock. A panicking
+/// receiver is contained: the batch merges back with a forced full
+/// reconcile and a new flush is scheduled (mirrors TS `flush`'s catch path).
 fn flush_snapshot(shared: &Arc<Shared>) {
     let (snapshot, reason) = {
         let mut changes = shared
@@ -434,7 +789,9 @@ fn flush_snapshot(shared: &Arc<Shared>) {
         {
             return;
         }
-        let snapshot = changes.snapshot();
+        // Drain on snapshot: the next batch must hold only post-flush
+        // changes, and the reconcile flag resets once consumed.
+        let snapshot = changes.take_snapshot();
         let reason = if shared
             .reconcile_requested
             .load(std::sync::atomic::Ordering::SeqCst)
@@ -468,9 +825,7 @@ fn flush_snapshot(shared: &Arc<Shared>) {
         set_pending(shared, false);
     }
 }
-
 #[cfg(test)]
-#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use std::sync::Mutex as StdMutex;
@@ -507,8 +862,55 @@ mod tests {
         manager.flush_now().await;
         let batches = batches.lock().unwrap();
         assert_eq!(batches.len(), 1);
-        assert_eq!(batches[0].0.touched_files, vec!["/repo/a.rs", "/repo/b.rs"]);
-        assert_eq!(batches[0].1, WatchReason::Watch);
+        let (snapshot, reason) = batches.iter().next().expect("one batch");
+        assert_eq!(snapshot.touched_files, vec!["/repo/a.rs", "/repo/b.rs"]);
+        assert_eq!(*reason, WatchReason::Watch);
+    }
+
+    #[tokio::test]
+    async fn internal_only_batches_skip_roots_refresh() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = Arc::clone(&calls);
+        let source: RootPathsSource = Arc::new(move || {
+            calls_clone.fetch_add(1, Ordering::SeqCst);
+            Vec::new()
+        });
+        let batches: RecordedBatches = Arc::new(StdMutex::new(Vec::new()));
+        let batches_clone = Arc::clone(&batches);
+        let manager = WatchManager::new(WatchManagerOptions {
+            root: "/repo".to_owned(),
+            debounce: Some(Duration::from_millis(5)),
+            max_wait: Some(Duration::from_millis(50)),
+            max_changed_paths: None,
+            on_changes: Arc::new(move |snapshot, reason| {
+                batches_clone.lock().unwrap().push((snapshot, reason));
+            }),
+            get_root_paths: Some(source),
+            on_pending: None,
+        });
+        // Construction takes one blocking snapshot up front.
+        let baseline = calls.load(Ordering::SeqCst);
+        // Index internals — the per-run manifest rewrite, storage files,
+        // lock files — classify to nothing and must not touch the roots
+        // source: it is a blocking storage open whose read lock would race
+        // index maintenance (drop/reset fail `LOCK.BUSY` under a live reader).
+        let mut batch = HashMap::new();
+        batch.insert(
+            PathBuf::from("/repo/.zvec-grep/manifest.json"),
+            Some(ChangeKind::Changed),
+        );
+        batch.insert(
+            PathBuf::from("/repo/.zvec-grep/LOCK.readers/x/lock.json"),
+            Some(ChangeKind::Created),
+        );
+        assert!(classify_batch(&manager.shared, batch).is_empty());
+        assert_eq!(calls.load(Ordering::SeqCst), baseline);
+        // An external workspace signal still refreshes.
+        let mut batch = HashMap::new();
+        batch.insert(PathBuf::from("/repo/.gitignore"), Some(ChangeKind::Changed));
+        assert_eq!(classify_batch(&manager.shared, batch).len(), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), baseline + 1);
     }
 
     #[tokio::test]
@@ -542,8 +944,51 @@ mod tests {
         manager.flush_now().await;
         let batches = batches.lock().unwrap();
         assert_eq!(batches.len(), 1);
-        assert!(batches[0].0.force_full_reconcile);
-        assert_eq!(batches[0].1, WatchReason::Reconcile);
+        let (snapshot, reason) = batches.iter().next().expect("one batch");
+        assert!(snapshot.force_full_reconcile);
+        assert_eq!(*reason, WatchReason::Reconcile);
+    }
+
+    #[tokio::test]
+    async fn consecutive_flushes_deliver_only_new_changes() {
+        let (manager, batches) = manager("/repo");
+        manager
+            .inject_event("/repo/a.rs", ChangeKind::Changed, false)
+            .unwrap();
+        manager.flush_now().await;
+        manager
+            .inject_event("/repo/b.rs", ChangeKind::Changed, false)
+            .unwrap();
+        manager.flush_now().await;
+        let batches = batches.lock().unwrap();
+        let touched = batches
+            .iter()
+            .map(|(snapshot, _)| snapshot.touched_files.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            touched,
+            vec![vec!["/repo/a.rs".to_owned()], vec!["/repo/b.rs".to_owned()]]
+        );
+    }
+
+    #[tokio::test]
+    async fn reconcile_flag_does_not_stick_across_batches() {
+        let (manager, batches) = manager("/repo");
+        manager.require_full_reconcile();
+        manager.flush_now().await;
+        manager
+            .inject_event("/repo/a.rs", ChangeKind::Changed, false)
+            .unwrap();
+        manager.flush_now().await;
+        let batches = batches.lock().unwrap();
+        assert_eq!(batches.len(), 2);
+        let (first, first_reason) = batches.first().expect("first batch");
+        assert!(first.force_full_reconcile);
+        assert_eq!(*first_reason, WatchReason::Reconcile);
+        let (second, second_reason) = batches.get(1).expect("second batch");
+        assert!(!second.force_full_reconcile);
+        assert_eq!(*second_reason, WatchReason::Watch);
+        assert_eq!(second.touched_files, vec!["/repo/a.rs".to_owned()]);
     }
 
     fn write_manifest_policy(home: &Path, root: &str, include_nested_git: Option<bool>) {
@@ -608,63 +1053,73 @@ mod tests {
                 .map(|manifest| manifest.info.root_paths)
                 .unwrap_or_default()
         });
-        // One flush per manager: `flush_snapshot` redelivers pending batches,
-        // so each phase below uses a fresh manager and flushes exactly once.
-        let watch_once = |source: RootPathsSource, events: Vec<(String, bool)>| {
-            let batches: RecordedBatches = Arc::new(StdMutex::new(Vec::new()));
-            let batches_clone = batches.clone();
-            let root = root.clone();
-            async move {
-                let manager = WatchManager::new(WatchManagerOptions {
-                    root,
-                    debounce: Some(Duration::from_secs(3600)),
-                    max_wait: Some(Duration::from_secs(3600)),
-                    max_changed_paths: None,
-                    on_changes: Arc::new(move |snapshot, reason| {
-                        batches_clone.lock().unwrap().push((snapshot, reason));
-                    }),
-                    get_root_paths: Some(source),
-                    on_pending: None,
-                });
-                for (path, is_directory) in &events {
-                    manager
-                        .inject_event(path, ChangeKind::Changed, *is_directory)
-                        .unwrap();
-                }
-                manager.flush_now().await;
-                let batches = batches.lock().unwrap();
-                batches
-                    .iter()
-                    .map(|(snapshot, _)| snapshot.touched_files.clone())
-                    .collect::<Vec<_>>()
-            }
+        // One manager across phases: each flush drains, so every batch
+        // holds only post-flush changes.
+        let batches: RecordedBatches = Arc::new(StdMutex::new(Vec::new()));
+        let batches_clone = batches.clone();
+        let manager = WatchManager::new(WatchManagerOptions {
+            root: root.clone(),
+            debounce: Some(Duration::from_secs(3600)),
+            max_wait: Some(Duration::from_secs(3600)),
+            max_changed_paths: None,
+            on_changes: Arc::new(move |snapshot, reason| {
+                batches_clone.lock().unwrap().push((snapshot, reason));
+            }),
+            get_root_paths: Some(source),
+            on_pending: None,
+        });
+        let touched_batches = || {
+            batches
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(snapshot, _)| snapshot.touched_files.clone())
+                .collect::<Vec<_>>()
         };
 
         let nested = format!("{root}/repo-a/a.txt");
+        manager
+            .inject_event(&nested, ChangeKind::Changed, false)
+            .unwrap();
+        manager.flush_now().await;
         assert!(
-            watch_once(source.clone(), vec![(nested.clone(), false)])
-                .await
-                .is_empty(),
+            touched_batches().iter().all(|batch| batch.is_empty()),
             "disabled policy tracks no nested change"
         );
 
         write_manifest_policy(&home, &root, Some(true));
+        manager.refresh_roots();
+        manager
+            .inject_event(&nested, ChangeKind::Changed, false)
+            .unwrap();
+        manager.flush_now().await;
+        let delivered = touched_batches();
+        let latest = delivered.iter().last().expect("enabled phase flushes");
         assert_eq!(
-            watch_once(source.clone(), vec![(nested.clone(), false)]).await,
-            vec![vec![nested.clone()]],
+            latest,
+            &vec![nested.clone()],
             "enabled policy yields the nested touched path"
         );
 
-        assert!(
-            watch_once(
-                source.clone(),
-                vec![
-                    (format!("{root}/repo-a/.git/HEAD"), false),
-                    (format!("{root}/.zvec-grep/manifest.json"), false),
-                ],
+        let batch_count = batches.lock().unwrap().len();
+        manager
+            .inject_event(
+                &format!("{root}/repo-a/.git/HEAD"),
+                ChangeKind::Changed,
+                false,
             )
-            .await
-            .is_empty(),
+            .unwrap();
+        manager
+            .inject_event(
+                &format!("{root}/.zvec-grep/manifest.json"),
+                ChangeKind::Changed,
+                false,
+            )
+            .unwrap();
+        manager.flush_now().await;
+        assert_eq!(
+            batches.lock().unwrap().len(),
+            batch_count,
             ".git and .zvec-grep changes stay untracked"
         );
     }

@@ -10,6 +10,9 @@ use std::cell::RefCell;
 
 use super::error::AuthError;
 use super::store::RemoteEmbeddingAuthorizationStore;
+use super::target::{
+    canonicalize_workspace_roots, remote_embedding_target_fingerprint, workspace_fingerprint,
+};
 use super::types::{
     REMOTE_EMBEDDING_CAPABILITY, RemoteEmbeddingPermit, RemoteEmbeddingRequest,
     RemoteEmbeddingScope, RemoteEmbeddingTarget,
@@ -60,8 +63,9 @@ fn current_permit() -> Option<RemoteEmbeddingPermit> {
 }
 
 /// Guard over remote-embedding requests: fails closed without an ambient
-/// permit bound to the same provider/model/endpoint, and re-checks the
-/// workspace grant on every call so revocation takes effect immediately.
+/// permit bound to the same full target (workspace roots and fingerprints
+/// plus provider/model/endpoint), and re-checks the workspace grant on every
+/// call so revocation takes effect immediately.
 pub struct RemoteEmbeddingGuard {
     store: RemoteEmbeddingAuthorizationStore,
 }
@@ -89,18 +93,48 @@ impl RemoteEmbeddingGuard {
 
     /// Checks one request against the ambient permit.
     ///
+    /// The request is bound to its workspace server-side: the roots are
+    /// re-canonicalized and both fingerprints recomputed, so a permit or
+    /// grant for root A can never authorize traffic for root B and any
+    /// cross-workspace replay fails closed.
+    ///
     /// # Errors
     ///
-    /// Returns [`AuthError::AuthorizationRequired`] when no ambient permit covers the request or the workspace grant is missing or revoked, or [`AuthError::StoreFailed`] when the grant store cannot be read.
+    /// Returns [`AuthError::AuthorizationRequired`] when no ambient permit covers the request, the request fingerprints disagree with the server-side recompute, the permit target differs, or the workspace grant is missing or revoked; or [`AuthError::StoreFailed`] when the grant store cannot be read.
     pub fn check(&self, request: &RemoteEmbeddingRequest) -> EngineResult<()> {
         let permit = CURRENT_PERMIT.with(|cell| cell.borrow().clone());
         let Some(permit) = permit else {
             return Err(required(request, None));
         };
-        if permit.capability != REMOTE_EMBEDDING_CAPABILITY
-            || permit.target.provider != request.provider
-            || permit.target.model != request.model
-            || permit.target.endpoint != request.endpoint
+        if permit.capability != REMOTE_EMBEDDING_CAPABILITY {
+            return Err(required(request, None));
+        }
+        let endpoint = request.endpoint.trim();
+        if endpoint.is_empty() {
+            return Err(required(request, Some("Request has no endpoint.")));
+        }
+        let workspace_roots = canonicalize_workspace_roots(&request.workspace_roots);
+        if workspace_roots.is_empty() {
+            return Err(required(
+                request,
+                Some("Request carries no workspace roots."),
+            ));
+        }
+        let workspace = workspace_fingerprint(&workspace_roots);
+        let target = remote_embedding_target_fingerprint(
+            &workspace,
+            &request.provider,
+            &request.model,
+            endpoint,
+        );
+        if request.workspace_fingerprint != workspace
+            || request.target_fingerprint != target
+            || request.provider != permit.target.provider
+            || request.model != permit.target.model
+            || permit.target.endpoint != endpoint
+            || permit.target.workspace_fingerprint != workspace
+            || permit.target.target_fingerprint != target
+            || permit.target.workspace_roots != workspace_roots
         {
             return Err(required(request, None));
         }
@@ -191,18 +225,21 @@ impl RemoteEmbeddingAuthorizationManager {
 mod tests {
     use super::*;
     use crate::authorization::error::RemoteEmbeddingPurpose;
-    use crate::authorization::target::create_remote_embedding_target;
+    use crate::authorization::target::{
+        create_remote_embedding_request, create_remote_embedding_target,
+    };
     use crate::authorization::types::ContentKind;
 
-    fn request() -> RemoteEmbeddingRequest {
-        RemoteEmbeddingRequest {
-            provider: "qwen".to_owned(),
-            model: "text-embedding-v4".to_owned(),
-            endpoint: "https://example.invalid/embeddings".to_owned(),
-            purpose: RemoteEmbeddingPurpose::Query,
-            content_kinds: vec![ContentKind::Text],
-            content_count: 1,
-        }
+    fn request_for(root: &std::path::Path) -> RemoteEmbeddingRequest {
+        create_remote_embedding_request(
+            &[root.to_string_lossy().into_owned()],
+            "qwen",
+            "text-embedding-v4",
+            "https://example.invalid/embeddings",
+            RemoteEmbeddingPurpose::Query,
+            vec![ContentKind::Text],
+            1,
+        )
     }
 
     fn target_in(dir: &std::path::Path) -> RemoteEmbeddingTarget {
@@ -219,8 +256,11 @@ mod tests {
 
     #[test]
     fn guard_fails_closed_without_permit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(&root).expect("mkdir");
         let guard = RemoteEmbeddingGuard::new();
-        let error = guard.check(&request()).expect_err("no permit");
+        let error = guard.check(&request_for(&root)).expect_err("no permit");
         assert_eq!(
             error.code().to_string(),
             "ZVEC_GREP.ENGINE.AUTH.REMOTE_EMBEDDING_REQUIRED"
@@ -237,7 +277,9 @@ mod tests {
             .expect("once");
         let scoped = RemoteEmbeddingGuard::with_store(keys());
         with_remote_embedding_operation_permit(Some(permit), || {
-            scoped.check(&request()).expect("once permit passes");
+            scoped
+                .check(&request_for(&dir.path().join("repo")))
+                .expect("once permit passes");
         });
         assert!(current_permit().is_none());
     }
@@ -266,11 +308,15 @@ mod tests {
         );
         let scoped = RemoteEmbeddingGuard::with_store(keys());
         with_remote_embedding_operation_permit(Some(permit.clone()), || {
-            scoped.check(&request()).expect("granted passes");
+            scoped
+                .check(&request_for(&dir.path().join("repo")))
+                .expect("granted passes");
         });
         keys().revoke(&target).expect("revoke");
         with_remote_embedding_operation_permit(Some(permit), || {
-            let error = scoped.check(&request()).expect_err("revoked");
+            let error = scoped
+                .check(&request_for(&dir.path().join("repo")))
+                .expect_err("revoked");
             assert_eq!(
                 error.code().to_string(),
                 "ZVEC_GREP.ENGINE.AUTH.REMOTE_EMBEDDING_REQUIRED"
@@ -292,8 +338,75 @@ mod tests {
         };
         let permit = create_remote_embedding_operation_permit(target, RemoteEmbeddingScope::Once);
         let guard = RemoteEmbeddingGuard::new();
+        let request = create_remote_embedding_request(
+            &["/repo".to_owned()],
+            "qwen",
+            "text-embedding-v4",
+            "https://example.invalid/embeddings",
+            RemoteEmbeddingPurpose::Query,
+            vec![ContentKind::Text],
+            1,
+        );
         with_remote_embedding_operation_permit(Some(permit), || {
-            guard.check(&request()).expect_err("model mismatch");
+            guard.check(&request).expect_err("model mismatch");
+        });
+    }
+
+    #[test]
+    fn cross_workspace_request_rejected() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root_a = dir.path().join("a");
+        let root_b = dir.path().join("b");
+        std::fs::create_dir_all(&root_a).expect("mkdir a");
+        std::fs::create_dir_all(&root_b).expect("mkdir b");
+        let keys =
+            || RemoteEmbeddingAuthorizationStore::with_signing_key(dir.path().join("signing.key"));
+        let manager = RemoteEmbeddingAuthorizationManager::with_store(keys());
+        let target_a = create_remote_embedding_target(
+            &[root_a.to_string_lossy().into_owned()],
+            "qwen",
+            "text-embedding-v4",
+            "https://example.invalid/embeddings",
+        )
+        .expect("target a");
+        let permit = manager
+            .grant(&target_a, RemoteEmbeddingScope::Workspace)
+            .expect("grant a");
+        // A grant for root A never authorizes root B traffic, even with a
+        // valid permit shape for A.
+        let scoped = RemoteEmbeddingGuard::with_store(keys());
+        with_remote_embedding_operation_permit(Some(permit), || {
+            scoped
+                .check(&request_for(&root_a))
+                .expect("same-workspace request passes");
+            let error = scoped
+                .check(&request_for(&root_b))
+                .expect_err("cross-workspace");
+            assert_eq!(
+                error.code().to_string(),
+                "ZVEC_GREP.ENGINE.AUTH.REMOTE_EMBEDDING_REQUIRED"
+            );
+        });
+    }
+
+    #[test]
+    fn tampered_request_roots_rejected() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = target_in(dir.path());
+        let keys = || RemoteEmbeddingAuthorizationStore::with_signing_key(dir.path().join("k"));
+        let manager = RemoteEmbeddingAuthorizationManager::with_store(keys());
+        let permit = manager
+            .grant(&target, RemoteEmbeddingScope::Once)
+            .expect("once");
+        // Claimed fingerprints no longer match the roots: server-side
+        // recompute rejects the replay.
+        let mut tampered = request_for(&dir.path().join("repo"));
+        tampered
+            .workspace_roots
+            .push(dir.path().join("other").to_string_lossy().into_owned());
+        let scoped = RemoteEmbeddingGuard::with_store(keys());
+        with_remote_embedding_operation_permit(Some(permit), || {
+            scoped.check(&tampered).expect_err("tampered roots");
         });
     }
 }

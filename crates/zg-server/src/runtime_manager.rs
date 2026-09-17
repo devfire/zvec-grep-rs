@@ -87,7 +87,7 @@ impl RuntimeManager {
             }
             .into());
         }
-        Ok(self.get_or_spawn(canonical))
+        self.get_or_spawn(canonical)
     }
 
     /// Activates the actor for indexing: the root must resolve and be
@@ -102,7 +102,7 @@ impl RuntimeManager {
             return Err(DaemonError::ShuttingDown.into());
         }
         let canonical = resolve_requested_root(requested_root, true)?;
-        Ok(self.get_or_spawn(canonical))
+        self.get_or_spawn(canonical)
     }
 
     /// Handle for a live actor, if any.
@@ -147,9 +147,12 @@ impl RuntimeManager {
     }
 
     /// Stops every actor, then the scheduler (which awaits in-flight
-    /// blocking work per M6) and the model pool.
+    /// blocking work per M6) and the model pool. Concurrent calls coalesce:
+    /// the first caller drains while the rest return immediately.
     pub async fn close(&self) {
-        self.closed.store(true, Ordering::SeqCst);
+        if self.closed.swap(true, Ordering::SeqCst) {
+            return;
+        }
         let entries: Vec<ActorEntry> = self
             .inner
             .lock_ignore_poison()
@@ -172,17 +175,21 @@ impl RuntimeManager {
         self.shared.pool.close().await;
     }
 
-    fn get_or_spawn(&self, canonical: RootKey) -> RootHandle {
-        let inner = self.inner.lock_ignore_poison();
-        let resolved = inner
-            .aliases
-            .get(canonical.as_str())
-            .cloned()
-            .unwrap_or_else(|| canonical.to_string());
-        if let Some(entry) = inner.actors.get(&resolved) {
-            return entry.handle.clone();
+    fn get_or_spawn(&self, canonical: RootKey) -> Result<RootHandle, BackendError> {
+        {
+            let inner = self.inner.lock_ignore_poison();
+            if self.closed.load(Ordering::SeqCst) {
+                return Err(DaemonError::ShuttingDown.into());
+            }
+            let resolved = inner
+                .aliases
+                .get(canonical.as_str())
+                .cloned()
+                .unwrap_or_else(|| canonical.to_string());
+            if let Some(entry) = inner.actors.get(&resolved) {
+                return Ok(entry.handle.clone());
+            }
         }
-        drop(inner);
         // Fresh actor; record the alias the caller used.
         let (tx, rx) = unbounded_channel();
         let handle = RootHandle {
@@ -195,6 +202,23 @@ impl RuntimeManager {
             spawn_root_actor(slf.shared.clone(), slf.clone(), key, tx.clone(), rx).await;
         });
         let mut inner = self.inner.lock_ignore_poison();
+        // close() drains under this lock and sets `closed` first: a spawn
+        // that lost the race to shutdown must not resurrect an actor.
+        if self.closed.load(Ordering::SeqCst) {
+            join.abort();
+            return Err(DaemonError::ShuttingDown.into());
+        }
+        // A sibling may have inserted while this task spawned: keep the
+        // first actor and abort the newcomer so only one watcher runs.
+        let resolved = inner
+            .aliases
+            .get(canonical.as_str())
+            .cloned()
+            .unwrap_or_else(|| canonical.to_string());
+        if let Some(entry) = inner.actors.get(&resolved) {
+            join.abort();
+            return Ok(entry.handle.clone());
+        }
         inner
             .aliases
             .insert(canonical.to_string(), resolved.clone());
@@ -205,7 +229,7 @@ impl RuntimeManager {
                 join: Some(join),
             },
         );
-        handle
+        Ok(handle)
     }
 
     fn inspect(
@@ -225,4 +249,94 @@ pub(crate) fn send_command(
 ) -> Result<(), BackendError> {
     tx.send(command)
         .map_err(|_| BackendError::Daemon(DaemonError::ShuttingDown))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use crate::backend::ServiceConfig;
+    use crate::job_scheduler::{JobScheduler, JobSchedulerOptions};
+    use crate::model_pool::{EmbeddingModelPool, EmbeddingModelPoolOptions};
+
+    fn test_manager() -> RuntimeManager {
+        let scheduler = JobScheduler::new(JobSchedulerOptions::default());
+        let pool = EmbeddingModelPool::new(EmbeddingModelPoolOptions::default());
+        let shared = BackendShared {
+            scheduler,
+            pool,
+            service: ServiceConfig::default(),
+            auth: Arc::default(),
+            logger: None,
+            read_session_ttl: crate::read_session_cache::DEFAULT_READ_SESSION_IDLE_TTL,
+            runtime_idle_ttl: DEFAULT_RUNTIME_IDLE_TTL,
+        };
+        RuntimeManager::new(shared)
+    }
+
+    fn test_key() -> (tempfile::TempDir, RootKey) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let key = RootKey::parse(&path).unwrap();
+        (dir, key)
+    }
+
+    #[tokio::test]
+    async fn parallel_get_or_spawn_yields_one_actor() {
+        let manager = test_manager();
+        let (_dir, key) = test_key();
+        let barrier = Arc::new(tokio::sync::Barrier::new(16));
+        let mut tasks = Vec::new();
+        for _ in 0..16 {
+            let manager = manager.clone();
+            let key = key.clone();
+            let barrier = barrier.clone();
+            tasks.push(tokio::spawn(async move {
+                barrier.wait().await;
+                manager.get_or_spawn(key).unwrap()
+            }));
+        }
+        let mut handles = Vec::new();
+        for task in tasks {
+            handles.push(task.await.unwrap());
+        }
+        assert_eq!(manager.actor_count(), 1);
+        let first = handles.first().unwrap();
+        for handle in &handles {
+            assert!(first.tx.same_channel(&handle.tx));
+        }
+        manager.close().await;
+    }
+
+    #[tokio::test]
+    async fn spawn_after_close_returns_shutting_down() {
+        let manager = test_manager();
+        let (_dir, key) = test_key();
+        manager.close().await;
+        let result = manager.get_or_spawn(key);
+        assert!(matches!(
+            result,
+            Err(BackendError::Daemon(DaemonError::ShuttingDown))
+        ));
+        // Duplicate close() calls coalesce instead of double-draining.
+        manager.close().await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_close_is_safe() {
+        let manager = test_manager();
+        let (_dir, key) = test_key();
+        let _handle = manager.get_or_spawn(key).unwrap();
+        assert_eq!(manager.actor_count(), 1);
+        let first = manager.clone();
+        let second = manager.clone();
+        let ((), ()) = tokio::join!(first.close(), second.close());
+        assert_eq!(manager.actor_count(), 0);
+    }
 }

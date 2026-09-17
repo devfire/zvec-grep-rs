@@ -3,11 +3,9 @@
 //! Maps 1:1 onto `RgSearchOptions` in `engine/service/lexical.ts`; see the
 //! parent module docs for the preserved TypeScript semantics.
 
-use std::path::{Path, PathBuf};
-
 use serde::{Deserialize, Serialize};
 
-use super::filter::includes_hidden_path;
+use std::path::{Path, PathBuf};
 
 /// Which backend produced a lexical result. The TS implementation reports
 /// `bundled-rg` or `rg`; the Rust port always searches in-process.
@@ -82,6 +80,10 @@ pub struct LexicalSearchOptions {
     pub smart_case: bool,
     /// Wrap the pattern with word boundaries (`--word-regexp`).
     pub word_regexp: bool,
+    /// Match whole lines only (`--line-regexp`/`-x`): the combined pattern
+    /// is anchored (`^(?:…)$`) after pattern-file loading and after
+    /// fixed-string escaping, so `--file` patterns match exact lines too.
+    pub whole_line: bool,
     /// Context lines before each match (`beforeContext`).
     pub before_context: usize,
     /// Context lines after each match (`afterContext`).
@@ -98,8 +100,8 @@ impl LexicalSearchOptions {
     /// `fixedStrings` → [`Self::fixed_strings`], `ignoreCase` →
     /// [`Self::ignore_case`], `maxCount` → [`Self::max_count`], and
     /// `contextLines` expands to both [`Self::before_context`] and
-    /// [`Self::after_context`]. WordRegexp/before/after context and the
-    /// discovery flags (`hidden`, `noIgnore`, `ignoreFiles`, `maxDepth`,
+    /// [`Self::after_context`]. WordRegexp/whole-line/before/after context
+    /// and the discovery flags (`hidden`, `noIgnore`, `ignoreFiles`, `maxDepth`,
     /// `maxFileSizeBytes`, `follow`, `paths`) have no service-options
     /// counterpart and keep their defaults here; callers that need them set
     /// the fields directly.
@@ -138,16 +140,18 @@ impl LexicalSearchOptions {
             ignore_case: rg.is_some_and(|rg| rg.case_insensitive),
             smart_case: rg.is_some_and(|rg| rg.smart_case),
             word_regexp: false,
+            whole_line: false,
             before_context: rg.and_then(|rg| rg.context_lines).unwrap_or(0),
             after_context: rg.and_then(|rg| rg.context_lines).unwrap_or(0),
             max_count: rg.and_then(|rg| rg.max_count),
         }
     }
 
-    /// True when hidden files participate: explicit flag or any include path
-    /// reaching into a dot segment (mirrors `hiddenSearchArgs`).
+    /// True when hidden files participate: only the explicit `hidden` flag
+    /// opts in. Dot-segment include paths no longer auto-enable hidden
+    /// search (they would otherwise leak dotfiles without consent).
     pub(crate) fn searches_hidden(&self) -> bool {
-        self.hidden || includes_hidden_path(&self.include_paths)
+        self.hidden
     }
 }
 

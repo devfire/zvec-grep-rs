@@ -186,6 +186,18 @@ impl ChangeSet {
         }
     }
 
+    /// Collapsed snapshot that also drains the accumulator, so the next
+    /// batch contains only post-flush changes. The reconcile flag resets
+    /// once consumed; root and budget are preserved.
+    pub fn take_snapshot(&mut self) -> ChangeSetSnapshot {
+        let snapshot = self.snapshot();
+        self.touched_files.clear();
+        self.rescan_directories.clear();
+        self.deleted_prefixes.clear();
+        self.force_full_reconcile = false;
+        snapshot
+    }
+
     /// Total accumulated paths across all three sets.
     #[must_use]
     pub fn len(&self) -> usize {

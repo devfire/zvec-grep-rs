@@ -19,6 +19,17 @@ use crate::service::types::workspace_index_not_found;
 
 /// Options for [`create_zvec_grep`], mirroring `CreateZvecGrepOptions`.
 ///
+/// All fields are optional; `Default::default()` binds the working directory
+/// with model resolution from manifest/env/defaults. The constructor is
+/// infallible: nothing is rejected here. Unknown roots fall back to the
+/// working directory (or `"."`), and model failures surface later at
+/// `ensure_index`/`context` time, not at construction.
+///
+/// Model precedence: `embedding_model` (injected handle, never touches the
+/// network) wins over `embedding` (explicit catalog reference), which wins
+/// over manifest/env/defaults. `api_key`/`endpoint` apply only to remote
+/// providers; `model_cache_dir` overrides only the local model cache.
+///
 /// No `Debug`: the injected model handle is an opaque trait object.
 #[derive(Clone, Default)]
 pub struct CreateZvecGrepOptions {
@@ -29,7 +40,7 @@ pub struct CreateZvecGrepOptions {
     /// Injected model handle (tests, daemon pool leases). Wins over every
     /// catalog path and never touches the network.
     pub embedding_model: Option<Arc<dyn EmbeddingModel>>,
-    /// API key for remote embedding providers.
+    /// API key for remote embedding providers (`None` = env/default).
     pub api_key: Option<String>,
     /// Endpoint override for remote embedding providers.
     pub endpoint: Option<String>,

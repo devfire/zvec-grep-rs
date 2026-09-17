@@ -18,6 +18,9 @@ use crate::error::EngineResult;
 use crate::types::Content;
 
 /// Which device a local backend should prefer.
+///
+/// Non-exhaustive: new devices must not break downstream matches.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DeviceKind {
@@ -306,6 +309,16 @@ pub struct RankingModelInfo {
 /// Intentionally **un**sealed (same policy as [`EmbeddingModel`]:
 /// reranking backends are a supported third-party extension point, so new
 /// methods must carry default bodies.
+///
+/// # Evolving this trait (CHECKLIST)
+///
+/// 1. New methods MUST carry default bodies so existing third-party
+///    implementors keep compiling.
+/// 2. Never add a required method (one without a default body) outside a
+///    major release.
+/// 3. The `unsealed_policy` compile-test at the bottom of this file
+///    implements the trait with required methods only; it fails to compile
+///    if a required method is ever added, which is the point.
 pub trait RankingModel: Send + Sync {
     fn info(&self) -> &RankingModelInfo;
 
@@ -320,4 +333,48 @@ pub trait RankingModel: Send + Sync {
         query: &Content,
         candidates: &[RankingCandidate],
     ) -> EngineResult<Vec<RankingScore>>;
+}
+
+#[cfg(test)]
+mod unsealed_policy_tests {
+    use super::*;
+
+    /// Implements `RankingModel` with required methods only. If a required
+    /// method (one without a default body) is ever added to the trait, this
+    /// stops compiling — see the trait-level CHECKLIST.
+    struct RequiredOnly {
+        info: RankingModelInfo,
+    }
+
+    impl RankingModel for RequiredOnly {
+        fn info(&self) -> &RankingModelInfo {
+            &self.info
+        }
+
+        fn rank(
+            &self,
+            _query: &Content,
+            candidates: &[RankingCandidate],
+        ) -> EngineResult<Vec<RankingScore>> {
+            Ok(candidates
+                .iter()
+                .map(|candidate| RankingScore {
+                    id: candidate.id.clone(),
+                    score: 0.0,
+                })
+                .collect())
+        }
+    }
+
+    #[test]
+    fn required_methods_only_satisfies_trait() {
+        let model = RequiredOnly {
+            info: RankingModelInfo {
+                reference: "test/required-only".to_owned(),
+                provider: "test".to_owned(),
+                name: "required-only".to_owned(),
+            },
+        };
+        assert_eq!(model.info().provider, "test");
+    }
 }

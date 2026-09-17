@@ -19,12 +19,6 @@ pub(crate) async fn run_rg_direct(args: QueryArgs, queries: Vec<String>) -> Resu
     let color = use_color(args.color, args.no_color);
     let mut patterns = queries;
     patterns.extend(args.regexp.clone());
-    if args.line_regexp {
-        patterns = patterns
-            .iter()
-            .map(|pattern| format!("^(?:{pattern})$"))
-            .collect();
-    }
     let (before, after) = match (args.context, args.before_context, args.after_context) {
         (Some(both), None, None) => (both as usize, both as usize),
         _ => (
@@ -78,6 +72,7 @@ pub(crate) async fn run_rg_direct(args: QueryArgs, queries: Vec<String>) -> Resu
         ignore_case: args.ignore_case && !args.case_sensitive,
         smart_case: args.smart_case,
         word_regexp: args.word_regexp,
+        whole_line: args.line_regexp,
         before_context: before,
         after_context: after,
         max_count: args.max_count,
