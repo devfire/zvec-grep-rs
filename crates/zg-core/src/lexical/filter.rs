@@ -15,17 +15,6 @@ use crate::error::EngineResult;
 /// `HARD_IGNORED_HIDDEN_DIRECTORIES` in the TS implementation.
 pub const HARD_IGNORED_DIRECTORIES: &[&str] = &[".git", ".zvec-grep"];
 
-/// True when any include path reaches into a dot segment, in which case hidden
-/// files participate even without the explicit flag (mirrors
-/// `includesHiddenPath`).
-pub(crate) fn includes_hidden_path(patterns: &[String]) -> bool {
-    patterns.iter().any(|pattern| {
-        pattern.split(['/', '\\']).any(|segment| {
-            !segment.is_empty() && segment.starts_with('.') && segment != "." && segment != ".."
-        })
-    })
-}
-
 /// Expands one include/exclude path pattern the way `expandRipgrepPathGlob`
 /// does: `./`-prefixed patterns are stripped, `**/`-prefixed and absolute
 /// patterns stay as-is, everything else also matches at any depth.

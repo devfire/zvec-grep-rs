@@ -130,6 +130,10 @@ fn record_run(job: &JobRecord) -> JobRun {
     job.run.clone()
 }
 
+/// Merges an absorbed followup run behind the queued run: the second run
+/// always executes even when the first fails, so absorbed followup work is
+/// never silently dropped. When either run fails the failure surfaces — the
+/// first error wins so the original failure is not masked by followup work.
 fn combine_runs(first: JobRun, second: JobRun) -> JobRun {
     std::sync::Arc::new(
         move |report: zg_core::pipeline::indexing::IndexProgressSink,
@@ -137,9 +141,57 @@ fn combine_runs(first: JobRun, second: JobRun) -> JobRun {
             let first = first.clone();
             let second = second.clone();
             Box::pin(async move {
-                first(report.clone(), cancel.clone()).await?;
-                second(report, cancel).await
+                let first_result = first(report.clone(), cancel.clone()).await;
+                let second_result = second(report, cancel).await;
+                match (first_result, second_result) {
+                    (Ok(()), Ok(())) => Ok(()),
+                    (Err(failure), _) => Err(failure),
+                    (Ok(()), Err(failure)) => Err(failure),
+                }
             }) as BoxFuture<'static, JobOutcome>
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use futures::future::BoxFuture;
+    use tokio_util::sync::CancellationToken;
+    use zg_core::pipeline::indexing::IndexProgressSink;
+
+    use super::combine_runs;
+    use crate::job_scheduler::failure::{JobFailure, JobOutcome, JobRun};
+
+    fn inert_sink() -> IndexProgressSink {
+        Arc::new(|_| {})
+    }
+
+    #[tokio::test]
+    async fn combine_runs_still_runs_second_after_first_failure() {
+        let second_ran = Arc::new(AtomicBool::new(false));
+        let flag = second_ran.clone();
+        let first: JobRun = Arc::new(|_, _| {
+            Box::pin(async { Err(JobFailure::Failed("boom".to_owned())) })
+                as BoxFuture<'static, JobOutcome>
+        });
+        let second: JobRun = Arc::new(move |_, _| {
+            let flag = flag.clone();
+            Box::pin(async move {
+                flag.store(true, Ordering::SeqCst);
+                Ok(())
+            }) as BoxFuture<'static, JobOutcome>
+        });
+        let outcome = combine_runs(first, second)(inert_sink(), CancellationToken::new()).await;
+        assert!(
+            second_ran.load(Ordering::SeqCst),
+            "absorbed followup work must run even when the first run fails"
+        );
+        assert!(
+            matches!(outcome, Err(JobFailure::Failed(_))),
+            "the first failure must surface"
+        );
+    }
 }

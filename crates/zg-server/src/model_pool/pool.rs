@@ -1,11 +1,13 @@
 //! Pool: checkout, single-flight loads, LRU trim, idle TTL, and close.
 
+use std::collections::HashMap;
 use std::sync::{
-    Arc, Mutex,
+    Arc, LazyLock, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 
 use tokio::sync::Semaphore;
+use tokio::task::AbortHandle;
 use zg_core::error::EngineError;
 use zg_core::models::EmbeddingModel;
 
@@ -24,6 +26,74 @@ use super::state::{Entry, Loading, NextAction, Shared, State};
 #[derive(Clone)]
 pub struct EmbeddingModelPool {
     shared: Arc<Shared>,
+}
+
+/// One pending TTL sleeper per pooled key: idle sequence, last-used stamp,
+/// and the abort handle of the sleeping task.
+type TtlSleeperTable = HashMap<(usize, String), (u64, u64, AbortHandle)>;
+
+/// Abortable idle-TTL sleepers, one per pool entry.
+///
+/// `release_key` runs on short-lived `EmbeddingModelPool` handles rebuilt
+/// from `Arc<Shared>` on every lease drop, so a pending sleeper cannot live
+/// on the handle: it is tracked here, keyed by the `Shared` allocation plus
+/// the cache key, with the scheduling release's `(idle_seq, last_used_ms)`
+/// so a superseded sleeper never forgets its replacement's entry. Every new
+/// release aborts the superseded sleeper before scheduling its replacement,
+/// so rapid acquire/release cycles keep at most one pending sleeper per key
+/// instead of one task per release. Entries are removed when the sleeper
+/// fires, is superseded, or its key is evicted/closed; each sleeper holds an
+/// `Arc<Shared>`, so a pool identity cannot be recycled while its entries
+/// exist. Never nested with the state lock: map and state are always taken
+/// separately.
+static TTL_SLEEPERS: LazyLock<Mutex<TtlSleeperTable>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Identity of the pool behind a handle: the `Shared` allocation address.
+fn pool_identity(shared: &Arc<Shared>) -> usize {
+    Arc::as_ptr(shared) as usize
+}
+
+/// Aborts and forgets the pending TTL sleeper for `key`, if any.
+fn abort_ttl_sleeper(shared: &Arc<Shared>, key: &str) {
+    let id = (pool_identity(shared), key.to_owned());
+    if let Some((_, _, handle)) = TTL_SLEEPERS.lock_ignore_poison().remove(&id) {
+        handle.abort();
+    }
+}
+
+/// Forgets a sleeper entry only when it is still ours: a superseding release
+/// schedules under a bumped `(idle_seq, last_used_ms)`, so a stale match
+/// leaves the replacement registered.
+fn forget_ttl_sleeper_if_current(shared: &Arc<Shared>, key: &str, seq: u64, used: u64) {
+    let id = (pool_identity(shared), key.to_owned());
+    let mut sleepers = TTL_SLEEPERS.lock_ignore_poison();
+    let current = sleepers
+        .get(&id)
+        .is_some_and(|(stored_seq, stored_used, _)| *stored_seq == seq && *stored_used == used);
+    if current {
+        sleepers.remove(&id);
+    }
+}
+
+/// Aborts every pending TTL sleeper of this pool.
+fn abort_pool_ttl_sleepers(shared: &Arc<Shared>) {
+    let identity = pool_identity(shared);
+    let handles: Vec<AbortHandle> = {
+        let mut sleepers = TTL_SLEEPERS.lock_ignore_poison();
+        let stale: Vec<(usize, String)> = sleepers
+            .keys()
+            .filter(|(pool, _)| *pool == identity)
+            .cloned()
+            .collect();
+        stale
+            .into_iter()
+            .filter_map(|id| sleepers.remove(&id).map(|(_, _, handle)| handle))
+            .collect()
+    };
+    for handle in handles {
+        handle.abort();
+    }
 }
 
 impl EmbeddingModelPool {
@@ -128,10 +198,17 @@ impl EmbeddingModelPool {
                     return self.finish_load(&key, request, &loading).await;
                 }
                 NextAction::Wait(loading) => {
-                    // Read-before-await: the loader publishes before it
-                    // notifies, so a finished load is observed even when the
-                    // notify already fired before we subscribed.
+                    // Subscribe-before-check: `notify_waiters` wakes only
+                    // futures that are already registered, and stores no
+                    // permit, so the `Notified` future must be created (and
+                    // polled once via `enable`) BEFORE reading the published
+                    // result. Checking first and subscribing after would miss
+                    // a publish-then-notify landing in between and park
+                    // forever.
                     loop {
+                        let notified = loading.notify.notified();
+                        tokio::pin!(notified);
+                        notified.as_mut().enable();
                         let published = loading.lock_result().clone();
                         match published {
                             Some(Ok(())) => break,
@@ -141,7 +218,7 @@ impl EmbeddingModelPool {
                                     error: error.rehydrate(),
                                 });
                             }
-                            None => loading.notify.notified().await,
+                            None => notified.await,
                         }
                     }
                 }
@@ -234,9 +311,19 @@ impl EmbeddingModelPool {
                 break;
             }
             for loading in loadings {
-                loading.notify.notified().await;
+                // Same subscribe-before-check discipline as `acquire`: the
+                // result is re-checked after subscribing, so a load that
+                // finishes between the snapshot above and this park cannot
+                // hang `close()` on an already-fired notify.
+                let notified = loading.notify.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if loading.lock_result().is_none() {
+                    notified.await;
+                }
             }
         }
+        abort_pool_ttl_sleepers(&self.shared);
         self.shared
             .state
             .lock_ignore_poison()
@@ -279,6 +366,9 @@ impl EmbeddingModelPool {
     }
 
     fn evict(&self, key: &str) {
+        // A pending TTL sleeper for an evicted key would only wake to find
+        // its entry gone; abort it instead of letting it sleep out the TTL.
+        abort_ttl_sleeper(&self.shared, key);
         let removed = self.shared.state.lock_ignore_poison().entries.remove(key);
         if let Some(entry) = removed {
             self.log(
@@ -306,6 +396,11 @@ impl EmbeddingModelPool {
                 entry.last_used_ms,
             )
         };
+        // Every release bumps `idle_seq`, superseding any pending sleeper for
+        // this key; abort it now instead of letting it sleep out the full
+        // TTL only to discover its staleness. Without this each release
+        // leaks one task per zero-lease spell.
+        abort_ttl_sleeper(&self.shared, key);
         if !empty {
             return;
         }
@@ -321,18 +416,34 @@ impl EmbeddingModelPool {
         }
         let slf = self.clone();
         let owned_key = key.to_owned();
-        tokio::spawn(async move {
+        let identity = pool_identity(&self.shared);
+        let task_key = owned_key.clone();
+        let handle = tokio::spawn(async move {
             tokio::time::sleep(ttl).await;
             let stale = {
                 let state = slf.shared.state.lock_ignore_poison();
-                state.entries.get(&owned_key).is_some_and(|entry| {
+                state.entries.get(&task_key).is_some_and(|entry| {
                     entry.leases == 0 && entry.last_used_ms == used && entry.idle_seq == seq
                 })
             };
+            // Forget our registry entry only if no newer release superseded
+            // us; a replacement sleeps under a bumped `(idle_seq,
+            // last_used_ms)`.
+            forget_ttl_sleeper_if_current(&slf.shared, &task_key, seq, used);
             if stale {
-                slf.evict(&owned_key);
+                slf.evict(&task_key);
             }
         });
+        // No `.await` runs between `spawn` and this insert, so the sleeper
+        // cannot have fired yet: the entry forgotten above is still ours.
+        let replaced = TTL_SLEEPERS
+            .lock_ignore_poison()
+            .insert((identity, owned_key), (seq, used, handle.abort_handle()));
+        // Defensive: a concurrent release may have scheduled first; never
+        // keep two sleepers for one key.
+        if let Some((_, _, prev)) = replaced {
+            prev.abort();
+        }
     }
 
     fn log(&self, name: &str, entries: &[(&str, LogField)]) {

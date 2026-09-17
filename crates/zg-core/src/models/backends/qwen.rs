@@ -20,7 +20,8 @@ use serde_json::Value;
 
 use crate::authorization::error::RemoteEmbeddingPurpose;
 use crate::authorization::operation::RemoteEmbeddingGuard;
-use crate::authorization::types::{ContentKind, RemoteEmbeddingRequest};
+use crate::authorization::target::create_remote_embedding_request;
+use crate::authorization::types::ContentKind;
 use crate::error::{EngineError, EngineErrorCode, EngineResult};
 use crate::models::catalog::{QwenMultimodalEntry, QwenTextEntry};
 use crate::models::embeddings::{ApiKey, EmbeddingResult, embed_validated};
@@ -36,23 +37,39 @@ use crate::types::{ImageFormat, SearchMetric};
 /// `DEFAULT_REMOTE_EMBEDDING_TIMEOUT_MS`.
 const REMOTE_TIMEOUT_MS: u64 = 60_000;
 const REMOTE_TIMEOUT: Duration = Duration::from_millis(REMOTE_TIMEOUT_MS);
+/// Fail-fast budget for establishing the embedding connection.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Redirect hops followed per embedding request; every hop is
+/// re-validated against the endpoint policy and `https` -> `http`
+/// downgrades are refused.
+const MAX_REDIRECTS: u32 = 3;
 /// Maximum images per Qwen3 VL embedding request, mirroring
 /// `QWEN3_VL_EMBEDDING_MAX_IMAGE_COUNT`.
 const VL_MAX_IMAGE_COUNT: usize = 10;
 /// Builds the shared remote agent: HTTP errors surface as responses (so the
 /// provider body can be parsed) and every call is bounded by the global
-/// timeout, mirroring `remoteEmbeddingSignal`.
+/// and connect timeouts, mirroring `remoteEmbeddingSignal`. Redirects are
+/// followed manually (see `post_embedding_json`) so every hop is
+/// re-validated, never downgraded, and never leaks `Bearer` credentials
+/// cross-origin.
 fn remote_agent() -> ureq::Agent {
     let config = ureq::config::Config::builder()
         .timeout_global(Some(REMOTE_TIMEOUT))
+        .timeout_connect(Some(CONNECT_TIMEOUT))
         .http_status_as_error(false)
+        .max_redirects(0)
+        .max_redirects_will_error(false)
         .build();
     ureq::Agent::new_with_config(config)
 }
-
 /// Sends one JSON embedding request with `Bearer` auth, returning the parsed
 /// body. Transport, JSON, and provider failures carry their own codes,
 /// mirroring the three TypeScript throw sites.
+///
+/// The initial endpoint and every redirect hop must satisfy the endpoint
+/// policy (`crate::config::is_http_endpoint`); `https` -> `http`
+/// downgrades are refused, at most `MAX_REDIRECTS` hops are followed, and
+/// `Bearer` credentials are only forwarded to the endpoint's own origin.
 #[allow(clippy::too_many_arguments)]
 fn post_embedding_json(
     agent: &ureq::Agent,
@@ -65,41 +82,148 @@ fn post_embedding_json(
     invalid_json: EngineErrorCode,
     api_error: EngineErrorCode,
 ) -> EngineResult<Value> {
-    let mut response = agent
-        .post(endpoint)
-        .header("Authorization", &format!("Bearer {}", api_key.as_str()))
-        .send_json(body)
+    if !crate::config::is_http_endpoint(endpoint) {
+        return Err(EngineError::new(
+            request_failed,
+            format!("{display} endpoint is not a valid public HTTP(S) URL"),
+        )
+        .with_context(format!("model={reference} timeoutMs={REMOTE_TIMEOUT_MS}")));
+    }
+    let mut current = endpoint.to_owned();
+    let mut use_get = false;
+    let mut hops: u32 = 0;
+    loop {
+        if !crate::config::is_http_endpoint(&current) {
+            return Err(EngineError::new(
+                request_failed,
+                format!("{display} redirected to a blocked endpoint"),
+            )
+            .with_context(format!(
+                "model={reference} endpoint={endpoint} timeoutMs={REMOTE_TIMEOUT_MS}"
+            )));
+        }
+        let mut response = match use_get {
+            true => {
+                let request = agent.get(&current);
+                let request = if is_same_origin(endpoint, &current) {
+                    request.header("Authorization", &format!("Bearer {}", api_key.as_str()))
+                } else {
+                    request
+                };
+                request.call()
+            }
+            false => {
+                let request = agent.post(&current);
+                let request = if is_same_origin(endpoint, &current) {
+                    request.header("Authorization", &format!("Bearer {}", api_key.as_str()))
+                } else {
+                    request
+                };
+                request.send_json(body.clone())
+            }
+        }
         .map_err(|err| {
             EngineError::new(request_failed, format!("{display} request failed")).with_context(
                 format!("model={reference} endpoint={endpoint} timeoutMs={REMOTE_TIMEOUT_MS} detail={err}"),
             )
         })?;
-    let status = response.status().as_u16();
-    let retry_after = response
-        .headers()
-        .get("retry-after")
-        .and_then(|value| value.to_str().ok())
-        .and_then(parse_retry_after_ms);
-    let parsed: Value = response.body_mut().read_json().map_err(|err| {
-        EngineError::new(
-            invalid_json,
-            format!("{display} response was not valid JSON"),
-        )
-        .with_context(format!("model={reference} status={status} detail={err}"))
-    })?;
-    if !(200..300).contains(&status) {
-        let error = read_provider_error(&parsed);
-        return Err(
-            EngineError::new(api_error, format!("{display} request returned an error"))
-                .with_context(provider_error_context(
-                    reference,
-                    status,
-                    retry_after,
-                    &error,
-                )),
-        );
+        let status = response.status().as_u16();
+        if matches!(status, 301 | 302 | 303 | 307 | 308) {
+            hops += 1;
+            if hops > MAX_REDIRECTS {
+                return Err(EngineError::new(
+                    request_failed,
+                    format!("{display} exceeded redirect limit"),
+                )
+                .with_context(format!(
+                    "model={reference} endpoint={endpoint} timeoutMs={REMOTE_TIMEOUT_MS}"
+                )));
+            }
+            let location = response
+                .headers()
+                .get("location")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("")
+                .to_owned();
+            let Some(next) = join_redirect(&current, &location) else {
+                return Err(EngineError::new(
+                    request_failed,
+                    format!("{display} redirect target is invalid"),
+                )
+                .with_context(format!(
+                    "model={reference} endpoint={endpoint} timeoutMs={REMOTE_TIMEOUT_MS}"
+                )));
+            };
+            if is_downgrade(&current, &next) {
+                return Err(EngineError::new(
+                    request_failed,
+                    format!("{display} refused https-to-http redirect"),
+                )
+                .with_context(format!(
+                    "model={reference} endpoint={endpoint} timeoutMs={REMOTE_TIMEOUT_MS}"
+                )));
+            }
+            use_get = use_get || matches!(status, 301..=303);
+            current = next;
+            continue;
+        }
+        let retry_after = response
+            .headers()
+            .get("retry-after")
+            .and_then(|value| value.to_str().ok())
+            .and_then(parse_retry_after_ms);
+        let parsed: Value = response.body_mut().read_json().map_err(|err| {
+            EngineError::new(
+                invalid_json,
+                format!("{display} response was not valid JSON"),
+            )
+            .with_context(format!("model={reference} status={status} detail={err}"))
+        })?;
+        if !(200..300).contains(&status) {
+            let error = read_provider_error(&parsed);
+            return Err(EngineError::new(
+                api_error,
+                format!("{display} request returned an error"),
+            )
+            .with_context(provider_error_context(
+                reference,
+                status,
+                retry_after,
+                &error,
+            )));
+        }
+        return Ok(parsed);
     }
-    Ok(parsed)
+}
+
+/// Resolves a redirect `location` against the current URL; `None` when
+/// either side is missing or malformed.
+fn join_redirect(current: &str, location: &str) -> Option<String> {
+    if location.is_empty() {
+        return None;
+    }
+    let base = url::Url::parse(current).ok()?;
+    base.join(location).ok().map(|next| next.to_string())
+}
+
+/// True when following `current` -> `next` would downgrade `https` to
+/// `http`; unparseable pairs fail closed as downgrades.
+fn is_downgrade(current: &str, next: &str) -> bool {
+    let (Ok(from), Ok(to)) = (url::Url::parse(current), url::Url::parse(next)) else {
+        return true;
+    };
+    from.scheme() == "https" && to.scheme() == "http"
+}
+
+/// True when `candidate` shares scheme, host, and effective port with
+/// `initial`; `Bearer` credentials are only forwarded in that case.
+fn is_same_origin(initial: &str, candidate: &str) -> bool {
+    let (Ok(a), Ok(b)) = (url::Url::parse(initial), url::Url::parse(candidate)) else {
+        return false;
+    };
+    a.scheme() == b.scheme()
+        && a.host_str() == b.host_str()
+        && a.port_or_known_default() == b.port_or_known_default()
 }
 
 /// Extracts `{code, type, message}` from a provider error body, accepting
@@ -653,17 +777,23 @@ fn check_remote_embedding_permit(
     {
         content_kinds.push(ContentKind::Image);
     }
-    RemoteEmbeddingGuard::new().check(&RemoteEmbeddingRequest {
-        provider: info.provider.clone(),
-        model: info.model.clone(),
-        endpoint: info.endpoint.clone().unwrap_or_default(),
-        purpose: match purpose {
+    let roots = std::env::current_dir()
+        .ok()
+        .map(|path| vec![path.to_string_lossy().into_owned()])
+        .unwrap_or_default();
+    let request = create_remote_embedding_request(
+        &roots,
+        &info.provider,
+        &info.model,
+        &info.endpoint.clone().unwrap_or_default(),
+        match purpose {
             EmbeddingPurpose::Query => RemoteEmbeddingPurpose::Query,
             EmbeddingPurpose::Document => RemoteEmbeddingPurpose::Document,
         },
         content_kinds,
-        content_count: inputs.len(),
-    })
+        inputs.len(),
+    );
+    RemoteEmbeddingGuard::new().check(&request)
 }
 
 /// Reads the VL embedding index: `index`, else `text_index`, else the

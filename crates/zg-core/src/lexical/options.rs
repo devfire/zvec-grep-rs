@@ -3,11 +3,9 @@
 //! Maps 1:1 onto `RgSearchOptions` in `engine/service/lexical.ts`; see the
 //! parent module docs for the preserved TypeScript semantics.
 
-use std::path::{Path, PathBuf};
-
 use serde::{Deserialize, Serialize};
 
-use super::filter::includes_hidden_path;
+use std::path::{Path, PathBuf};
 
 /// Which backend produced a lexical result. The TS implementation reports
 /// `bundled-rg` or `rg`; the Rust port always searches in-process.
@@ -144,10 +142,11 @@ impl LexicalSearchOptions {
         }
     }
 
-    /// True when hidden files participate: explicit flag or any include path
-    /// reaching into a dot segment (mirrors `hiddenSearchArgs`).
+    /// True when hidden files participate: only the explicit `hidden` flag
+    /// opts in. Dot-segment include paths no longer auto-enable hidden
+    /// search (they would otherwise leak dotfiles without consent).
     pub(crate) fn searches_hidden(&self) -> bool {
-        self.hidden || includes_hidden_path(&self.include_paths)
+        self.hidden
     }
 }
 

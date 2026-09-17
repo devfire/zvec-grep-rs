@@ -23,7 +23,8 @@ use super::options::{
 };
 use super::patterns::{build_matcher, load_patterns};
 use super::search_paths::{
-    absolute_normalized, check_search_paths, display_paths, resolve_search_path,
+    absolute_normalized, canonical_through_ancestors, check_search_paths, display_paths,
+    resolve_search_path,
 };
 use super::sink::{MatchSink, record_file};
 
@@ -38,12 +39,28 @@ use super::sink::{MatchSink, record_file};
 ///
 /// Returns `LEXICAL.EMPTY_PATTERN` when no pattern is given, `LEXICAL.UNKNOWN_FILE_TYPE`
 /// for unknown file types, `LEXICAL.PATTERN_FILE_UNREADABLE` or `LEXICAL.INVALID_PATTERN`
-/// for bad patterns, `LEXICAL.IGNORE_FILE_INVALID` for bad ignore files, or
-/// `LEXICAL.SEARCH_FAILED` when the walk itself fails.
+/// for bad patterns (including too many, overlong, or an overlarge combined
+/// alternation), `LEXICAL.IGNORE_FILE_INVALID` for bad ignore files,
+/// `SEARCH_PLAN.INVALID_MODIFIED_TIME_RANGE` for inverted mtime bounds, or
+/// `LEXICAL.SEARCH_FAILED` when a search path escapes the root, the file-size
+/// cap is zero, or the walk itself fails.
 pub fn run_lexical_search(options: &LexicalSearchOptions) -> EngineResult<LexicalSearchResult> {
     use crate::error::{EngineError, EngineErrorCode};
 
-    let checked = check_search_paths(&options.root, &options.paths);
+    // Inverted mtime bounds are a setup error, reported identically to the
+    // search-plan validation path instead of searching.
+    if let (Some(after), Some(before)) = (options.modified_after, options.modified_before)
+        && after > before
+    {
+        return Err(EngineError::new(
+            EngineErrorCode::SearchPlanInvalidModifiedTimeRange,
+            "search plan modified-after filter must not be later than modified-before",
+        )
+        .with_context(format!("modifiedAfter={after} modifiedBefore={before}")));
+    }
+    crate::file_size_policy::validate_max_file_size_bytes(options.max_file_size_bytes)?;
+
+    let checked = check_search_paths(&options.root, &options.paths)?;
     let mut diagnostics = LexicalDiagnostics {
         backend: LexicalBackend::InProcess,
         command: "in-process".to_owned(),
@@ -99,14 +116,17 @@ pub fn run_lexical_search(options: &LexicalSearchOptions) -> EngineResult<Lexica
     let ignore_matcher = build_ignore_matcher(&options.root, &options.ignore_files)?;
 
     let root = absolute_normalized(&options.root);
+    let canonical_root = canonical_through_ancestors(&root);
     let searched_roots: Vec<PathBuf> = if checked.existing.is_empty() {
         vec![root.clone()]
     } else {
-        checked
-            .existing
-            .iter()
-            .map(|path| resolve_search_path(&options.root, path))
-            .collect()
+        let mut roots = Vec::with_capacity(checked.existing.len());
+        for path in &checked.existing {
+            // Containment re-checked: denies `..`/symlink escapes even if the
+            // earlier split classified them as existing.
+            roots.push(resolve_search_path(&options.root, path)?);
+        }
+        roots
     };
 
     let Some(first) = searched_roots.first().cloned() else {
@@ -167,11 +187,23 @@ pub fn run_lexical_search(options: &LexicalSearchOptions) -> EngineResult<Lexica
         let Some(file_len) = owned_metadata.as_ref().map(|m| m.len()) else {
             continue;
         };
-        if options
-            .max_file_size_bytes
-            .is_some_and(|cap| file_len > cap)
-        {
+        if crate::file_size_policy::file_size_exceeds_cap(
+            path,
+            file_len,
+            options.max_file_size_bytes,
+        ) {
             continue;
+        }
+        if options.follow {
+            // Never follow a symlink outside the root or into a hard-ignored
+            // directory: judge the canonical target, not the link name.
+            let target = canonical_through_ancestors(path);
+            if !crate::paths::is_path_inside(&canonical_root, &target) {
+                continue;
+            }
+            if is_hard_ignored_path(&canonical_root, &target) {
+                continue;
+            }
         }
         if is_hard_ignored_path(&root, path) {
             continue;

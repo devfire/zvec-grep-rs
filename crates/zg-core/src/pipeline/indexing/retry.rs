@@ -27,14 +27,34 @@ pub(crate) fn embed_contents_with_retry(
     on_model_progress: Option<ModelLoadSink>,
     on_terminal_failure: Option<&AtomicBool>,
 ) -> EngineResult<EmbeddingResult> {
+    let inputs: Vec<EmbeddingInput<'_>> = contents.iter().map(content_to_input).collect();
+    embed_inputs_with_retry(
+        &inputs,
+        model,
+        scheduler,
+        abort,
+        cancel,
+        on_model_progress,
+        on_terminal_failure,
+    )
+}
+
+pub(crate) fn embed_inputs_with_retry(
+    inputs: &[EmbeddingInput<'_>],
+    model: &dyn EmbeddingModel,
+    scheduler: &EmbeddingScheduler,
+    abort: &AtomicBool,
+    cancel: Option<&CancelFlag>,
+    on_model_progress: Option<ModelLoadSink>,
+    on_terminal_failure: Option<&AtomicBool>,
+) -> EngineResult<EmbeddingResult> {
     let _ = on_model_progress;
     let mut attempt: u32 = 0;
     loop {
         throw_if_aborted(abort, cancel)?;
         let outcome = scheduler.run(abort, cancel, |abort, cancel| {
             throw_if_aborted(abort, cancel)?;
-            let inputs: Vec<EmbeddingInput<'_>> = contents.iter().map(content_to_input).collect();
-            model.embed(EmbeddingPurpose::Document, &inputs)
+            model.embed(EmbeddingPurpose::Document, inputs)
         });
         match outcome {
             Ok(result) => {
@@ -69,7 +89,7 @@ pub(crate) fn embed_contents_with_retry(
     }
 }
 
-fn content_to_input(content: &Content) -> EmbeddingInput<'_> {
+pub(crate) fn content_to_input(content: &Content) -> EmbeddingInput<'_> {
     match content {
         Content::Text { text } => EmbeddingInput::Text { text },
         Content::Image { data, format } => EmbeddingInput::Image {
@@ -409,20 +429,46 @@ fn is_permanent_remote_model_bad_request(text: &str) -> bool {
     }
 }
 
+/// ASCII case-insensitive substring search returning a byte offset into `text`.
+///
+/// Keys (`providercode=`, `providermessage=`, …) and the `zvec_grep.` sentinel
+/// are pure ASCII, so matching is done directly on `text` bytes. This keeps
+/// offsets valid for `text` even when a Unicode lowercase would change byte
+/// length (e.g. Turkish dotted `İ` expands on `to_lowercase`), which the old
+/// `text.to_lowercase().find(..)` approach got wrong.
+fn find_ascii_insensitive(text: &str, needle: &str) -> Option<usize> {
+    let haystack = text.as_bytes();
+    let needle = needle.as_bytes();
+    if needle.is_empty() {
+        return Some(0);
+    }
+    if needle.len() > haystack.len() {
+        return None;
+    }
+    (0..=haystack.len() - needle.len()).find(|&base| {
+        needle.iter().enumerate().all(|(offset, &want)| {
+            haystack
+                .get(base + offset)
+                .is_some_and(|byte| byte.eq_ignore_ascii_case(&want))
+        })
+    })
+}
+
 fn find_key_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
-    let position = text.to_lowercase().find(&key.to_lowercase())?;
-    text[position + key.len()..].split_whitespace().next()
+    let position = find_ascii_insensitive(text, key)?;
+    let rest = text.get(position + key.len()..)?;
+    rest.split_whitespace().next()
 }
 
 fn find_provider_message(text: &str) -> Option<String> {
     let key = "providermessage=";
-    let position = text.to_lowercase().find(key)?;
+    let position = find_ascii_insensitive(text, key)?;
     let start = position + key.len();
-    let end = text.to_lowercase()[start..]
-        .find("zvec_grep.")
+    let rest = text.get(start..)?;
+    let end = find_ascii_insensitive(rest, "zvec_grep.")
         .map(|offset| start + offset)
         .unwrap_or(text.len());
-    Some(text[start..end].to_owned())
+    text.get(start..end).map(|message| message.to_owned())
 }
 
 fn contains_word(haystack: &str, word: &str) -> bool {
@@ -596,5 +642,52 @@ mod tests {
         assert!(result.is_err());
         // 1 initial + 3 retries for transient failures.
         assert!(scheduler.snapshot().retryable_failures.unwrap_or(0) >= 3);
+    }
+    #[test]
+    fn key_search_survives_expanding_unicode_prefix() {
+        // Turkish dotted capital `İ` (U+0130) expands when lowercased
+        // (`İ` -> `i\u{307}`), so offsets computed on a lowercased copy do not
+        // refer to the original text. The search must stay on `text` bytes.
+        let text = "İnst PROVIDERCODE=invalid_model status=400";
+        assert_eq!(find_key_value(text, "providerCode="), Some("invalid_model"));
+        // Accented prefix: same requirement, correct value past non-ASCII.
+        let accented = "éèê PROVIDERMESSAGE=hello zvec_grep.tail";
+        assert_eq!(find_provider_message(accented), Some("hello ".to_owned()));
+        // Classification still fires with the Unicode prefix present.
+        assert!(is_permanent_remote_model_bad_request(text));
+    }
+
+    #[test]
+    fn key_search_never_splits_char_boundary() {
+        // Key immediately follows a multibyte char; a cross-string offset would
+        // land mid-char and panic on slicing. Must extract cleanly.
+        let text = "İproviderMessage=hello zvec_grep.done";
+        assert_eq!(find_provider_message(text), Some("hello ".to_owned()));
+        assert_eq!(find_key_value("😀status=429", "status="), Some("429"));
+    }
+
+    #[test]
+    fn missing_keys_return_none() {
+        let text = "nothing here 😀 İ";
+        assert_eq!(find_key_value(text, "providerCode="), None);
+        assert_eq!(find_provider_message(text), None);
+        assert!(!is_permanent_remote_model_bad_request(text));
+    }
+
+    #[test]
+    fn ascii_classification_unchanged() {
+        assert!(is_permanent_remote_model_bad_request(
+            "providerCode=invalid_model status=400"
+        ));
+        assert!(is_permanent_remote_model_bad_request(
+            "PROVIDERCODE=MODEL_NOT_FOUND"
+        ));
+        assert!(is_permanent_remote_model_bad_request(
+            "providerMessage=unknown model requested zvec_grep.trace"
+        ));
+        assert!(!is_permanent_remote_model_bad_request(
+            "providerCode=rate_limited status=429"
+        ));
+        assert!(!is_permanent_remote_model_bad_request("status=503"));
     }
 }

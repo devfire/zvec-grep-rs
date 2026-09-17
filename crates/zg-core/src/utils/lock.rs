@@ -192,7 +192,7 @@ fn acquire_read_lock(lock_path: &Path, options: &LockOptions<'_>) -> EngineResul
             started_at: UnixMillis::now(),
             operation: options.operation.to_owned(),
         };
-        let readers_root = lock_path.with_extension("readers");
+        let readers_root = readers_root(lock_path);
         let reader_dir = readers_root.join(format!("{}-{}", std::process::id(), token));
         fs::create_dir_all(&reader_dir).map_err(|error| {
             EngineError::new(
@@ -224,7 +224,7 @@ fn acquire_read_lock(lock_path: &Path, options: &LockOptions<'_>) -> EngineResul
 }
 
 fn first_active_reader(lock_path: &Path, stale_ms: i64) -> Option<FileLockInfo> {
-    let readers_root = PathBuf::from(format!("{}{READERS_SUFFIX}", lock_path.display()));
+    let readers_root = readers_root(lock_path);
     let entries = fs::read_dir(&readers_root).ok()?;
     let mut earliest: Option<FileLockInfo> = None;
     for entry in entries.flatten() {
@@ -319,6 +319,10 @@ fn dir_mtime_ms(dir: &Path) -> Option<i64> {
             .map(|d| d.as_millis() as i64)
             .unwrap_or_default(),
     )
+}
+
+fn readers_root(lock_path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}{READERS_SUFFIX}", lock_path.display()))
 }
 
 fn write_dir(lock_path: &Path) -> PathBuf {
@@ -487,5 +491,34 @@ mod tests {
         assert!(outcome.is_err());
         drop(guard);
         assert!(assert_no_write_lock(&lock_path, "status").is_ok());
+    }
+
+    #[test]
+    fn dotted_lock_name_shares_single_readers_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let lock_path = dir.path().join("locks").join("files.json.LOCK");
+        // Canonical mapping is plain append; `with_extension` would resolve to
+        // `files.json.readers` instead and split writer/reader views.
+        assert_eq!(
+            readers_root(&lock_path),
+            PathBuf::from(format!("{}.readers", lock_path.display()))
+        );
+        assert_ne!(
+            readers_root(&lock_path),
+            lock_path.with_extension("readers")
+        );
+        let reader =
+            acquire_read_write_lock(&lock_path, LockMode::Read, &LockOptions::new("status"))
+                .expect("reader");
+        let writer =
+            acquire_read_write_lock(&lock_path, LockMode::Write, &LockOptions::new("index"));
+        assert!(
+            writer.is_err(),
+            "writer must observe the reader via the shared readers dir"
+        );
+        drop(reader);
+        let writer =
+            acquire_read_write_lock(&lock_path, LockMode::Write, &LockOptions::new("index"));
+        assert!(writer.is_ok());
     }
 }

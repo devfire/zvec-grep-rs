@@ -2,11 +2,17 @@
 //! `src/authorization/store.ts`.
 //!
 //! Grants live in `<root>/.zvec-grep/authorization.json` (camelCase wire,
-//! 0700 dirs / 0600 files, atomic tmp-rename writes) and are authenticated
-//! with a 32-byte hex signing key (`$ZVEC_GREP_AUTHORIZATION_KEY_FILE`, else
-//! `~/.zvec-grep/authorization-signing.key`). The signature covers the
-//! stable (key-sorted) JSON of the unsigned grant, exactly like TS, so
-//! grants written by either implementation verify in the other.
+//! 0700 dirs / 0600 files, atomic tmp-rename writes). Each workspace root
+//! holds its own 32-byte hex signing key at
+//! `<root>/.zvec-grep/authorization-signing.key` (0600); the global
+//! `~/.zvec-grep/authorization-signing.key` (`$ZVEC_GREP_AUTHORIZATION_KEY_FILE`
+//! override) is kept as a legacy fallback for verification only, so grants
+//! minted before per-workspace keys still verify. New grants are always
+//! signed with the workspace key, which (together with the fingerprints in
+//! every grant) keeps a grant for root A from ever authorizing root B.
+//! Every signature covers the stable (key-sorted) JSON of the unsigned
+//! grant, exactly like TS, so grants written by either implementation verify
+//! in the other.
 //!
 //! Divergence: TS is async (`node:fs/promises`); this store is sync and
 //! reuses [`crate::utils::lock`] plus [`crate::utils::json_io`]. There is no
@@ -18,11 +24,8 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
-use subtle::ConstantTimeEq;
-
 use super::error::AuthError;
+use super::target::canonicalize_workspace_roots;
 use super::types::{
     AuthorizationStatus, GrantStatus, REMOTE_EMBEDDING_CAPABILITY, RemoteEmbeddingDocument,
     RemoteEmbeddingGrant, RemoteEmbeddingScope, RemoteEmbeddingTarget,
@@ -32,11 +35,17 @@ use crate::types::UnixMillis;
 use crate::utils::hash::to_hex;
 use crate::utils::json_io::{SECURE_MODES, write_json_file};
 use crate::utils::lock::{LockMode, LockOptions, acquire_read_write_lock};
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+use subtle::ConstantTimeEq;
 
 /// On-disk document version (wire contract).
 pub const DOCUMENT_VERSION: u32 = 1;
 /// Grant file name inside `<root>/.zvec-grep/`.
 pub const GRANT_FILE: &str = "authorization.json";
+/// Per-workspace signing-key file name inside `<root>/.zvec-grep/`
+/// (0600; parent dirs 0700).
+pub const SIGNING_KEY_FILE: &str = "authorization-signing.key";
 /// Env var overriding the signing-key path.
 pub const SIGNING_KEY_ENV_VAR: &str = "ZVEC_GREP_AUTHORIZATION_KEY_FILE";
 
@@ -131,9 +140,17 @@ fn default_signing_key_path() -> PathBuf {
     home.join(".zvec-grep").join("authorization-signing.key")
 }
 /// HMAC-signed workspace grant store.
+///
+/// In workspace-keys mode ([`Self::new`] without the env override, or
+/// [`Self::with_workspace_keys`]) each workspace root signs with its own key
+/// at `<root>/.zvec-grep/authorization-signing.key`, falling back to the
+/// legacy global key for verification only. With an explicit key path
+/// ([`Self::with_signing_key`], or the env override) that single key signs
+/// and verifies every root.
 #[derive(Debug, Clone)]
 pub struct RemoteEmbeddingAuthorizationStore {
     signing_key_path: PathBuf,
+    per_workspace_keys: bool,
 }
 
 impl Default for RemoteEmbeddingAuthorizationStore {
@@ -143,149 +160,259 @@ impl Default for RemoteEmbeddingAuthorizationStore {
 }
 
 impl RemoteEmbeddingAuthorizationStore {
-    /// Opens the store with the default signing-key path.
+    /// Opens the store with per-workspace signing keys and the default
+    /// legacy-global fallback, unless `$ZVEC_GREP_AUTHORIZATION_KEY_FILE`
+    /// overrides the key path (single-key mode, as before).
     #[must_use]
     pub fn new() -> Self {
+        let overridden =
+            std::env::var_os(SIGNING_KEY_ENV_VAR).is_some_and(|value| !value.is_empty());
         Self {
             signing_key_path: default_signing_key_path(),
+            per_workspace_keys: !overridden,
         }
     }
 
-    /// Opens the store with an explicit signing-key path (tests).
+    /// Opens the store with an explicit single signing-key path (tests).
+    /// Every root signs and verifies with this key.
     #[must_use]
     pub fn with_signing_key(path: PathBuf) -> Self {
         Self {
             signing_key_path: path,
+            per_workspace_keys: false,
         }
     }
 
-    /// Grant file for the target's first workspace root.
+    /// Opens the store with per-workspace signing keys and an explicit
+    /// legacy-global fallback path used for verification only (tests,
+    /// daemon wiring). New grants are always signed with the workspace key.
+    #[must_use]
+    pub fn with_workspace_keys(legacy_signing_key_path: PathBuf) -> Self {
+        Self {
+            signing_key_path: legacy_signing_key_path,
+            per_workspace_keys: true,
+        }
+    }
+
+    /// Grant file for the target's first canonical workspace root.
+    ///
+    /// Canonicalizes like every other method, so the path always names a
+    /// file in the same unified root set `grant` fans out to.
     ///
     /// # Errors
     ///
     /// Returns [`AuthError::InvalidTarget`] when the target has no workspace roots.
     pub fn grant_path(&self, target: &RemoteEmbeddingTarget) -> Result<PathBuf, AuthError> {
-        let Some(root) = target.workspace_roots.first() else {
+        let Some(root) = canonicalize_workspace_roots(&target.workspace_roots)
+            .into_iter()
+            .next()
+        else {
             return Err(AuthError::InvalidTarget {
                 detail: "Remote Embedding target has no workspace roots.".to_owned(),
             });
         };
-        Ok(Path::new(root).join(".zvec-grep").join(GRANT_FILE))
+        Ok(Path::new(&root).join(".zvec-grep").join(GRANT_FILE))
     }
 
-    /// True when a valid signed grant covers the target fingerprint.
+    /// True when every canonical root file holds a valid signed grant for
+    /// the target's workspace and target fingerprints.
+    ///
+    /// All-roots (not first-only): a grant is issued to every root file, so
+    /// clearing any single file deauthorizes the target, and a grant for
+    /// root A can never cover root B.
     ///
     /// # Errors
     ///
-    /// Returns [`AuthError::StoreFailed`] when the signing key or grant file cannot be read, or [`AuthError::InvalidTarget`] when the target has no workspace roots.
+    /// Returns [`AuthError::StoreFailed`] when a signing key or grant file cannot be read, or [`AuthError::InvalidTarget`] when the target has no workspace roots.
     pub fn has_grant(&self, target: &RemoteEmbeddingTarget) -> EngineResult<bool> {
-        let Some(key) = self.read_signing_key()? else {
-            return Ok(false);
-        };
-        let path = self.grant_path(target).map_err(EngineError::from)?;
-        let document = self.read_document(&path)?;
-        Ok(document.grants.iter().any(|grant| {
-            grant.target_fingerprint == target.target_fingerprint.as_str()
-                && self.verify_grant(grant, &key)
-        }))
+        let roots = canonicalize_workspace_roots(&target.workspace_roots);
+        if roots.is_empty() {
+            return Err(EngineError::from(AuthError::InvalidTarget {
+                detail: "Remote Embedding target has no workspace roots.".to_owned(),
+            }));
+        }
+        for root in &roots {
+            // Fail closed without a usable key: no key means no grant can
+            // verify.
+            let keys = self.candidate_keys(root)?;
+            if keys.is_empty() {
+                return Ok(false);
+            }
+            let path = Path::new(root).join(".zvec-grep").join(GRANT_FILE);
+            let document = self.read_document(&path)?;
+            let covered = document.grants.iter().any(|grant| {
+                grant.target_fingerprint == target.target_fingerprint.as_str()
+                    && grant.workspace_fingerprint == target.workspace_fingerprint.as_str()
+                    && keys.iter().any(|key| self.verify_grant(grant, key))
+            });
+            if !covered {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
-    /// Signs and persists a workspace grant for every root of the target,
-    /// replacing any grant with the same target fingerprint.
+    /// Signs and persists a workspace grant for every canonical root of the
+    /// target, replacing any grant with the same target fingerprint.
+    ///
+    /// Each root file's copy is signed with that root's own workspace key
+    /// (single-key mode signs every copy with the shared key), so a copied
+    /// grant file never verifies elsewhere. Returns the grant written to
+    /// the last canonical root.
     ///
     /// # Errors
     ///
-    /// Returns [`AuthError::StoreFailed`] when the signing key cannot be created or a grant file cannot be written, or [`AuthError::InvalidTarget`] when the signing key is rejected.
+    /// Returns [`AuthError::StoreFailed`] when a signing key cannot be created or a grant file cannot be written, or [`AuthError::InvalidTarget`] when the target has no workspace roots or the signing key is rejected.
     pub fn grant(&self, target: &RemoteEmbeddingTarget) -> EngineResult<RemoteEmbeddingGrant> {
-        let key = self.get_or_create_signing_key()?;
-        let unsigned = RemoteEmbeddingGrant {
-            version: DOCUMENT_VERSION,
-            id: uuid::Uuid::new_v4().to_string(),
-            capability: REMOTE_EMBEDDING_CAPABILITY.to_owned(),
-            scope: RemoteEmbeddingScope::Workspace,
-            workspace_roots: target.workspace_roots.clone(),
-            workspace_fingerprint: target.workspace_fingerprint.to_string(),
-            provider: target.provider.clone(),
-            model: target.model.clone(),
-            endpoint: target.endpoint.clone(),
-            target_fingerprint: target.target_fingerprint.to_string(),
-            granted_at: UnixMillis::now().as_millis(),
-            signature: String::new(),
-        };
-        let signature = sign(&unsigned_grant(&unsigned), &key).map_err(EngineError::from)?;
-        let grant = RemoteEmbeddingGrant {
-            signature,
-            ..unsigned
-        };
-        for root in &target.workspace_roots {
+        let roots = canonicalize_workspace_roots(&target.workspace_roots);
+        if roots.is_empty() {
+            return Err(EngineError::from(AuthError::InvalidTarget {
+                detail: "Remote Embedding target has no workspace roots.".to_owned(),
+            }));
+        }
+        let mut issued: Option<RemoteEmbeddingGrant> = None;
+        for root in &roots {
+            let key = self.get_or_create_key_for_root(root)?;
+            let unsigned = RemoteEmbeddingGrant {
+                version: DOCUMENT_VERSION,
+                id: uuid::Uuid::new_v4().to_string(),
+                capability: REMOTE_EMBEDDING_CAPABILITY.to_owned(),
+                scope: RemoteEmbeddingScope::Workspace,
+                workspace_roots: roots.clone(),
+                workspace_fingerprint: target.workspace_fingerprint.to_string(),
+                provider: target.provider.clone(),
+                model: target.model.clone(),
+                endpoint: target.endpoint.clone(),
+                target_fingerprint: target.target_fingerprint.to_string(),
+                granted_at: UnixMillis::now().as_millis(),
+                signature: String::new(),
+            };
+            let signature = sign(&unsigned_grant(&unsigned), &key).map_err(EngineError::from)?;
+            let grant = RemoteEmbeddingGrant {
+                signature,
+                ..unsigned
+            };
             let path = Path::new(root).join(".zvec-grep").join(GRANT_FILE);
-            let grant = grant.clone();
+            let stored = grant.clone();
             self.with_document_write(&path, |document| {
                 document
                     .grants
-                    .retain(|candidate| candidate.target_fingerprint != grant.target_fingerprint);
-                document.grants.push(grant.clone());
+                    .retain(|candidate| candidate.target_fingerprint != stored.target_fingerprint);
+                document.grants.push(stored.clone());
+                true
             })?;
+            issued = Some(grant);
         }
+        let Some(grant) = issued else {
+            return Err(EngineError::from(AuthError::InvalidTarget {
+                detail: "Remote Embedding target has no workspace roots.".to_owned(),
+            }));
+        };
         Ok(grant)
     }
 
-    /// Removes the target's grant from every root file; true when any was
-    /// removed.
+    /// Removes the target's grant from every canonical root file; true when
+    /// any was removed.
+    ///
+    /// Writes stay inside the target's own canonical root set, and files
+    /// that need no change are left untouched (missing roots resolve
+    /// lexically and simply find no document, so nothing is created and
+    /// nothing panics).
     ///
     /// # Errors
     ///
     /// Returns [`AuthError::StoreFailed`] when a grant file cannot be read or written, or `LOCK.BUSY` when another writer holds the lock.
     pub fn revoke(&self, target: &RemoteEmbeddingTarget) -> EngineResult<bool> {
+        let roots = canonicalize_workspace_roots(&target.workspace_roots);
         let mut revoked = false;
-        for root in &target.workspace_roots {
+        for root in &roots {
+            // Skip non-existent roots before locking: no grant file can
+            // exist without its root dir, and the locked path would
+            // otherwise create lock directories for typo'd paths. A root
+            // created concurrently just reports `false` here; authorization
+            // itself still fails closed on the next live check.
+            if !Path::new(root).is_dir() {
+                continue;
+            }
             let path = Path::new(root).join(".zvec-grep").join(GRANT_FILE);
-            let fingerprint = target.target_fingerprint.as_str().to_owned();
-            self.with_document_write(&path, |document| {
+            let changed = self.with_document_write(&path, |document| {
                 let before = document.grants.len();
                 document
                     .grants
-                    .retain(|grant| grant.target_fingerprint != fingerprint);
-                if document.grants.len() != before {
-                    revoked = true;
-                }
+                    .retain(|grant| grant.target_fingerprint != target.target_fingerprint.as_str());
+                document.grants.len() != before
             })?;
+            revoked = revoked || changed;
         }
         Ok(revoked)
     }
 
-    /// Clears the root's grant file plus the same grants from sibling root
-    /// files; returns the cleared file's grant count.
+    /// Clears the requested root's grant file plus the same grants from
+    /// sibling root files inside the requested workspace boundary; returns
+    /// the cleared file's grant count.
+    ///
+    /// Sibling roots come from grant data, so each one is canonicalized and
+    /// confined to the requested boundary (the root itself or a path nested
+    /// under it): anything outside is skipped, and crafted grant data can
+    /// never pull writes elsewhere. Missing paths resolve lexically and
+    /// change nothing, so non-existent roots return `0` without creating
+    /// files or panicking.
     ///
     /// # Errors
     ///
-    /// Returns [`AuthError::StoreFailed`] when the signing key or a grant file cannot be read or written, or `LOCK.BUSY` when another writer holds the lock.
+    /// Returns [`AuthError::StoreFailed`] when a signing key or a grant file cannot be read or written, or `LOCK.BUSY` when another writer holds the lock.
     pub fn revoke_all(&self, root: &str) -> EngineResult<usize> {
-        let path = Path::new(root).join(".zvec-grep").join(GRANT_FILE);
-        let key = self.read_signing_key()?;
+        let Some(boundary) = canonicalize_workspace_roots(&[root.to_owned()])
+            .into_iter()
+            .next()
+        else {
+            return Ok(0);
+        };
+        // Missing roots hold no grants: return before locking so no lock
+        // directories are created for non-existent paths.
+        if !Path::new(&boundary).is_dir() {
+            return Ok(0);
+        }
+        let path = Path::new(&boundary).join(".zvec-grep").join(GRANT_FILE);
+        let keys = self.candidate_keys(&boundary)?;
         let mut revoked = 0usize;
         let mut valid: Vec<RemoteEmbeddingGrant> = Vec::new();
         self.with_document_write(&path, |document| {
             revoked = document.grants.len();
             if revoked == 0 {
-                return;
+                return false;
             }
-            if let Some(key) = &key {
+            if !keys.is_empty() {
                 valid = document
                     .grants
                     .iter()
-                    .filter(|grant| self.verify_grant(grant, key))
+                    .filter(|grant| keys.iter().any(|key| self.verify_grant(grant, key)))
                     .cloned()
                     .collect();
             }
             document.grants.clear();
+            true
         })?;
         let mut siblings: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
         for grant in &valid {
             for workspace_root in &grant.workspace_roots {
-                let sibling = Path::new(workspace_root)
-                    .join(".zvec-grep")
-                    .join(GRANT_FILE);
+                let Some(canonical) =
+                    canonicalize_workspace_roots(std::slice::from_ref(workspace_root))
+                        .into_iter()
+                        .next()
+                else {
+                    continue;
+                };
+                if canonical != boundary && !within_workspace_boundary(&canonical, &boundary) {
+                    continue;
+                }
+                // Skip non-existent siblings before locking: no file can
+                // exist without its root dir, and locking would otherwise
+                // create lock directories outside the requested workspace.
+                if !Path::new(&canonical).is_dir() {
+                    continue;
+                }
+                let sibling = Path::new(&canonical).join(".zvec-grep").join(GRANT_FILE);
                 if sibling == path {
                     continue;
                 }
@@ -297,9 +424,11 @@ impl RemoteEmbeddingAuthorizationStore {
         }
         for (sibling, fingerprints) in &siblings {
             self.with_document_write(sibling, |document| {
+                let before = document.grants.len();
                 document
                     .grants
                     .retain(|grant| !fingerprints.contains(&grant.target_fingerprint));
+                document.grants.len() != before
             })?;
         }
         Ok(revoked)
@@ -311,9 +440,15 @@ impl RemoteEmbeddingAuthorizationStore {
     ///
     /// Returns [`AuthError::StoreFailed`] when the grant file or signing key cannot be read.
     pub fn status(&self, root: &str) -> EngineResult<AuthorizationStatus> {
-        let path = Path::new(root).join(".zvec-grep").join(GRANT_FILE);
+        // Same canonical root set every other method operates on, so the
+        // reported file is the one `grant` wrote even for symlinked roots.
+        let canonical = canonicalize_workspace_roots(&[root.to_owned()])
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| root.to_owned());
+        let path = Path::new(&canonical).join(".zvec-grep").join(GRANT_FILE);
         let document = self.read_document(&path)?;
-        let key = self.read_signing_key()?;
+        let keys = self.candidate_keys(&canonical)?;
         let grants = document
             .grants
             .iter()
@@ -329,9 +464,7 @@ impl RemoteEmbeddingAuthorizationStore {
                 endpoint: grant.endpoint.clone(),
                 target_fingerprint: grant.target_fingerprint.clone(),
                 granted_at: grant.granted_at,
-                valid: key
-                    .as_ref()
-                    .is_some_and(|key| self.verify_grant(grant, key)),
+                valid: !keys.is_empty() && keys.iter().any(|key| self.verify_grant(grant, key)),
             })
             .collect();
         Ok(AuthorizationStatus { path, grants })
@@ -368,11 +501,15 @@ impl RemoteEmbeddingAuthorizationStore {
         })
     }
 
+    /// Reads the document under the write lock, applies `update`, and writes
+    /// back only when it reports a change; returns whether the file was
+    /// written. Skipping no-op writes keeps revokes over missing roots from
+    /// creating directories or files.
     fn with_document_write(
         &self,
         path: &Path,
-        update: impl FnOnce(&mut RemoteEmbeddingDocument),
-    ) -> EngineResult<()> {
+        update: impl FnOnce(&mut RemoteEmbeddingDocument) -> bool,
+    ) -> EngineResult<bool> {
         let lock_path = path
             .parent()
             .map(|parent| parent.join("authorization-store"))
@@ -383,10 +520,12 @@ impl RemoteEmbeddingAuthorizationStore {
             &LockOptions::new("remote-embedding-authorization"),
         )?;
         let mut document = self.read_document(path)?;
-        update(&mut document);
-        write_json_file(path, &document, SECURE_MODES)
+        if !update(&mut document) {
+            return Ok(false);
+        }
+        write_json_file(path, &document, SECURE_MODES)?;
+        Ok(true)
     }
-
     fn verify_grant(&self, grant: &RemoteEmbeddingGrant, key: &[u8]) -> bool {
         let Ok(expected) = sign(&unsigned_grant(grant), key) else {
             return false;
@@ -405,8 +544,10 @@ impl RemoteEmbeddingAuthorizationStore {
         actual.ct_eq(&expected).into()
     }
 
-    fn read_signing_key(&self) -> EngineResult<Option<Vec<u8>>> {
-        match fs::read_to_string(&self.signing_key_path) {
+    /// Reads one key file: hex body, `None` when missing, blank, or
+    /// non-hex. Never panics on absent paths; only surfaces IO errors.
+    fn read_key_file(path: &Path) -> EngineResult<Option<Vec<u8>>> {
+        match fs::read_to_string(path) {
             Ok(text) => {
                 let trimmed = text.trim();
                 Ok(if trimmed.is_empty() {
@@ -418,16 +559,65 @@ impl RemoteEmbeddingAuthorizationStore {
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => Err(EngineError::from(AuthError::StoreFailed {
                 operation: "read".to_owned(),
-                detail: format!("path={} error={error}", self.signing_key_path.display()),
+                detail: format!("path={} error={error}", path.display()),
             })),
         }
     }
 
+    /// Signing-key file inside one workspace root.
+    fn workspace_key_path(root: &str) -> PathBuf {
+        Path::new(root).join(".zvec-grep").join(SIGNING_KEY_FILE)
+    }
+
+    /// Candidate key paths for `root`, workspace key first and the legacy
+    /// global second (single-key mode uses the shared path only).
+    fn candidate_key_paths(&self, root: &str) -> Vec<PathBuf> {
+        if !self.per_workspace_keys {
+            return vec![self.signing_key_path.clone()];
+        }
+        let workspace = Self::workspace_key_path(root);
+        if workspace == self.signing_key_path {
+            vec![workspace]
+        } else {
+            vec![workspace, self.signing_key_path.clone()]
+        }
+    }
+
+    /// Usable keys for `root`: the workspace key when present, else the
+    /// legacy global fallback. Empty when no key file exists, so callers
+    /// fail closed.
+    fn candidate_keys(&self, root: &str) -> EngineResult<Vec<Vec<u8>>> {
+        let mut keys = Vec::with_capacity(2);
+        for path in self.candidate_key_paths(root) {
+            if let Some(key) = Self::read_key_file(&path)? {
+                keys.push(key);
+            }
+        }
+        Ok(keys)
+    }
+
+    /// Key new grants for `root` are signed with: the workspace key in
+    /// workspace-keys mode (created on demand, 0600), the shared key
+    /// otherwise.
+    fn get_or_create_key_for_root(&self, root: &str) -> EngineResult<Vec<u8>> {
+        if self.per_workspace_keys {
+            Self::get_or_create_key_file(&Self::workspace_key_path(root))
+        } else {
+            self.get_or_create_signing_key()
+        }
+    }
+
     fn get_or_create_signing_key(&self) -> EngineResult<Vec<u8>> {
-        if let Some(key) = self.read_signing_key()? {
+        Self::get_or_create_key_file(&self.signing_key_path)
+    }
+
+    /// Reads the key at `path`, creating a fresh 32-byte hex key (0700 dirs,
+    /// 0600 file, create-new so concurrent creators race safely) when absent.
+    fn get_or_create_key_file(path: &Path) -> EngineResult<Vec<u8>> {
+        if let Some(key) = Self::read_key_file(path)? {
             return Ok(key);
         }
-        if let Some(parent) = self.signing_key_path.parent() {
+        if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
                 EngineError::from(AuthError::StoreFailed {
                     operation: "create_dir".to_owned(),
@@ -445,7 +635,7 @@ impl RemoteEmbeddingAuthorizationStore {
         let created = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&self.signing_key_path);
+            .open(path);
         match created {
             Ok(mut file) => {
                 use std::io::Write;
@@ -453,10 +643,7 @@ impl RemoteEmbeddingAuthorizationStore {
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
-                        let _ = fs::set_permissions(
-                            &self.signing_key_path,
-                            fs::Permissions::from_mode(0o600),
-                        );
+                        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
                     }
                     return Ok(key.to_vec());
                 }
@@ -465,22 +652,38 @@ impl RemoteEmbeddingAuthorizationStore {
             Err(error) => {
                 return Err(EngineError::from(AuthError::StoreFailed {
                     operation: "write".to_owned(),
-                    detail: format!("path={} error={error}", self.signing_key_path.display()),
+                    detail: format!("path={} error={error}", path.display()),
                 }));
             }
         }
         // Lost the create race (or the first write failed): whoever won owns
         // the key now.
-        self.read_signing_key()?.ok_or_else(|| {
+        Self::read_key_file(path)?.ok_or_else(|| {
             EngineError::from(AuthError::StoreFailed {
                 operation: "read".to_owned(),
                 detail: format!(
                     "path={} error=key missing after create race",
-                    self.signing_key_path.display()
+                    path.display()
                 ),
             })
         })
     }
+}
+
+/// True when the already-canonical `candidate` root is the `boundary` root
+/// itself or nested beneath it (`/repo` contains `/repo/sub`, never
+/// `/repo-other`). Both inputs must be canonicalized first so `..`,
+/// symlinks-as-text, and separator tricks cannot smuggle a path inside.
+fn within_workspace_boundary(candidate: &str, boundary: &str) -> bool {
+    if candidate == boundary {
+        return true;
+    }
+    if boundary == "/" {
+        return candidate.starts_with('/');
+    }
+    candidate
+        .strip_prefix(boundary)
+        .is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// Mirrors TS `isAuthorizationDocument`: version 1 plus all-valid grants.
@@ -547,7 +750,17 @@ fn is_workspace_grant(value: &serde_json::Value) -> bool {
 #[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
-    use crate::authorization::target::create_remote_embedding_target;
+    use crate::authorization::target::{
+        canonicalize_workspace_roots, create_remote_embedding_target,
+    };
+
+    /// Canonical on-disk root: grant and key files live under the
+    /// canonicalized path, so file assertions must join from there rather
+    /// than the raw (possibly symlinked) input.
+    fn canonical_path(root: &Path) -> PathBuf {
+        let roots = canonicalize_workspace_roots(&[root.to_string_lossy().into_owned()]);
+        PathBuf::from(roots.into_iter().next().expect("canonical root"))
+    }
 
     fn store_in(dir: &Path) -> RemoteEmbeddingAuthorizationStore {
         RemoteEmbeddingAuthorizationStore::with_signing_key(dir.join("signing.key"))
@@ -613,7 +826,9 @@ mod tests {
         fs::write(&status.path, tampered).expect("tamper");
         assert!(!store.has_grant(&target).expect("has_grant after tamper"));
 
-        // Re-grant, then revoke-all from the sibling root clears both files.
+        // Re-grant, then revoke-all from the sibling root clears only that
+        // file: the disjoint sibling copy survives on disk but no longer
+        // authorizes, because every canonical root must hold a valid grant.
         store.grant(&target).expect("re-grant");
         assert_eq!(
             store
@@ -621,10 +836,15 @@ mod tests {
                 .expect("revoke_all"),
             1
         );
+        let status_a = store.status(&root_a.to_string_lossy()).expect("status a");
+        assert_eq!(status_a.grants.len(), 1);
+        assert!(!store.has_grant(&target).expect("has_grant after revoke"));
+        // Revoking the target clears the stale sibling copy; afterwards
+        // there is nothing left to revoke.
+        assert!(store.revoke(&target).expect("revoke stale"));
         assert!(!store.has_grant(&target).expect("has_grant after revoke"));
         assert!(!store.revoke(&target).expect("revoke missing"));
     }
-
     #[test]
     fn truncated_signature_is_invalid() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -633,10 +853,11 @@ mod tests {
         let store = store_in(dir.path());
         let target = target_for(&root);
         let grant = store.grant(&target).expect("grant");
-        let key = store
-            .read_signing_key()
-            .expect("read key")
-            .expect("key present");
+        let keys = store
+            .candidate_keys(&root.to_string_lossy())
+            .expect("read keys");
+        assert_eq!(keys.len(), 1);
+        let key = keys.into_iter().next().expect("key present");
         assert!(store.verify_grant(&grant, &key));
         // Length mismatch fails before content comparison.
         let mut short = grant.clone();
@@ -660,5 +881,105 @@ mod tests {
                 .expect("revoke_all"),
             0
         );
+    }
+
+    #[test]
+    fn workspace_keys_reject_cross_workspace_replay() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root_a = dir.path().join("a");
+        let root_b = dir.path().join("b");
+        fs::create_dir_all(&root_a).expect("mkdir a");
+        fs::create_dir_all(&root_b).expect("mkdir b");
+        // Legacy fallback points nowhere, so only workspace keys verify.
+        let store =
+            RemoteEmbeddingAuthorizationStore::with_workspace_keys(dir.path().join("legacy.key"));
+        let target_a = target_for(&root_a);
+        store.grant(&target_a).expect("grant a");
+        assert!(store.has_grant(&target_a).expect("has_grant a"));
+        // Each workspace mints its own key file.
+        let canonical_a = canonical_path(&root_a);
+        let canonical_b = canonical_path(&root_b);
+        let key_a = canonical_a.join(".zvec-grep").join(SIGNING_KEY_FILE);
+        assert!(key_a.is_file());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&key_a)
+                .expect("key metadata")
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        // Replaying A's grant file into B verifies under neither B's
+        // workspace key nor the (absent) legacy key.
+        let file_a = canonical_a.join(".zvec-grep").join(GRANT_FILE);
+        let file_b = canonical_b.join(".zvec-grep").join(GRANT_FILE);
+        if let Some(parent) = file_b.parent() {
+            fs::create_dir_all(parent).expect("mkdir b authz");
+        }
+        fs::copy(&file_a, &file_b).expect("replay grant file");
+        let status_b = store.status(&root_b.to_string_lossy()).expect("status b");
+        assert_eq!(status_b.grants.len(), 1);
+        assert!(!status_b.grants[0].valid);
+        assert!(!store.has_grant(&target_for(&root_b)).expect("has_grant b"));
+    }
+
+    #[test]
+    fn revoke_all_confines_sibling_fanout_to_boundary() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root_a = dir.path().join("a");
+        let nested = root_a.join("sub");
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(&nested).expect("mkdir nested");
+        fs::create_dir_all(&outside).expect("mkdir outside");
+        let store = store_in(dir.path());
+        // One target spanning the boundary root, a nested root, and a
+        // disjoint root: grant fans out to all three files.
+        let target = create_remote_embedding_target(
+            &[
+                root_a.to_string_lossy().into_owned(),
+                nested.to_string_lossy().into_owned(),
+                outside.to_string_lossy().into_owned(),
+            ],
+            "qwen",
+            "text-embedding-v4",
+            "https://example.invalid/embeddings",
+        )
+        .expect("target");
+        store.grant(&target).expect("grant");
+        assert_eq!(
+            store
+                .revoke_all(&root_a.to_string_lossy())
+                .expect("revoke_all"),
+            1
+        );
+        // Nested sibling inside the boundary is cleaned; the disjoint
+        // sibling outside it is skipped and keeps its grant.
+        let nested_status = store
+            .status(&nested.to_string_lossy())
+            .expect("nested status");
+        assert!(nested_status.grants.is_empty());
+        let outside_status = store
+            .status(&outside.to_string_lossy())
+            .expect("outside status");
+        assert_eq!(outside_status.grants.len(), 1);
+        // Clearing the boundary root still deauthorizes the whole target.
+        assert!(!store.has_grant(&target).expect("has_grant after revoke"));
+    }
+
+    #[test]
+    fn revoke_all_on_missing_root_returns_zero_without_creating_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = store_in(dir.path());
+        let missing = dir.path().join("does-not-exist");
+        assert_eq!(
+            store
+                .revoke_all(&missing.to_string_lossy())
+                .expect("revoke_all missing"),
+            0
+        );
+        assert!(!missing.exists());
+        assert!(!store.revoke(&target_for(&missing)).expect("revoke missing"));
+        assert!(!missing.exists());
     }
 }

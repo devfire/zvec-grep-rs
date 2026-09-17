@@ -498,29 +498,82 @@ fn read_text_file(path: &Path) -> Result<String, CliError> {
 }
 
 fn write_json_file(path: &Path, value: &serde_json::Value) -> Result<(), CliError> {
-    let text = format!(
-        "{}\n",
-        serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".to_owned())
-    );
-    write_text_file(path, &text)
+    // Delegate to the hardened atomic writer: unique tmp + `create_new` +
+    // fsync + rename + dir fsync. Parent-directory modes are left alone
+    // (these are user config dirs, not owned `0700` roots); the file itself
+    // stays `0600` on Unix.
+    zg_core::utils::json_io::write_json_file(
+        path,
+        value,
+        zg_core::utils::json_io::WriteModes {
+            directory_mode: None,
+            file_mode: Some(0o600),
+        },
+    )?;
+    Ok(())
 }
 
-/// Atomic write via tmp file + rename, `0600` on Unix.
+/// Process-wide counter disambiguating same-nanosecond tmp names.
+static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Unique tmp sibling for atomic writes (pid + nanos + counter), so
+/// concurrent installs never share a fixed `.tmp` name. This crate has no
+/// `uuid` dependency; the counter disambiguates same-nanosecond writes
+/// from threads of one process while the pid disambiguates processes.
+fn unique_tmp_path(path: &Path) -> PathBuf {
+    let count = TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    path.with_extension(format!("{}.{}.{}.tmp", std::process::id(), nanos, count))
+}
+
+/// Persists the parent directory entry so a just-completed rename survives
+/// a crash.
+fn sync_parent_dir(path: &Path) -> Result<(), CliError> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let handle = std::fs::File::open(parent).map_err(|error| CliError::io(path, error))?;
+    handle.sync_all().map_err(|error| CliError::io(path, error))
+}
+
+/// Atomic write via unique tmp file + `create_new` + fsync + rename on all
+/// platforms, `0600` on Unix. A crash mid-write never leaves a truncated
+/// destination.
 fn write_text_file(path: &Path, text: &str) -> Result<(), CliError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| CliError::io(path, error))?;
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, text).map_err(|error| CliError::io(path, error))?;
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+    let tmp = unique_tmp_path(path);
+    let write_result = (|| -> Result<(), CliError> {
+        // `create_new` never truncates a pre-existing file: a tmp-name
+        // collision surfaces as an error instead of silent corruption.
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .map_err(|error| CliError::io(path, error))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
+                .map_err(|error| CliError::io(path, error))?;
+        }
+        std::io::Write::write_all(&mut file, text.as_bytes())
+            .map_err(|error| CliError::io(path, error))?;
+        std::io::Write::flush(&mut file).map_err(|error| CliError::io(path, error))?;
+        file.sync_all().map_err(|error| CliError::io(path, error))?;
+        drop(file);
         std::fs::rename(&tmp, path).map_err(|error| CliError::io(path, error))?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, text).map_err(|error| CliError::io(path, error))?;
+        sync_parent_dir(path)?;
+        Ok(())
+    })();
+    if let Err(error) = write_result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
     }
     Ok(())
 }

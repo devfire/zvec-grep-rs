@@ -14,7 +14,7 @@ use crate::errors::DaemonError;
 use crate::logger::LogField;
 use crate::sync::MutexExt;
 
-use super::edge::{on_progress_clone, safe_report};
+use super::edge::{fields, on_progress_clone, safe_report};
 use super::id::JobId;
 use super::snapshot::{
     DEFAULT_MAX_ATTEMPTS, DEFAULT_RETRY_BASE_DELAY_MS, DEFAULT_SCHEDULER_CONCURRENCY,
@@ -30,6 +30,11 @@ use zg_core::pipeline::indexing::IndexProgressSink;
 pub struct JobScheduler {
     pub(crate) shared: Arc<Shared>,
 }
+
+/// Grace period `close()` grants in-flight bodies to observe cancellation
+/// before it logs the stuck job ids and returns. A body that ignores
+/// cancellation must not hang shutdown forever.
+const CLOSE_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl JobScheduler {
     /// Empty scheduler with the given options.
@@ -60,6 +65,7 @@ impl JobScheduler {
     ///
     /// Returns [`DaemonError::ShuttingDown`] when the scheduler is closed.
     pub fn submit(&self, input: SubmitIndexJob) -> Result<SubmitIndexJobResult, DaemonError> {
+        let root = input.canonical_root.clone();
         let mut state = self.shared.state.lock_ignore_poison();
         if state.closed {
             return Err(DaemonError::ShuttingDown);
@@ -70,6 +76,7 @@ impl JobScheduler {
                 || snapshot_missing(&reused),
                 super::state::JobRecord::snapshot,
             );
+            Self::evict_completed_for_root(&mut state, &root);
             return Ok(SubmitIndexJobResult {
                 job: snapshot,
                 reused: true,
@@ -80,6 +87,7 @@ impl JobScheduler {
             .jobs
             .get(&id)
             .map_or_else(|| snapshot_missing(&id), super::state::JobRecord::snapshot);
+        Self::evict_completed_for_root(&mut state, &root);
         drop(state);
         self.pump();
         Ok(SubmitIndexJobResult {
@@ -207,6 +215,10 @@ impl JobScheduler {
     /// Cancels everything, clears the queue, and awaits in-flight work —
     /// including `spawn_blocking` bodies, which cannot be aborted and must
     /// be awaited rather than orphaned.
+    ///
+    /// The wait is bounded by [`CLOSE_GRACE_PERIOD`]: a body that ignores
+    /// cancellation is logged with its stuck job ids and left to finish on
+    /// its own instead of hanging shutdown forever.
     pub async fn close(&self) {
         {
             let mut state = self.shared.state.lock_ignore_poison();
@@ -230,12 +242,67 @@ impl JobScheduler {
                 "indexing was cancelled because the daemon is shutting down",
             );
         }
+        let deadline = tokio::time::Instant::now() + CLOSE_GRACE_PERIOD;
         loop {
             let running = self.shared.state.lock_ignore_poison().running;
             if running == 0 {
                 return;
             }
+            if tokio::time::Instant::now() >= deadline {
+                let (stuck, running) = {
+                    let state = self.shared.state.lock_ignore_poison();
+                    let stuck: Vec<String> = state
+                        .jobs
+                        .values()
+                        .filter(|job| {
+                            !matches!(
+                                job.state,
+                                IndexJobState::Succeeded
+                                    | IndexJobState::Failed
+                                    | IndexJobState::Cancelled
+                            )
+                        })
+                        .map(|job| job.id.to_string())
+                        .collect();
+                    (stuck, state.running)
+                };
+                self.log(
+                    "scheduler.close.timeout",
+                    fields([
+                        ("job_ids", LogField::from(stuck.join(", "))),
+                        ("running", LogField::from(running)),
+                    ]),
+                );
+                return;
+            }
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+
+    /// Drops terminal records for `root` that are neither the active job
+    /// nor the latest snapshot, so completed jobs (watch senders,
+    /// listeners, run closures) cannot accumulate one entry per submission
+    /// forever. Queued and running jobs are never touched.
+    fn evict_completed_for_root(state: &mut Inner, root: &str) {
+        let active = state.active_by_root.get(root).cloned();
+        let latest = state.latest_by_root.get(root).cloned();
+        let doomed: Vec<JobId> = state
+            .jobs
+            .values()
+            .filter(|job| {
+                job.canonical_root.as_str() == root
+                    && matches!(
+                        job.state,
+                        IndexJobState::Succeeded | IndexJobState::Failed | IndexJobState::Cancelled
+                    )
+                    && !active.as_ref().is_some_and(|id| *id == job.id)
+                    && !latest.as_ref().is_some_and(|id| *id == job.id)
+            })
+            .map(|job| job.id.clone())
+            .collect();
+        for id in &doomed {
+            state.jobs.remove(id);
+            state.queue.retain(|queued| queued != id);
         }
     }
 

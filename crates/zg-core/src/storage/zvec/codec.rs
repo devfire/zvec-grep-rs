@@ -114,7 +114,7 @@ pub fn fragment_to_doc(
 ///
 /// Returns `STORAGE.DOC_DECODE_FAILED` when the primary key, a required field, or the range or
 /// image payload is missing or invalid, or `STORAGE.UNSUPPORTED_STORED_CONTENT_KIND` for unknown
-/// content kinds or image formats.
+/// content kinds, image formats, metadata kinds, or code modifiers.
 pub fn doc_to_stored_fragment(
     doc: &Doc,
     files_by_id: &HashMap<String, FileRecord>,
@@ -357,10 +357,11 @@ fn parse_metadata(doc: &Doc, pk: &str) -> EngineResult<Option<EntityMetadata>> {
                     doc: optional_string_field(doc, "symbol_doc", pk)?
                         .filter(|value| !value.is_empty()),
                     modifiers: parse_modifiers(
+                        pk,
                         optional_string_field(doc, "symbol_modifiers", pk)?
                             .as_deref()
                             .unwrap_or_default(),
-                    ),
+                    )?,
                 },
             )))
         }
@@ -373,22 +374,30 @@ fn parse_metadata(doc: &Doc, pk: &str) -> EngineResult<Option<EntityMetadata>> {
                     .filter(|value| !value.is_empty()),
             },
         ))),
-        _ => Ok(None),
+        _ => Err(EngineError::new(
+            EngineErrorCode::StorageUnsupportedStoredContentKind,
+            "stored entity has unsupported metadata kind",
+        )
+        .with_context(format!("fragmentId={pk} metadataKind={kind}"))),
     }
 }
 
-fn parse_modifiers(value: &str) -> Vec<CodeEntityModifier> {
+fn parse_modifiers(pk: &str, value: &str) -> EngineResult<Vec<CodeEntityModifier>> {
     value
         .split_ascii_whitespace()
-        .filter_map(|token| match token {
-            "exported" => Some(CodeEntityModifier::Exported),
-            "async" => Some(CodeEntityModifier::Async),
-            "static" => Some(CodeEntityModifier::Static),
-            "public" => Some(CodeEntityModifier::Public),
-            "private" => Some(CodeEntityModifier::Private),
-            "protected" => Some(CodeEntityModifier::Protected),
-            "internal" => Some(CodeEntityModifier::Internal),
-            _ => None,
+        .map(|token| match token {
+            "exported" => Ok(CodeEntityModifier::Exported),
+            "async" => Ok(CodeEntityModifier::Async),
+            "static" => Ok(CodeEntityModifier::Static),
+            "public" => Ok(CodeEntityModifier::Public),
+            "private" => Ok(CodeEntityModifier::Private),
+            "protected" => Ok(CodeEntityModifier::Protected),
+            "internal" => Ok(CodeEntityModifier::Internal),
+            _ => Err(EngineError::new(
+                EngineErrorCode::StorageUnsupportedStoredContentKind,
+                "stored entity has unsupported code modifier",
+            )
+            .with_context(format!("fragmentId={pk} modifier={token}"))),
         })
         .collect()
 }
@@ -617,11 +626,21 @@ mod tests {
     }
 
     #[test]
-    fn modifiers_drop_unknown_tokens() {
+    fn modifiers_reject_unknown_tokens() {
         assert_eq!(
-            parse_modifiers("exported bogus async"),
+            parse_modifiers("pk", "exported async").expect("known modifiers decode"),
             vec![CodeEntityModifier::Exported, CodeEntityModifier::Async]
         );
-        assert!(parse_modifiers("").is_empty());
+        assert!(
+            parse_modifiers("pk", "")
+                .expect("empty modifiers decode")
+                .is_empty()
+        );
+        let error = parse_modifiers("pk", "exported bogus async")
+            .expect_err("unknown modifier fails closed");
+        assert_eq!(
+            *error.code(),
+            EngineErrorCode::StorageUnsupportedStoredContentKind
+        );
     }
 }

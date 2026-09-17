@@ -83,7 +83,6 @@ pub struct EmbeddingInfo {
 }
 
 /// Options accepted by [`crate::service::facade::ZvecGrepService::context`].
-#[derive(Default)]
 pub struct ZvecGrepContextOptions<'a> {
     pub root: Option<&'a std::path::Path>,
     /// Primary natural-language query.
@@ -116,6 +115,36 @@ pub struct ZvecGrepContextOptions<'a> {
     /// Refresh a stale index before searching (default true).
     pub auto_update: bool,
     pub signal: Option<AbortCheck>,
+}
+
+impl<'a> Default for ZvecGrepContextOptions<'a> {
+    fn default() -> Self {
+        Self {
+            root: None,
+            query: None,
+            queries: Vec::new(),
+            routes: Vec::new(),
+            fts: Vec::new(),
+            vector: Vec::new(),
+            fuse: false,
+            limit: None,
+            trace: false,
+            track_entity_id: None,
+            prefer_symbol: false,
+            symbol_types: Vec::new(),
+            include_paths: Vec::new(),
+            exclude_paths: Vec::new(),
+            globs: Vec::new(),
+            insensitive_globs: Vec::new(),
+            file_types: Vec::new(),
+            excluded_file_types: Vec::new(),
+            modified_after: None,
+            modified_before: None,
+            rg: None,
+            auto_update: true,
+            signal: None,
+        }
+    }
 }
 
 impl ZvecGrepContextOptions<'_> {
@@ -350,5 +379,10 @@ mod tests {
     fn options_are_send() {
         assert_send::<ZvecGrepIndexOptions<'static>>();
         assert_send::<ZvecGrepContextOptions<'static>>();
+    }
+
+    #[test]
+    fn context_options_default_enables_auto_update() {
+        assert!(ZvecGrepContextOptions::default().wants_auto_update());
     }
 }

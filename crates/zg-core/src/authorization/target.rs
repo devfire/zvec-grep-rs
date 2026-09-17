@@ -10,8 +10,11 @@ use std::path::{Path, PathBuf};
 
 use crate::utils::hash::sha256_text;
 
-use super::error::AuthError;
-use super::types::{RemoteEmbeddingTarget, TargetFingerprint, WorkspaceFingerprint};
+use super::error::{AuthError, RemoteEmbeddingPurpose};
+use super::types::{
+    ContentKind, RemoteEmbeddingRequest, RemoteEmbeddingTarget, TargetFingerprint,
+    WorkspaceFingerprint,
+};
 
 /// Canonicalizes workspace roots: absolute, symlink-resolved when possible,
 /// deduplicated, sorted. Mirrors `canonicalizeWorkspaceRoots`.
@@ -95,6 +98,40 @@ pub fn create_remote_embedding_target(
         endpoint: endpoint.to_owned(),
         target_fingerprint: target,
     })
+}
+
+/// Builds a workspace-bound [`RemoteEmbeddingRequest`]: canonicalizes `roots`
+/// (absolute, symlink-resolved when possible, deduplicated, sorted) and
+/// derives both fingerprints, so the guard can re-derive and compare them
+/// instead of trusting caller strings.
+///
+/// Infallible by design: an empty root list or blank endpoint simply yields a
+/// request no permit covers, so the guard fails closed.
+#[must_use]
+pub fn create_remote_embedding_request(
+    roots: &[String],
+    provider: &str,
+    model: &str,
+    endpoint: &str,
+    purpose: RemoteEmbeddingPurpose,
+    content_kinds: Vec<ContentKind>,
+    content_count: usize,
+) -> RemoteEmbeddingRequest {
+    let workspace_roots = canonicalize_workspace_roots(roots);
+    let endpoint = endpoint.trim().to_owned();
+    let workspace = workspace_fingerprint(&workspace_roots);
+    let target = remote_embedding_target_fingerprint(&workspace, provider, model, &endpoint);
+    RemoteEmbeddingRequest {
+        provider: provider.to_owned(),
+        model: model.to_owned(),
+        endpoint,
+        purpose,
+        content_kinds,
+        content_count,
+        workspace_roots,
+        workspace_fingerprint: workspace,
+        target_fingerprint: target,
+    }
 }
 
 #[cfg(test)]
