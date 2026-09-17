@@ -100,6 +100,19 @@ pub struct RootPath {
     pub max_file_size_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub follow: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_nested_git: Option<bool>,
+}
+
+impl RootPath {
+    /// Whether scans traverse nested git repositories.
+    ///
+    /// `None` and `Some(false)` both exclude nested repositories (the
+    /// default); only `Some(true)` traverses them.
+    #[must_use]
+    pub fn traverses_nested_git(&self) -> bool {
+        self.include_nested_git.unwrap_or(false)
+    }
 }
 
 /// A file discovered by the scanner.

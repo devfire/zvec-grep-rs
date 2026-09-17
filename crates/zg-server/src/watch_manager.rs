@@ -20,7 +20,7 @@ use std::time::Duration;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
-use zg_core::pipeline::indexing::scanner::path_can_affect_index;
+use zg_core::pipeline::indexing::scanner::{PathKind, path_can_affect_index};
 use zg_core::types::RootPath;
 
 use crate::change_set::{
@@ -368,7 +368,12 @@ fn should_track(shared: &Shared, absolute: &str, is_directory: bool) -> bool {
     };
     let roots =
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| source())).unwrap_or_default();
-    path_can_affect_index(&roots, absolute, is_directory).unwrap_or(true)
+    let kind = if is_directory {
+        PathKind::Dir
+    } else {
+        PathKind::File
+    };
+    path_can_affect_index(&roots, absolute, kind).unwrap_or(true)
 }
 
 async fn classify_loop(
@@ -539,5 +544,128 @@ mod tests {
         assert_eq!(batches.len(), 1);
         assert!(batches[0].0.force_full_reconcile);
         assert_eq!(batches[0].1, WatchReason::Reconcile);
+    }
+
+    fn write_manifest_policy(home: &Path, root: &str, include_nested_git: Option<bool>) {
+        use zg_core::config::EmbeddingRuntimeConfig;
+        use zg_core::manifest::{
+            CURRENT_MANIFEST_VERSION, WorkspaceManifest, write_workspace_manifest,
+        };
+        use zg_core::types::{UnixMillis, WorkspaceIndexInfo, WorkspaceIndexPolicy};
+
+        std::fs::create_dir_all(home).expect("mkdir home");
+        let manifest = WorkspaceManifest {
+            info: WorkspaceIndexInfo {
+                id: "watch-test".to_owned(),
+                name: "watch-test".to_owned(),
+                path: home.to_string_lossy().into_owned(),
+                root_paths: vec![RootPath {
+                    absolute_path: root.to_owned(),
+                    recursive: true,
+                    include: Vec::new(),
+                    exclude: Vec::new(),
+                    globs: Vec::new(),
+                    insensitive_globs: Vec::new(),
+                    file_types: Vec::new(),
+                    excluded_file_types: Vec::new(),
+                    hidden: None,
+                    no_ignore: None,
+                    ignore_files: Vec::new(),
+                    max_depth: None,
+                    max_file_size_bytes: None,
+                    follow: None,
+                    include_nested_git,
+                }],
+                index_policy: Some(WorkspaceIndexPolicy::Enabled),
+                embedding: Some(None),
+                index_version: Some(zg_core::types::CURRENT_INDEX_VERSION),
+                created_time: UnixMillis::now(),
+                updated_time: UnixMillis::now(),
+            },
+            manifest_version: CURRENT_MANIFEST_VERSION,
+            embedding_runtime: EmbeddingRuntimeConfig::default(),
+        };
+        write_workspace_manifest(home, &manifest).expect("write manifest");
+    }
+
+    #[tokio::test]
+    async fn nested_git_policy_gates_watcher_batches() {
+        use zg_core::manifest::read_workspace_manifest;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = zg_core::paths::to_display_path(dir.path());
+        std::fs::create_dir_all(dir.path().join("repo-a/.git")).expect("mkdir");
+        std::fs::write(dir.path().join("repo-a/.git/HEAD"), "ref\n").expect("marker");
+        std::fs::write(dir.path().join("repo-a/a.txt"), "a\n").expect("nested file");
+        let home = dir.path().join(".zvec-grep");
+        write_manifest_policy(&home, &root, None);
+
+        let home_clone = home.clone();
+        let source: RootPathsSource = Arc::new(move || {
+            read_workspace_manifest(&home_clone)
+                .ok()
+                .flatten()
+                .map(|manifest| manifest.info.root_paths)
+                .unwrap_or_default()
+        });
+        // One flush per manager: `flush_snapshot` redelivers pending batches,
+        // so each phase below uses a fresh manager and flushes exactly once.
+        let watch_once = |source: RootPathsSource, events: Vec<(String, bool)>| {
+            let batches: RecordedBatches = Arc::new(StdMutex::new(Vec::new()));
+            let batches_clone = batches.clone();
+            let root = root.clone();
+            async move {
+                let manager = WatchManager::new(WatchManagerOptions {
+                    root,
+                    debounce: Some(Duration::from_secs(3600)),
+                    max_wait: Some(Duration::from_secs(3600)),
+                    max_changed_paths: None,
+                    on_changes: Arc::new(move |snapshot, reason| {
+                        batches_clone.lock().unwrap().push((snapshot, reason));
+                    }),
+                    get_root_paths: Some(source),
+                    on_pending: None,
+                });
+                for (path, is_directory) in &events {
+                    manager
+                        .inject_event(path, ChangeKind::Changed, *is_directory)
+                        .unwrap();
+                }
+                manager.flush_now().await;
+                let batches = batches.lock().unwrap();
+                batches
+                    .iter()
+                    .map(|(snapshot, _)| snapshot.touched_files.clone())
+                    .collect::<Vec<_>>()
+            }
+        };
+
+        let nested = format!("{root}/repo-a/a.txt");
+        assert!(
+            watch_once(source.clone(), vec![(nested.clone(), false)])
+                .await
+                .is_empty(),
+            "disabled policy tracks no nested change"
+        );
+
+        write_manifest_policy(&home, &root, Some(true));
+        assert_eq!(
+            watch_once(source.clone(), vec![(nested.clone(), false)]).await,
+            vec![vec![nested.clone()]],
+            "enabled policy yields the nested touched path"
+        );
+
+        assert!(
+            watch_once(
+                source.clone(),
+                vec![
+                    (format!("{root}/repo-a/.git/HEAD"), false),
+                    (format!("{root}/.zvec-grep/manifest.json"), false),
+                ],
+            )
+            .await
+            .is_empty(),
+            ".git and .zvec-grep changes stay untracked"
+        );
     }
 }

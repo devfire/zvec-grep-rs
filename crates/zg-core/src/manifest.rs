@@ -186,7 +186,7 @@ fn is_root_path(value: &Value) -> bool {
             return false;
         }
     }
-    for field in ["hidden", "noIgnore", "follow"] {
+    for field in ["hidden", "noIgnore", "follow", "includeNestedGit"] {
         if !is_optional_boolean(object.get(field)) {
             return false;
         }

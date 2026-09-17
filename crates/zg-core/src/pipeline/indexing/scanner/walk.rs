@@ -18,7 +18,7 @@ use super::ignore::{
     IgnoreRule, default_ignore_rules, ignore_rules_for_directory, ignored_path_explicitly_included,
     match_ignore_rules, read_configured_ignore_rules, read_gitignore_rules,
 };
-use super::types::{CancelFlag, ScanOptions, ScanResult, throw_if_cancelled};
+use super::types::{CancelFlag, PathKind, ScanOptions, ScanResult, throw_if_cancelled};
 use super::types::{HARD_SKIP_HIDDEN_NAMES, display_relative, file_name_of, known_files_by_path};
 use super::types::{matching_root_paths, parent_display, path_outside_root, strip_root_prefix};
 
@@ -89,7 +89,7 @@ pub fn scan_file_path(
             false,
             &rules,
         ) || !selection.matches(&relative_path)
-            || has_excluded_nested_git_ancestor(&root, absolute_path, false)?
+            || has_excluded_nested_git_ancestor(&root, absolute_path, PathKind::File)?
         {
             continue;
         }
@@ -110,7 +110,8 @@ pub fn scan_file_path(
 }
 
 /// True when `absolute_path` could affect the index (mirrors
-/// `pathCanAffectIndex`).
+/// `pathCanAffectIndex`). `kind` picks directory-vs-file semantics for the
+/// recursive gate, max-depth bounds, and the nested-git ancestor check.
 ///
 /// # Errors
 ///
@@ -118,8 +119,9 @@ pub fn scan_file_path(
 pub fn path_can_affect_index(
     root_paths: &[RootPath],
     absolute_path: &str,
-    is_directory: bool,
+    kind: PathKind,
 ) -> EngineResult<bool> {
+    let is_directory = matches!(kind, PathKind::Dir);
     for configured in root_paths {
         let root = normalize_root_path(configured);
         if path_outside_root(&root.absolute_path, absolute_path) {
@@ -150,7 +152,7 @@ pub fn path_can_affect_index(
             &file_name_of(absolute_path),
             is_directory,
             &rules,
-        ) || has_excluded_nested_git_ancestor(&root, absolute_path, is_directory)?
+        ) || has_excluded_nested_git_ancestor(&root, absolute_path, kind)?
         {
             continue;
         }
@@ -203,7 +205,7 @@ pub fn scan_directory_path(
                 &file_name_of(absolute_path),
                 true,
                 &parent_rules,
-            ) || has_excluded_nested_git_ancestor(&root, absolute_path, true)?)
+            ) || has_excluded_nested_git_ancestor(&root, absolute_path, PathKind::Dir)?)
         {
             continue;
         }
@@ -315,9 +317,7 @@ fn walk(
             {
                 continue;
             }
-            if is_nested_git_repository_directory(&absolute_path)
-                && !nested_git_repository_explicitly_included(&relative_path, root)
-            {
+            if nested_git_repository_blocked(root, &absolute_path, &relative_path) {
                 continue;
             }
             let real_directory = real_path_of(&absolute_path);
@@ -434,32 +434,28 @@ fn scan_root_path(
         known_files,
     )
 }
-
 fn has_excluded_nested_git_ancestor(
     root: &RootPath,
     absolute_path: &str,
-    include_target: bool,
+    kind: PathKind,
 ) -> EngineResult<bool> {
     let path_from_root = strip_root_prefix(&root.absolute_path, absolute_path);
     let segments: Vec<&str> = path_from_root
         .split('/')
         .filter(|s| !s.is_empty())
         .collect();
-    let directories = if include_target {
-        segments.as_slice()
-    } else {
-        segments
+    let directories = match kind {
+        PathKind::Dir => segments.as_slice(),
+        PathKind::File => segments
             .get(..segments.len().saturating_sub(1))
-            .unwrap_or(&[])
+            .unwrap_or(&[]),
     };
     let mut current = PathBuf::from(&root.absolute_path);
     for segment in directories {
         current.push(segment);
         let current_display = to_display_path(&current);
         let relative_directory = display_relative(&root.absolute_path, &current_display);
-        if is_nested_git_repository_directory(&current_display)
-            && !nested_git_repository_explicitly_included(&relative_directory, root)
-        {
+        if nested_git_repository_blocked(root, &current_display, &relative_directory) {
             return Ok(true);
         }
     }
@@ -485,6 +481,20 @@ fn nested_git_repository_explicitly_included(relative_path: &str, root: &RootPat
     })
 }
 
+/// Shared nested-git exclusion gate: a directory is blocked when the root
+/// does not traverse nested repositories (`None`/`Some(false)`), the
+/// directory is itself a git repository, and no root include pattern
+/// explicitly covers it.
+fn nested_git_repository_blocked(
+    root: &RootPath,
+    absolute_directory: &str,
+    relative_directory: &str,
+) -> bool {
+    !root.traverses_nested_git()
+        && is_nested_git_repository_directory(absolute_directory)
+        && !nested_git_repository_explicitly_included(relative_directory, root)
+}
+
 fn dedupe_files(files: Vec<FileInfo>) -> Vec<FileInfo> {
     let mut seen = HashSet::new();
     let mut out = Vec::with_capacity(files.len());
@@ -494,4 +504,246 @@ fn dedupe_files(files: Vec<FileInfo>) -> Vec<FileInfo> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+    use std::path::Path;
+
+    use super::{path_can_affect_index, scan_directory_path, scan_file_path, scan_root_paths};
+    use crate::pipeline::indexing::scanner::types::{PathKind, ScanOptions};
+    use crate::types::RootPath;
+
+    fn write(path: &Path, contents: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create parent");
+        }
+        std::fs::write(path, contents).expect("write fixture");
+    }
+
+    fn base_root(dir: &tempfile::TempDir, include_nested_git: Option<bool>) -> RootPath {
+        RootPath {
+            absolute_path: crate::paths::to_display_path(dir.path()),
+            recursive: true,
+            include: Vec::new(),
+            exclude: Vec::new(),
+            globs: Vec::new(),
+            insensitive_globs: Vec::new(),
+            file_types: Vec::new(),
+            excluded_file_types: Vec::new(),
+            hidden: None,
+            no_ignore: None,
+            ignore_files: Vec::new(),
+            max_depth: None,
+            max_file_size_bytes: None,
+            follow: None,
+            include_nested_git,
+        }
+    }
+
+    fn nested_fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(&dir.path().join("top.txt"), "top\n");
+        write(&dir.path().join("repo-a/.git/HEAD"), "ref\n");
+        write(&dir.path().join("repo-a/a.txt"), "a\n");
+        write(
+            &dir.path().join("repo-a/deeper/.git"),
+            "gitdir: elsewhere\n",
+        );
+        write(&dir.path().join("repo-a/deeper/deep.txt"), "deep\n");
+        write(&dir.path().join("repo-b/.git"), "gitdir: elsewhere\n");
+        write(&dir.path().join("repo-b/b.txt"), "b\n");
+        dir
+    }
+
+    fn relative_set(dir: &tempfile::TempDir, absolute_paths: &[String]) -> BTreeSet<String> {
+        let root = crate::paths::to_display_path(dir.path());
+        absolute_paths
+            .iter()
+            .map(|absolute| {
+                Path::new(absolute)
+                    .strip_prefix(Path::new(&root))
+                    .map(crate::paths::to_display_path)
+                    .expect("under root")
+            })
+            .collect()
+    }
+
+    fn full_scan_relative(dir: &tempfile::TempDir, root: &RootPath) -> BTreeSet<String> {
+        let result = scan_root_paths(
+            "test-index",
+            std::slice::from_ref(root),
+            &ScanOptions::default(),
+        )
+        .expect("scan");
+        relative_set(
+            dir,
+            &result
+                .files
+                .iter()
+                .map(|file| file.absolute_path.clone())
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    #[test]
+    fn nested_repositories_excluded_by_default() {
+        let dir = nested_fixture();
+        for policy in [None, Some(false)] {
+            let root = base_root(&dir, policy);
+            assert_eq!(
+                full_scan_relative(&dir, &root),
+                BTreeSet::from(["top.txt".to_owned()])
+            );
+        }
+    }
+
+    #[test]
+    fn nested_repositories_included_when_opted_in() {
+        let dir = nested_fixture();
+        let root = base_root(&dir, Some(true));
+        assert_eq!(
+            full_scan_relative(&dir, &root),
+            BTreeSet::from([
+                "top.txt".to_owned(),
+                "repo-a/a.txt".to_owned(),
+                "repo-a/deeper/deep.txt".to_owned(),
+                "repo-b/b.txt".to_owned(),
+            ])
+        );
+
+        let root_display = crate::paths::to_display_path(dir.path());
+        let deep = format!("{root_display}/repo-a/deeper/deep.txt");
+        let repo_a = format!("{root_display}/repo-a");
+        let roots = vec![root.clone()];
+        let file_scan = scan_file_path("test-index", &roots, &deep, &ScanOptions::default())
+            .expect("file scan");
+        assert_eq!(file_scan.files.len(), 1);
+        let dir_scan = scan_directory_path("test-index", &roots, &repo_a, &ScanOptions::default())
+            .expect("dir scan");
+        assert_eq!(dir_scan.files.len(), 2);
+        assert!(
+            path_can_affect_index(&roots, &deep, PathKind::File).expect("affect file"),
+            "enabled policy tracks nested file"
+        );
+        assert!(
+            path_can_affect_index(&roots, &repo_a, PathKind::Dir).expect("affect dir"),
+            "enabled policy tracks nested repository directory"
+        );
+
+        let disabled = vec![base_root(&dir, Some(false))];
+        assert!(
+            scan_file_path("test-index", &disabled, &deep, &ScanOptions::default())
+                .expect("file scan")
+                .files
+                .is_empty()
+        );
+        assert!(
+            scan_directory_path("test-index", &disabled, &repo_a, &ScanOptions::default())
+                .expect("dir scan")
+                .files
+                .is_empty()
+        );
+        assert!(
+            !path_can_affect_index(&disabled, &deep, PathKind::File).expect("affect file"),
+            "disabled policy ignores nested file"
+        );
+        assert!(
+            !path_can_affect_index(&disabled, &repo_a, PathKind::Dir).expect("affect dir"),
+            "disabled policy ignores nested repository directory"
+        );
+
+        let persisted: RootPath =
+            serde_json::from_value(serde_json::to_value(&root).expect("serialize"))
+                .expect("deserialize");
+        assert_eq!(persisted.include_nested_git, Some(true));
+        let persisted_scan =
+            scan_file_path("test-index", &[persisted], &deep, &ScanOptions::default())
+                .expect("persisted scan");
+        assert_eq!(persisted_scan.files.len(), 1);
+    }
+
+    #[test]
+    fn inclusion_keeps_ignore_and_hidden_filters() {
+        let dir = nested_fixture();
+        write(&dir.path().join(".gitignore"), "blocked/\n");
+        write(&dir.path().join("blocked/blocked.txt"), "blocked\n");
+        write(&dir.path().join("repo-a/.gitignore"), "ignored.txt\n");
+        write(&dir.path().join("repo-a/ignored.txt"), "ignored\n");
+        write(&dir.path().join("repo-a/.secret.txt"), "secret\n");
+        write(
+            &dir.path().join("repo-a/.zvec-grep/internal.txt"),
+            "internal\n",
+        );
+        let scanned = full_scan_relative(&dir, &base_root(&dir, Some(true)));
+        assert!(scanned.contains("top.txt"));
+        assert!(scanned.contains("repo-a/a.txt"));
+        assert!(!scanned.contains("blocked/blocked.txt"), "{scanned:?}");
+        assert!(!scanned.contains("repo-a/ignored.txt"), "{scanned:?}");
+        assert!(!scanned.contains("repo-a/.secret.txt"), "{scanned:?}");
+        assert!(
+            !scanned.contains("repo-a/.zvec-grep/internal.txt"),
+            "{scanned:?}"
+        );
+    }
+
+    #[test]
+    fn hard_skips_survive_hidden_and_no_ignore() {
+        let dir = nested_fixture();
+        write(&dir.path().join(".gitignore"), "blocked/\n");
+        write(&dir.path().join("blocked/blocked.txt"), "blocked\n");
+        write(&dir.path().join("repo-a/.secret.txt"), "secret\n");
+        let mut root = base_root(&dir, Some(true));
+        root.hidden = Some(true);
+        root.no_ignore = Some(true);
+        let scanned = full_scan_relative(&dir, &root);
+        assert!(scanned.contains("repo-a/.secret.txt"), "{scanned:?}");
+        assert!(scanned.contains("blocked/blocked.txt"), "{scanned:?}");
+        assert!(
+            !scanned.iter().any(|path| path.contains(".git/")),
+            "{scanned:?}"
+        );
+        assert!(
+            !scanned.iter().any(|path| path.ends_with("/.git")),
+            "{scanned:?}"
+        );
+        assert!(
+            !scanned.iter().any(|path| path.contains(".zvec-grep")),
+            "{scanned:?}"
+        );
+    }
+
+    #[test]
+    fn max_depth_still_bounds_included_repositories() {
+        let dir = nested_fixture();
+        let mut root = base_root(&dir, Some(true));
+        root.max_depth = Some(1);
+        assert_eq!(
+            full_scan_relative(&dir, &root),
+            BTreeSet::from(["top.txt".to_owned()])
+        );
+    }
+
+    #[test]
+    fn file_selection_still_applies_inside_included_repositories() {
+        let dir = nested_fixture();
+        write(&dir.path().join("repo-a/code.rs"), "fn main() {}\n");
+        let mut root = base_root(&dir, Some(true));
+        root.globs = vec!["**/*.txt".to_owned()];
+        let scanned = full_scan_relative(&dir, &root);
+        assert!(scanned.contains("repo-a/a.txt"), "{scanned:?}");
+        assert!(!scanned.contains("repo-a/code.rs"), "{scanned:?}");
+    }
+
+    #[test]
+    fn explicit_include_escape_still_works_when_disabled() {
+        let dir = nested_fixture();
+        let mut root = base_root(&dir, Some(false));
+        root.include = vec!["repo-b/**".to_owned()];
+        assert_eq!(
+            full_scan_relative(&dir, &root),
+            BTreeSet::from(["repo-b/b.txt".to_owned()])
+        );
+    }
 }

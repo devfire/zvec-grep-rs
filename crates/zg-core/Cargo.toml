@@ -65,3 +65,11 @@ onnx = ["dep:ort"]
 llama = ["dep:llama-cpp-2"]
 [lints]
 workspace = true
+# The facade suite drives `StubEmbeddingModel`, which only exists under
+# `test-support` (cfg(test) items cannot cross crates). required-features
+# makes Cargo skip the target by declaration in default-feature runs so the
+# suite cannot silently masquerade as run without the feature;
+# tests/test_support_notice.rs names that skip in default-run output.
+[[test]]
+name = "service_facade"
+required-features = ["test-support"]

@@ -173,6 +173,7 @@ impl ZvecGrepService {
             max_depth: options.max_depth,
             max_file_size_bytes: options.max_file_size_bytes,
             follow: options.follow,
+            include_nested_git: options.include_nested_git,
         }])
     }
 
@@ -205,6 +206,7 @@ impl ZvecGrepService {
                     max_depth: options.max_depth,
                     max_file_size_bytes: options.max_file_size_bytes,
                     follow: options.follow,
+                    include_nested_git: options.include_nested_git,
                 })
             }
         }

@@ -25,5 +25,7 @@ chrono.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# E2E guard test builds a workspace index via the deterministic stub model.
+zg-core = { workspace = true, features = ["test-support"] }
 [lints]
 workspace = true

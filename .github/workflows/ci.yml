@@ -7,12 +7,26 @@ on:
 jobs:
   test:
     strategy:
+      # A flake on one OS must not cancel (and mask the result of) the other.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # --all-features builds ort-sys, whose build script downloads prebuilt
+      # ONNX Runtime from cdn.pyke.io (see run 35162830575: transient runner
+      # DNS failure). The pyke cache is content-addressed by dist hash, so a
+      # warm cache skips the download entirely.
+      - name: Cache ONNX Runtime (ort-sys)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ort.pyke.io
+            ~/Library/Caches/ort.pyke.io
+          key: ort-sys-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ort-sys-${{ runner.os }}-
       # Warms the vector-parity gate (phases C/D): with the models cached,
       # `vector_parity` embeds and compares instead of skipping. The
       # default-feature run never downloads (compiled-out backends skip
@@ -24,12 +38,14 @@ jobs:
         with:
           path: ~/.zvec-grep/models
           key: embedding-models-v1
+      # service_facade is feature-gated (test-support): skipped here by design, covered by the --all-features run below.
       - run: cargo test --workspace --locked
       - run: cargo test --workspace --locked --all-features
       - run: cargo test --workspace --locked --no-default-features
 
   clippy:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
@@ -38,6 +54,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Cache ONNX Runtime (ort-sys)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ort.pyke.io
+            ~/Library/Caches/ort.pyke.io
+          key: ort-sys-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ort-sys-${{ runner.os }}-
       - run: cargo clippy --workspace --all-targets --locked
       - run: cargo clippy --workspace --all-targets --locked --all-features
 

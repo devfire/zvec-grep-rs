@@ -146,6 +146,7 @@ fn validate_index(args: &IndexArgs) -> Result<(), CliError> {
             || args.max_filesize.is_some()
             || args.debug
             || args.follow
+            || args.include_nested_git
             || args.embedding_concurrency.is_some())
     {
         return Err(CliError::usage(

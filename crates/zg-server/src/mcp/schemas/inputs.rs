@@ -235,6 +235,9 @@ pub struct IndexInput {
     /// Follow symbolic links.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub follow: Option<bool>,
+    /// Traverse nested Git repositories. Rejected per request: daemon configuration only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_nested_git: Option<bool>,
     /// Embedding requests processed concurrently.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding_concurrency: Option<u32>,

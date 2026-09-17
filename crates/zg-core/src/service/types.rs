@@ -40,6 +40,7 @@ pub struct ZvecGrepIndexOptions<'a> {
     pub max_depth: Option<u32>,
     pub max_file_size_bytes: Option<u64>,
     pub follow: Option<bool>,
+    pub include_nested_git: Option<bool>,
     pub embedding_concurrency: Option<usize>,
     pub on_progress: Option<IndexProgressSink>,
     pub changed_paths: Vec<std::path::PathBuf>,
