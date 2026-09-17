@@ -28,7 +28,9 @@ use super::support::{
 use crate::cli::{IndexArgs, parse_byte_size};
 use crate::client::{DaemonClient, resolve_client_mode, route_by_mode};
 use crate::error::CliError;
-use crate::format::{ProgressReporter, print_index_result, print_no_indexable_files_tip};
+use crate::format::{
+    ProgressReporter, print_index_result, print_no_indexable_files_tip, use_color,
+};
 
 pub(crate) async fn run_index(args: IndexArgs) -> Result<(), CliError> {
     let root = single_root_or_cwd(&args.roots, "zg index accepts at most one root path")?;
@@ -112,7 +114,12 @@ fn rootless_flag_conflict(args: &IndexArgs, existing_root_paths: &[RootPath]) ->
 async fn run_index_direct(args: &IndexArgs, root: &PathBuf) -> Result<(), CliError> {
     let absolute = absolute_path(root)?;
     let explicit = !args.roots.is_empty();
-    let reporter = Arc::new(std::sync::Mutex::new(ProgressReporter::new(false)));
+    let color = use_color(args.color, args.no_color);
+    let enabled = !(args.no_progress || args.quiet);
+    let reporter = Arc::new(std::sync::Mutex::new(ProgressReporter::new(
+        color.enabled(),
+        enabled,
+    )));
     let sink: zg_core::pipeline::indexing::IndexProgressSink = {
         let reporter = Arc::clone(&reporter);
         Arc::new(move |progress: IndexProgress| {
@@ -513,6 +520,18 @@ mod tests {
         for flags in rejected {
             assert!(server_flags_set(&index_args(flags)), "{flags:?}");
         }
+    }
+
+    #[test]
+    fn display_flags_never_count_as_scope_or_server_flags() {
+        assert!(!file_scope_flags_set(&index_args(&["--color", "always"])));
+        assert!(!file_scope_flags_set(&index_args(&["--no-color"])));
+        assert!(!file_scope_flags_set(&index_args(&["--no-progress"])));
+        assert!(!server_flags_set(&index_args(&["--color", "always"])));
+        assert!(!server_flags_set(&index_args(&["--no-color"])));
+        assert!(!server_flags_set(&index_args(&["--no-progress"])));
+        assert!(index_args(&["--no-progress"]).no_progress);
+        assert!(index_args(&["--quiet"]).quiet);
     }
 
     #[test]

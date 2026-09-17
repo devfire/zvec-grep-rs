@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 
-use super::values::{ClientModeArg, DeviceArg};
+use super::values::{ClientModeArg, ColorMode, DeviceArg};
 
 /// `zg index` flags.
 #[derive(Debug, Args)]
@@ -87,6 +87,18 @@ pub struct IndexArgs {
     /// Print engine debug diagnostics to stderr.
     #[arg(long = "debug", action = clap::ArgAction::SetTrue)]
     pub debug: bool,
+    /// Color mode for progress output.
+    #[arg(long = "color")]
+    pub color: Option<ColorMode>,
+    /// Disable colored progress output.
+    #[arg(long = "no-color", action = clap::ArgAction::SetTrue)]
+    pub no_color: bool,
+    /// Suppress the indexing progress bar (still prints the final summary).
+    #[arg(long = "no-progress", action = clap::ArgAction::SetTrue)]
+    pub no_progress: bool,
+    /// Alias for `--no-progress`.
+    #[arg(long = "quiet", action = clap::ArgAction::SetTrue, hide = true)]
+    pub quiet: bool,
     /// Allow one remote-embedding operation without a stored grant.
     #[arg(
         long = "allow-remote",

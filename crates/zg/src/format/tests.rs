@@ -9,7 +9,7 @@ use super::context_agent::format_context_agent;
 use super::context_human::format_context_human;
 use super::error::debug_lines;
 use super::index::format_index_result;
-use super::progress::format_green_progress_bar;
+use super::progress::{format_green_progress_bar, format_progress_line};
 use super::range::range_label;
 use super::text::{format_score, one_line, truncate};
 use super::workspace::{WorkspaceState, format_workspace_info, workspace_state};
@@ -195,6 +195,43 @@ fn index_result_counters() {
 fn progress_bar_golden() {
     assert_eq!(format_green_progress_bar(1, 2, 4, false), "██░░ 50% (1/2)");
     assert_eq!(format_green_progress_bar(0, 0, 4, false), "");
+}
+
+#[test]
+fn progress_line_covers_scan_download_and_indexing() {
+    use zg_core::types::{IndexEmbeddingProgress, IndexProgress, IndexProgressPhase};
+    let scanning = IndexProgress {
+        phase: Some(IndexProgressPhase::Scanning),
+        detail: Some("listing files".to_owned()),
+        ..IndexProgress::default()
+    };
+    let line = format_progress_line(&scanning, false, 0);
+    assert!(line.contains("scanning"), "{line}");
+    assert!(line.contains("listing files"), "{line}");
+    let downloading = IndexProgress {
+        phase: Some(IndexProgressPhase::Indexing),
+        detail: Some("downloading model".to_owned()),
+        embedding: Some(IndexEmbeddingProgress {
+            downloaded_bytes: Some(5_000_000),
+            total_bytes: Some(10_000_000),
+            ..IndexEmbeddingProgress::default()
+        }),
+        ..IndexProgress::default()
+    };
+    let line = format_progress_line(&downloading, false, 3);
+    assert!(line.contains("downloading"), "{line}");
+    assert!(line.contains("50%"), "{line}");
+    let indexing = IndexProgress {
+        phase: Some(IndexProgressPhase::Indexing),
+        files_total: Some(10),
+        files_indexed: Some(4),
+        detail: Some("a.rs".to_owned()),
+        ..IndexProgress::default()
+    };
+    let line = format_progress_line(&indexing, false, 0);
+    assert!(line.contains("(4/10)"), "{line}");
+    assert!(line.contains("indexing"), "{line}");
+    assert!(line.contains("a.rs"), "{line}");
 }
 
 #[test]
