@@ -18,5 +18,5 @@ Cargo workspace consisting of three primary crates:
 ## Key References
 - Language, build system, and dependencies: `mem:tech_stack`
 - Development, test, and system execution commands: `mem:suggested_commands`
-- Workspace coding conventions, architectural invariants, and domain rules: `mem:conventions`
+- Workspace coding conventions, mandatory Rust skill gate, architectural invariants, and domain rules: `mem:conventions`
 - Task verification, linting, and completion criteria: `mem:task_completion`

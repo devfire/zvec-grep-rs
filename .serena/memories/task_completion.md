@@ -1,5 +1,7 @@
 # Task Completion Checklist
 
+Before any code change, MUST read `skill://rust-defensive-programming` + `skill://advanced-rust-patterns` (gate defined in `mem:conventions`).
+
 Before concluding any task or committing changes, verify the following in sequence:
 
 1. Format Check: `cargo fmt --all --check`

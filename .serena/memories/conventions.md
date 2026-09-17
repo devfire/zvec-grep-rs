@@ -1,5 +1,10 @@
 # Conventions
 
+## Mandatory Skills
+- MUST read `skill://rust-defensive-programming` + `skill://advanced-rust-patterns` before any code change (write/review/refactor); both together = production-grade bar.
+- `rust-defensive-programming`: no index without bounds proof, no `..Default::default()` with new fields, no wildcard `_` hiding new variants, no boolean params, no fallible `From` conversions, no `unwrap`/`expect` in engine/server paths.
+- `advanced-rust-patterns`: no `Arc<Mutex>` without concurrency-architecture justification, no manual index loops, no `unsafe` without `// Safety:` comment, no `anyhow` in library code, no public trait without sealing consideration, no premature SoA/micro-opt without profiling evidence.
+
 ## Rust Idioms & Type Safety
 - Newtype pattern: Use domain-specific newtypes (e.g., `FileId`, `EntityId`, `WorkspaceId`) instead of raw strings or numeric IDs.
 - Error handling: Never call `unwrap()` or `expect()` in production engine or server paths. Bubble errors via `thiserror` (`EngineError`, `EngineResult`) or domain error enums.
