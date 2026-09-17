@@ -71,7 +71,7 @@ impl Drop for CancellationBridge {
 }
 
 /// Bridges async cancellation into the sync index body. Returns a
-/// [`CancellationBridge`] guarding the [`CancelFlag`] the blocking code
+/// `CancellationBridge` guarding the [`CancelFlag`] the blocking code
 /// polls (derefs to it, so `cancel()` / `is_cancelled()` keep working);
 /// hold the guard for the job's lifetime and drop it once the job reaches
 /// terminal so the background waiter is aborted instead of leaked.

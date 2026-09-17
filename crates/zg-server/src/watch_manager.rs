@@ -286,7 +286,7 @@ impl WatchManager {
     /// workspace change (manifest rewrite); per-event filtering uses the
     /// cached snapshot instead. Blocking (reads the manifest): call from a
     /// non-async context or infrequent path. The async classify path refreshes
-    /// automatically via [`Shared::roots_stale`] and workspace-signal events.
+    /// automatically via the `Shared::roots_stale` flag and workspace-signal events.
     pub fn refresh_roots(&self) {
         refresh_roots_blocking(&self.shared);
     }
@@ -630,7 +630,19 @@ fn classify_batch(
     shared: &Arc<Shared>,
     batch: HashMap<PathBuf, Option<ChangeKind>>,
 ) -> Vec<ClassifiedEntry> {
-    if shared.is_roots_stale() || batch.keys().any(|path| is_workspace_signal_lossy(path)) {
+    // Refresh only on signals that survive filtering: the roots source is a
+    // blocking manifest read (storage open), and internal writes
+    // (`.zvec-grep` storage, lock files, the per-run manifest rewrite) must
+    // never trigger it — the index's own writes would re-open storage on
+    // every batch and hold read locks across maintenance (drop/reset).
+    // Mirrors `record_raw`, which returns before the refresh for internals.
+    let needs_refresh = shared.is_roots_stale()
+        || batch.keys().any(|path| {
+            path.is_absolute()
+                && is_workspace_signal_lossy(path)
+                && !is_internal_path(&shared.root, &path.to_string_lossy())
+        });
+    if needs_refresh {
         refresh_roots_blocking(shared);
     }
     let roots = shared
@@ -853,6 +865,52 @@ mod tests {
         let (snapshot, reason) = batches.iter().next().expect("one batch");
         assert_eq!(snapshot.touched_files, vec!["/repo/a.rs", "/repo/b.rs"]);
         assert_eq!(*reason, WatchReason::Watch);
+    }
+
+    #[tokio::test]
+    async fn internal_only_batches_skip_roots_refresh() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = Arc::clone(&calls);
+        let source: RootPathsSource = Arc::new(move || {
+            calls_clone.fetch_add(1, Ordering::SeqCst);
+            Vec::new()
+        });
+        let batches: RecordedBatches = Arc::new(StdMutex::new(Vec::new()));
+        let batches_clone = Arc::clone(&batches);
+        let manager = WatchManager::new(WatchManagerOptions {
+            root: "/repo".to_owned(),
+            debounce: Some(Duration::from_millis(5)),
+            max_wait: Some(Duration::from_millis(50)),
+            max_changed_paths: None,
+            on_changes: Arc::new(move |snapshot, reason| {
+                batches_clone.lock().unwrap().push((snapshot, reason));
+            }),
+            get_root_paths: Some(source),
+            on_pending: None,
+        });
+        // Construction takes one blocking snapshot up front.
+        let baseline = calls.load(Ordering::SeqCst);
+        // Index internals — the per-run manifest rewrite, storage files,
+        // lock files — classify to nothing and must not touch the roots
+        // source: it is a blocking storage open whose read lock would race
+        // index maintenance (drop/reset fail `LOCK.BUSY` under a live reader).
+        let mut batch = HashMap::new();
+        batch.insert(
+            PathBuf::from("/repo/.zvec-grep/manifest.json"),
+            Some(ChangeKind::Changed),
+        );
+        batch.insert(
+            PathBuf::from("/repo/.zvec-grep/LOCK.readers/x/lock.json"),
+            Some(ChangeKind::Created),
+        );
+        assert!(classify_batch(&manager.shared, batch).is_empty());
+        assert_eq!(calls.load(Ordering::SeqCst), baseline);
+        // An external workspace signal still refreshes.
+        let mut batch = HashMap::new();
+        batch.insert(PathBuf::from("/repo/.gitignore"), Some(ChangeKind::Changed));
+        assert_eq!(classify_batch(&manager.shared, batch).len(), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), baseline + 1);
     }
 
     #[tokio::test]

@@ -98,7 +98,7 @@ impl JobScheduler {
 
     /// Latest snapshot for a root, if any.
     ///
-    /// Preferred name for [`get_by_root`]; the historic name stays the
+    /// Preferred name for `get_by_root()`; the historic name stays the
     /// canonical spelling for one release since its callers live outside
     /// this module (no cross-file churn).
     #[must_use]
@@ -113,7 +113,7 @@ impl JobScheduler {
 
     /// Latest snapshot for a root, if any.
     ///
-    /// Historic name; prefer [`by_root`].
+    /// Historic name; prefer `by_root()`.
     #[must_use]
     pub fn get_by_root(&self, canonical_root: &str) -> Option<IndexJobSnapshot> {
         self.by_root(canonical_root)
@@ -229,7 +229,7 @@ impl JobScheduler {
     /// including `spawn_blocking` bodies, which cannot be aborted and must
     /// be awaited rather than orphaned.
     ///
-    /// The wait is bounded by [`CLOSE_GRACE_PERIOD`]: a body that ignores
+    /// The wait is bounded by `CLOSE_GRACE_PERIOD`: a body that ignores
     /// cancellation is logged with its stuck job ids and left to finish on
     /// its own instead of hanging shutdown forever.
     pub async fn close(&self) {
