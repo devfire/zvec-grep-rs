@@ -153,10 +153,7 @@ mod lifecycle_tests {
     /// file and a read-only open correctly fails with FILE_META_MISSING.
     /// The handle is closed (and its lock released on drop) before return,
     /// so callers can reopen the storage in any mode.
-    fn seed_persisted_storage(
-        storage_path: &Path,
-        schema: &WorkspaceIndexEmbeddingSchema,
-    ) {
+    fn seed_persisted_storage(storage_path: &Path, schema: &WorkspaceIndexEmbeddingSchema) {
         std::fs::create_dir_all(storage_path).expect("create seed storage dir");
         let absolute_path = storage_path.join("seed.txt").to_string_lossy().into_owned();
         std::fs::write(&absolute_path, "0123456789abcdef").expect("write seed file");

@@ -909,10 +909,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             touched,
-            vec![
-                vec!["/repo/a.rs".to_owned()],
-                vec!["/repo/b.rs".to_owned()]
-            ]
+            vec![vec!["/repo/a.rs".to_owned()], vec!["/repo/b.rs".to_owned()]]
         );
     }
 
