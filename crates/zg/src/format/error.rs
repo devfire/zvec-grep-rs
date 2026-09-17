@@ -4,6 +4,7 @@
 //! with `--debug` plus the full cause chain.
 
 use crate::error::CliError;
+use zg_core::error::redact_error_text;
 
 use super::color::{Color, DIM, RED, RESET};
 
@@ -63,7 +64,10 @@ pub(crate) fn debug_lines(error: &CliError) -> Vec<String> {
         | CliError::Io { .. } => std::error::Error::source(error),
     };
     while let Some(next) = source {
-        lines.push(format!("caused by: {next}"));
+        // Redact the rendered cause; `source()` stays typed for matching.
+        let raw = format!("{next}");
+        let redacted = redact_error_text(&raw, usize::MAX);
+        lines.push(format!("caused by: {redacted}"));
         source = std::error::Error::source(next);
     }
     lines

@@ -9,6 +9,11 @@
 //! The test is never ignored: when the golden file is absent, the backend
 //! feature is compiled out, or the model is not in the cache, it prints
 //! the reason and skips. CI warms the cache so the test actually runs.
+//!
+//! Sign-off gate: `ZVEC_REQUIRE_MODELS=1 cargo test -p zg-core --all-features
+//! --test vector_parity` turns every skip into a hard failure and requires
+//! at least one model checked, so a cold cache fails instead of silently
+//! passing. Default runs (flag unset) keep skipping cleanly.
 
 // Test targets exercise fallible fixtures directly: `unwrap`/`expect`/`panic!`
 // refusal branches are the same class the crate roots allow under `cfg(test)`
@@ -25,6 +30,31 @@ use zg_core::models::catalog::ModelReference;
 use zg_core::models::embeddings::CreateEmbeddingModelOptions;
 use zg_core::models::factory::create_embedding_model;
 use zg_core::models::{EmbeddingInput, EmbeddingPurpose};
+/// How the gate treats missing coverage: lenient skip (default) versus
+/// required sign-off. An enum — not a bare bool — so new modes or skip
+/// reasons stay explicit at every match site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CoverageMode {
+    /// Default `cargo test`: missing fixtures, compiled-out backends, and
+    /// uncached models skip with a printed reason; the suite passes.
+    Skip,
+    /// Sign-off gate (`ZVEC_REQUIRE_MODELS=1`): the same conditions are
+    /// hard failures and at least one model must be checked.
+    Require,
+}
+
+impl CoverageMode {
+    /// Reads the sign-off flag. Unset or unrecognized values stay lenient
+    /// so default runs keep skipping cleanly.
+    #[must_use]
+    fn from_env() -> Self {
+        match std::env::var("ZVEC_REQUIRE_MODELS") {
+            Ok(value) if value == "1" || value.eq_ignore_ascii_case("true") => Self::Require,
+            Ok(_) => Self::Skip,
+            Err(_) => Self::Skip,
+        }
+    }
+}
 
 /// Committed TS goldens, one per local model (slash escaped as `__`).
 const GOLDEN_FILES: &[&str] = &[
@@ -84,6 +114,7 @@ fn local_vectors_match_ts_goldens() {
     let dir = format!("{}/tests/golden/vectors", env!("CARGO_MANIFEST_DIR"));
     let mut ran = 0_usize;
     let mut skipped = Vec::new();
+    let mode = CoverageMode::from_env();
     for file in GOLDEN_FILES {
         let path = format!("{dir}/{file}");
         let bytes = match std::fs::read(&path) {
@@ -169,5 +200,19 @@ fn local_vectors_match_ts_goldens() {
         }
         ran += 1;
     }
-    println!("vector parity: {ran} model(s) checked, skipped: {skipped:?}");
+    match mode {
+        CoverageMode::Skip => {
+            println!("vector parity: {ran} model(s) checked, skipped: {skipped:?}");
+        }
+        CoverageMode::Require => {
+            assert!(
+                skipped.is_empty(),
+                "vector parity gate requires coverage, skipped: {skipped:?}"
+            );
+            assert!(
+                ran > 0,
+                "vector parity gate requires coverage, checked 0 models"
+            );
+        }
+    }
 }

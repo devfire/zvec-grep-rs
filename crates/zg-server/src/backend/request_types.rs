@@ -32,6 +32,8 @@ pub struct RgQuery {
     pub smart_case: bool,
     /// Wrap patterns with word boundaries.
     pub word_regexp: bool,
+    /// Match whole lines only (`--line-regexp`/`-x`).
+    pub whole_line: bool,
     /// Maximum matches per file.
     pub max_count: Option<usize>,
     /// Pattern files: every non-empty line is one more pattern.

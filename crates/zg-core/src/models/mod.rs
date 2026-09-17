@@ -147,6 +147,29 @@ pub trait EmbeddingModel: Send + Sync {
         purpose: EmbeddingPurpose,
         inputs: &[EmbeddingInput<'_>],
     ) -> EngineResult<embeddings::EmbeddingResult>;
+
+    /// Embeds a batch bound to the operation's canonical workspace roots.
+    ///
+    /// Backends that send data off-host (Qwen) build the authorization
+    /// request from `workspace_roots` instead of the process working
+    /// directory, so a permit for one workspace never authorizes another.
+    /// Local backends ignore the roots and embed directly; the default body
+    /// preserves that behavior so third-party implementors keep compiling.
+    /// An empty root set fails closed in authorizing backends.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when inputs fail validation, the workspace roots
+    /// authorize no permit, or the backend fails to produce embeddings.
+    fn embed_scoped(
+        &self,
+        purpose: EmbeddingPurpose,
+        inputs: &[EmbeddingInput<'_>],
+        workspace_roots: &[String],
+    ) -> EngineResult<embeddings::EmbeddingResult> {
+        let _ = workspace_roots;
+        self.embed(purpose, inputs)
+    }
 }
 
 #[cfg(test)]

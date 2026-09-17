@@ -14,7 +14,7 @@ use zg_core::index_status::{index_completion_for_job, index_completion_from_stat
 use zg_core::lexical::{LexicalSearchOptions, LexicalSearchResult, run_lexical_search};
 use zg_core::service::facade::ZvecGrepService;
 
-use super::actor::{CachedSession, FinishedIndex, RootCommand};
+use super::actor::{CachedSession, FinishedIndex, IndexOutcome, RootCommand};
 use super::config::BackendShared;
 use super::error::BackendError;
 use super::index_run::build_index_run;
@@ -233,6 +233,7 @@ impl RootActor {
             ignore_case: query.ignore_case,
             smart_case: query.smart_case,
             word_regexp: query.word_regexp,
+            whole_line: query.whole_line,
             before_context: query.before_context,
             after_context: query.after_context,
             max_count: query.max_count,
@@ -258,21 +259,35 @@ impl RootActor {
 
     fn apply_finished(&mut self, finished: FinishedIndex) {
         self.runtime.set_writer_pending(false);
-        if let Some(ok) = finished.ok {
-            if finished.force_full {
-                let epoch = self.runtime.reconciliation_epoch();
-                self.runtime.mark_reconciled(finished.revision, epoch);
-            } else {
-                self.runtime.mark_indexed(finished.revision);
+        match finished.outcome {
+            IndexOutcome::Completed(ok) => {
+                if finished.force_full {
+                    let epoch = self.runtime.reconciliation_epoch();
+                    self.runtime.mark_reconciled(finished.revision, epoch);
+                } else {
+                    self.runtime.mark_indexed(finished.revision);
+                }
+                self.scan = ok.index_result.scan_diagnostics.clone();
+                self.status = Some(ok.status);
             }
-            self.scan = ok.index_result.scan_diagnostics.clone();
-            self.status = Some(ok.status);
-        } else if !finished.force_full {
-            // Empty take: nothing was pending when the run took its
-            // snapshot, so the stamped target revision is already fresh.
-            // Without this, background reconciles that find no work would
-            // leave the dirty revision they bumped at enqueue time.
-            self.runtime.mark_indexed(finished.revision);
+            IndexOutcome::Noop => {
+                if !finished.force_full {
+                    // Empty take: nothing was pending when the run took its
+                    // snapshot, so the stamped target revision is already fresh.
+                    // Without this, background reconciles that find no work would
+                    // leave the dirty revision they bumped at enqueue time.
+                    self.runtime.mark_indexed(finished.revision);
+                }
+            }
+            IndexOutcome::Failed(error) => {
+                // Failed run: leave the stamped revision dirty so the next
+                // run retries the pending work instead of reading as fresh.
+                // The typed payload stays with the outcome (rather than a
+                // bare unit) so failures remain programmatically
+                // inspectable; the scheduler snapshot is the observable
+                // channel for the error itself.
+                let _error = error;
+            }
         }
     }
 }

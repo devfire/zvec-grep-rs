@@ -73,7 +73,6 @@ pub(crate) fn is_rg_engine_option(flag: &str) -> bool {
             | "binary"
             | "crlf"
             | "invert-match"
-            | "line-regexp"
             | "mmap"
             | "multiline"
             | "multiline-dotall"

@@ -51,6 +51,7 @@ pub fn rg_query_from_input(input: &RgInput) -> Result<(RootKey, RgQuery), McpErr
             max_file_size_bytes: parsed.max_file_size_bytes,
             smart_case: parsed.smart_case,
             word_regexp: parsed.word_regexp,
+            whole_line: parsed.whole_line,
             before_context: parsed.before_context,
             after_context: parsed.after_context,
         },
@@ -67,6 +68,7 @@ struct ParsedRgCommand {
     ignore_case: bool,
     smart_case: bool,
     word_regexp: bool,
+    whole_line: bool,
     max_count: Option<usize>,
     pattern_files: Vec<String>,
     globs: Vec<String>,
@@ -297,6 +299,11 @@ fn parse_long_flag(
             command.word_regexp = true;
             Ok(index + 1)
         }
+        "line-regexp" => {
+            reject_inline("line-regexp", inline)?;
+            command.whole_line = true;
+            Ok(index + 1)
+        }
         "hidden" => {
             reject_inline("hidden", inline)?;
             command.hidden = true;
@@ -376,6 +383,10 @@ fn parse_short_group(
             }
             'w' => {
                 command.word_regexp = true;
+                offset += 1;
+            }
+            'x' => {
+                command.whole_line = true;
                 offset += 1;
             }
             'l' => {

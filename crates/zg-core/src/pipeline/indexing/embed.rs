@@ -316,6 +316,15 @@ fn embed_and_commit_wave(
 ) -> EngineResult<()> {
     throw_if_index_cancelled(ctx)?;
     let started = Instant::now();
+    // Operation's canonical root set for authorization: derived from the
+    // indexed workspace, never the process working directory. Cloned per
+    // worker below; an empty set fails closed in authorizing backends.
+    let workspace_roots: Vec<String> = ctx
+        .workspace_index
+        .root_paths
+        .iter()
+        .map(|root| root.absolute_path.clone())
+        .collect();
     let outcomes: Vec<UnitOutcome> = std::thread::scope(|scope| {
         let mut handles = Vec::with_capacity(wave.len());
         for unit in &wave {
@@ -325,10 +334,12 @@ fn embed_and_commit_wave(
             let on_progress = ctx.on_progress.clone();
             let cancel = ctx.cancel.clone();
             let stats = Arc::clone(stats);
+            let workspace_roots = workspace_roots.clone();
             handles.push(scope.spawn(move || {
                 embed_unit(
                     unit,
                     &*model,
+                    &workspace_roots,
                     &scheduler,
                     abort_ref,
                     cancel.as_ref(),
@@ -475,6 +486,7 @@ fn embed_and_commit_wave(
 fn embed_unit(
     unit: &[PreparedFile],
     model: &dyn EmbeddingModel,
+    workspace_roots: &[String],
     scheduler: &Arc<EmbeddingScheduler>,
     abort: &AtomicBool,
     cancel: Option<&CancelFlag>,
@@ -492,6 +504,7 @@ fn embed_unit(
         return match embed_fragments(
             &prepared.fragments,
             model,
+            workspace_roots,
             scheduler,
             abort,
             cancel,
@@ -521,6 +534,7 @@ fn embed_unit(
     match embed_unit_contents(
         unit,
         model,
+        workspace_roots,
         scheduler,
         abort,
         cancel,
@@ -546,6 +560,7 @@ fn embed_unit(
                 match embed_fragments(
                     &prepared.fragments,
                     model,
+                    workspace_roots,
                     scheduler,
                     abort,
                     cancel,
@@ -568,10 +583,10 @@ fn embed_unit(
         }
     }
 }
-
 fn embed_unit_contents(
     unit: &[PreparedFile],
     model: &dyn EmbeddingModel,
+    workspace_roots: &[String],
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
     cancel: Option<&CancelFlag>,
@@ -591,6 +606,7 @@ fn embed_unit_contents(
     let result = embed_inputs_with_retry(
         &inputs,
         model,
+        workspace_roots,
         scheduler,
         abort,
         cancel,
@@ -634,10 +650,10 @@ fn embed_unit_contents(
 // ---------------------------------------------------------------------------
 // Embedding execution: batching, retry, adaptive scheduling.
 // ---------------------------------------------------------------------------
-
 fn embed_fragments(
     fragments: &[PreparedFragment],
     model: &dyn EmbeddingModel,
+    workspace_roots: &[String],
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
     cancel: Option<&CancelFlag>,
@@ -656,6 +672,7 @@ fn embed_fragments(
         match embed_fragment_batch(
             batch,
             model,
+            workspace_roots,
             start,
             scheduler,
             abort,
@@ -687,11 +704,11 @@ fn embed_fragments(
     }
     Ok(EmbeddingResult { vectors, truncated })
 }
-
 #[allow(clippy::too_many_arguments)]
 fn embed_fragment_batch(
     fragments: &[PreparedFragment],
     model: &dyn EmbeddingModel,
+    workspace_roots: &[String],
     start_index: usize,
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
@@ -708,6 +725,7 @@ fn embed_fragment_batch(
     match embed_inputs_with_retry(
         &inputs,
         model,
+        workspace_roots,
         scheduler,
         abort,
         cancel,
@@ -722,6 +740,7 @@ fn embed_fragment_batch(
             embed_fragment_batch_one_by_one(
                 fragments,
                 model,
+                workspace_roots,
                 start_index,
                 scheduler,
                 abort,
@@ -737,6 +756,7 @@ fn embed_fragment_batch(
 fn embed_fragment_batch_one_by_one(
     fragments: &[PreparedFragment],
     model: &dyn EmbeddingModel,
+    workspace_roots: &[String],
     start_index: usize,
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
@@ -751,6 +771,7 @@ fn embed_fragment_batch_one_by_one(
         match embed_inputs_with_retry(
             std::slice::from_ref(&input),
             model,
+            workspace_roots,
             scheduler,
             abort,
             cancel,

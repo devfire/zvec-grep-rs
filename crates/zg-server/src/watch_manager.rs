@@ -760,9 +760,10 @@ async fn flush_loop(
     }
 }
 
-/// Snapshots the pending set and delivers it. A panicking receiver is
-/// contained: the batch merges back with a forced full reconcile and a
-/// new flush is scheduled (mirrors TS `flush`'s catch path).
+/// Drains the pending set and delivers it. Snapshot and drain happen under
+/// one lock acquisition; delivery runs outside the lock. A panicking
+/// receiver is contained: the batch merges back with a forced full
+/// reconcile and a new flush is scheduled (mirrors TS `flush`'s catch path).
 fn flush_snapshot(shared: &Arc<Shared>) {
     let (snapshot, reason) = {
         let mut changes = shared
@@ -776,7 +777,9 @@ fn flush_snapshot(shared: &Arc<Shared>) {
         {
             return;
         }
-        let snapshot = changes.snapshot();
+        // Drain on snapshot: the next batch must hold only post-flush
+        // changes, and the reconcile flag resets once consumed.
+        let snapshot = changes.take_snapshot();
         let reason = if shared
             .reconcile_requested
             .load(std::sync::atomic::Ordering::SeqCst)
@@ -810,9 +813,7 @@ fn flush_snapshot(shared: &Arc<Shared>) {
         set_pending(shared, false);
     }
 }
-
 #[cfg(test)]
-#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use std::sync::Mutex as StdMutex;
@@ -849,8 +850,9 @@ mod tests {
         manager.flush_now().await;
         let batches = batches.lock().unwrap();
         assert_eq!(batches.len(), 1);
-        assert_eq!(batches[0].0.touched_files, vec!["/repo/a.rs", "/repo/b.rs"]);
-        assert_eq!(batches[0].1, WatchReason::Watch);
+        let (snapshot, reason) = batches.iter().next().expect("one batch");
+        assert_eq!(snapshot.touched_files, vec!["/repo/a.rs", "/repo/b.rs"]);
+        assert_eq!(*reason, WatchReason::Watch);
     }
 
     #[tokio::test]
@@ -884,8 +886,54 @@ mod tests {
         manager.flush_now().await;
         let batches = batches.lock().unwrap();
         assert_eq!(batches.len(), 1);
-        assert!(batches[0].0.force_full_reconcile);
-        assert_eq!(batches[0].1, WatchReason::Reconcile);
+        let (snapshot, reason) = batches.iter().next().expect("one batch");
+        assert!(snapshot.force_full_reconcile);
+        assert_eq!(*reason, WatchReason::Reconcile);
+    }
+
+    #[tokio::test]
+    async fn consecutive_flushes_deliver_only_new_changes() {
+        let (manager, batches) = manager("/repo");
+        manager
+            .inject_event("/repo/a.rs", ChangeKind::Changed, false)
+            .unwrap();
+        manager.flush_now().await;
+        manager
+            .inject_event("/repo/b.rs", ChangeKind::Changed, false)
+            .unwrap();
+        manager.flush_now().await;
+        let batches = batches.lock().unwrap();
+        let touched = batches
+            .iter()
+            .map(|(snapshot, _)| snapshot.touched_files.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            touched,
+            vec![
+                vec!["/repo/a.rs".to_owned()],
+                vec!["/repo/b.rs".to_owned()]
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn reconcile_flag_does_not_stick_across_batches() {
+        let (manager, batches) = manager("/repo");
+        manager.require_full_reconcile();
+        manager.flush_now().await;
+        manager
+            .inject_event("/repo/a.rs", ChangeKind::Changed, false)
+            .unwrap();
+        manager.flush_now().await;
+        let batches = batches.lock().unwrap();
+        assert_eq!(batches.len(), 2);
+        let (first, first_reason) = batches.first().expect("first batch");
+        assert!(first.force_full_reconcile);
+        assert_eq!(*first_reason, WatchReason::Reconcile);
+        let (second, second_reason) = batches.get(1).expect("second batch");
+        assert!(!second.force_full_reconcile);
+        assert_eq!(*second_reason, WatchReason::Watch);
+        assert_eq!(second.touched_files, vec!["/repo/a.rs".to_owned()]);
     }
 
     fn write_manifest_policy(home: &Path, root: &str, include_nested_git: Option<bool>) {
@@ -950,63 +998,73 @@ mod tests {
                 .map(|manifest| manifest.info.root_paths)
                 .unwrap_or_default()
         });
-        // One flush per manager: `flush_snapshot` redelivers pending batches,
-        // so each phase below uses a fresh manager and flushes exactly once.
-        let watch_once = |source: RootPathsSource, events: Vec<(String, bool)>| {
-            let batches: RecordedBatches = Arc::new(StdMutex::new(Vec::new()));
-            let batches_clone = batches.clone();
-            let root = root.clone();
-            async move {
-                let manager = WatchManager::new(WatchManagerOptions {
-                    root,
-                    debounce: Some(Duration::from_secs(3600)),
-                    max_wait: Some(Duration::from_secs(3600)),
-                    max_changed_paths: None,
-                    on_changes: Arc::new(move |snapshot, reason| {
-                        batches_clone.lock().unwrap().push((snapshot, reason));
-                    }),
-                    get_root_paths: Some(source),
-                    on_pending: None,
-                });
-                for (path, is_directory) in &events {
-                    manager
-                        .inject_event(path, ChangeKind::Changed, *is_directory)
-                        .unwrap();
-                }
-                manager.flush_now().await;
-                let batches = batches.lock().unwrap();
-                batches
-                    .iter()
-                    .map(|(snapshot, _)| snapshot.touched_files.clone())
-                    .collect::<Vec<_>>()
-            }
+        // One manager across phases: each flush drains, so every batch
+        // holds only post-flush changes.
+        let batches: RecordedBatches = Arc::new(StdMutex::new(Vec::new()));
+        let batches_clone = batches.clone();
+        let manager = WatchManager::new(WatchManagerOptions {
+            root: root.clone(),
+            debounce: Some(Duration::from_secs(3600)),
+            max_wait: Some(Duration::from_secs(3600)),
+            max_changed_paths: None,
+            on_changes: Arc::new(move |snapshot, reason| {
+                batches_clone.lock().unwrap().push((snapshot, reason));
+            }),
+            get_root_paths: Some(source),
+            on_pending: None,
+        });
+        let touched_batches = || {
+            batches
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(snapshot, _)| snapshot.touched_files.clone())
+                .collect::<Vec<_>>()
         };
 
         let nested = format!("{root}/repo-a/a.txt");
+        manager
+            .inject_event(&nested, ChangeKind::Changed, false)
+            .unwrap();
+        manager.flush_now().await;
         assert!(
-            watch_once(source.clone(), vec![(nested.clone(), false)])
-                .await
-                .is_empty(),
+            touched_batches().iter().all(|batch| batch.is_empty()),
             "disabled policy tracks no nested change"
         );
 
         write_manifest_policy(&home, &root, Some(true));
+        manager.refresh_roots();
+        manager
+            .inject_event(&nested, ChangeKind::Changed, false)
+            .unwrap();
+        manager.flush_now().await;
+        let delivered = touched_batches();
+        let latest = delivered.iter().last().expect("enabled phase flushes");
         assert_eq!(
-            watch_once(source.clone(), vec![(nested.clone(), false)]).await,
-            vec![vec![nested.clone()]],
+            latest,
+            &vec![nested.clone()],
             "enabled policy yields the nested touched path"
         );
 
-        assert!(
-            watch_once(
-                source.clone(),
-                vec![
-                    (format!("{root}/repo-a/.git/HEAD"), false),
-                    (format!("{root}/.zvec-grep/manifest.json"), false),
-                ],
+        let batch_count = batches.lock().unwrap().len();
+        manager
+            .inject_event(
+                &format!("{root}/repo-a/.git/HEAD"),
+                ChangeKind::Changed,
+                false,
             )
-            .await
-            .is_empty(),
+            .unwrap();
+        manager
+            .inject_event(
+                &format!("{root}/.zvec-grep/manifest.json"),
+                ChangeKind::Changed,
+                false,
+            )
+            .unwrap();
+        manager.flush_now().await;
+        assert_eq!(
+            batches.lock().unwrap().len(),
+            batch_count,
             ".git and .zvec-grep changes stay untracked"
         );
     }

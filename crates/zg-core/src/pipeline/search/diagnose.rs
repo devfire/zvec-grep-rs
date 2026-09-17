@@ -110,7 +110,15 @@ fn choose_best_entity_in_file(
     add_recall_hits(&mut candidates, &hits, &route, ctx.storage, 0);
     let model = require_embedding_model(ctx, "diagnose")?;
     let inputs = [EmbeddingInput::Text { text: query }];
-    let result = model.embed(EmbeddingPurpose::Query, &inputs)?;
+    // Operation's canonical root set for authorization: the diagnosed
+    // workspace, never the process working directory.
+    let workspace_roots: Vec<String> = ctx
+        .workspace_index
+        .root_paths
+        .iter()
+        .map(|root| root.absolute_path.clone())
+        .collect();
+    let result = model.embed_scoped(EmbeddingPurpose::Query, &inputs, &workspace_roots)?;
     let Some(query_vector) = result.vectors.into_iter().next() else {
         return Ok(None);
     };

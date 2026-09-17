@@ -560,7 +560,18 @@ impl EmbeddingModel for QwenTextEmbeddingModel {
         purpose: EmbeddingPurpose,
         inputs: &[EmbeddingInput<'_>],
     ) -> EngineResult<EmbeddingResult> {
-        check_remote_embedding_permit(&self.info, purpose, inputs)?;
+        // No ambient root set on the bare path: fail closed with an empty
+        // set rather than consulting the process working directory.
+        self.embed_scoped(purpose, inputs, &[])
+    }
+
+    fn embed_scoped(
+        &self,
+        purpose: EmbeddingPurpose,
+        inputs: &[EmbeddingInput<'_>],
+        workspace_roots: &[String],
+    ) -> EngineResult<EmbeddingResult> {
+        check_remote_embedding_permit(&self.info, purpose, inputs, workspace_roots)?;
         embed_validated(self, inputs, || self.embed_core(inputs))
     }
 }
@@ -759,10 +770,17 @@ impl Qwen3VlEmbeddingModel {
 /// Fails closed without an ambient operation permit, before any validation
 /// or network traffic. Runs first so revoked or missing grants surface as
 /// `AUTH.REMOTE_EMBEDDING_REQUIRED` even for otherwise-invalid inputs.
+///
+/// `workspace_roots` is the operation's canonical root set supplied by the
+/// caller (never the process working directory). An empty set fails closed
+/// through the guard (`Request carries no workspace roots`); multiple roots
+/// are carried whole into the request and matched exactly, never truncated
+/// to a first element.
 fn check_remote_embedding_permit(
     info: &EmbeddingModelInfo,
     purpose: EmbeddingPurpose,
     inputs: &[EmbeddingInput<'_>],
+    workspace_roots: &[String],
 ) -> EngineResult<()> {
     let mut content_kinds = Vec::with_capacity(2);
     if inputs
@@ -777,12 +795,8 @@ fn check_remote_embedding_permit(
     {
         content_kinds.push(ContentKind::Image);
     }
-    let roots = std::env::current_dir()
-        .ok()
-        .map(|path| vec![path.to_string_lossy().into_owned()])
-        .unwrap_or_default();
     let request = create_remote_embedding_request(
-        &roots,
+        workspace_roots,
         &info.provider,
         &info.model,
         &info.endpoint.clone().unwrap_or_default(),
@@ -822,7 +836,97 @@ impl EmbeddingModel for Qwen3VlEmbeddingModel {
         purpose: EmbeddingPurpose,
         inputs: &[EmbeddingInput<'_>],
     ) -> EngineResult<EmbeddingResult> {
-        check_remote_embedding_permit(&self.info, purpose, inputs)?;
+        // No ambient root set on the bare path: fail closed with an empty
+        // set rather than consulting the process working directory.
+        self.embed_scoped(purpose, inputs, &[])
+    }
+
+    fn embed_scoped(
+        &self,
+        purpose: EmbeddingPurpose,
+        inputs: &[EmbeddingInput<'_>],
+        workspace_roots: &[String],
+    ) -> EngineResult<EmbeddingResult> {
+        check_remote_embedding_permit(&self.info, purpose, inputs, workspace_roots)?;
         embed_validated(self, inputs, || self.embed_core(inputs))
+    }
+}
+
+#[cfg(test)]
+mod scoped_authorization_tests {
+    use super::*;
+    use crate::authorization::operation::{
+        RemoteEmbeddingAuthorizationManager, with_remote_embedding_operation_permit,
+    };
+    use crate::authorization::store::RemoteEmbeddingAuthorizationStore;
+    use crate::authorization::target::create_remote_embedding_target;
+    use crate::authorization::types::RemoteEmbeddingScope;
+    use crate::models::catalog::QwenTextEntry;
+    use crate::models::embeddings::ApiKey;
+
+    const AUTH_REQUIRED: &str = "ZVEC_GREP.ENGINE.AUTH.REMOTE_EMBEDDING_REQUIRED";
+
+    fn text_model(endpoint: String) -> QwenTextEmbeddingModel {
+        QwenTextEmbeddingModel::from_plan(
+            QwenTextEntry {
+                reference: "qwen/text-embedding-v4",
+                provider: "qwen",
+                model: "text-embedding-v4",
+                dimension: 1024,
+                default_endpoint: "https://example.invalid/embeddings",
+                max_batch_size: 8,
+                max_input_tokens: 8192,
+            },
+            ApiKey::new("test-key"),
+            endpoint,
+        )
+    }
+
+    /// A `Once` permit for root A authorizes `embed_scoped` with roots `[A]`
+    /// (permit check passes, so failure — if any — is transport, never
+    /// `AUTH`), while roots `[B]` fail closed with
+    /// `AUTH.REMOTE_EMBEDDING_REQUIRED` even though the process working
+    /// directory is neither root.
+    #[test]
+    fn scoped_permit_binds_granted_root_not_cwd() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root_a = dir.path().join("a");
+        let root_b = dir.path().join("b");
+        std::fs::create_dir_all(&root_a).expect("mkdir a");
+        std::fs::create_dir_all(&root_b).expect("mkdir b");
+        let endpoint = "https://example.invalid/embeddings";
+        let target = create_remote_embedding_target(
+            &[root_a.to_string_lossy().into_owned()],
+            "qwen",
+            "text-embedding-v4",
+            endpoint,
+        )
+        .expect("target");
+        let store = || RemoteEmbeddingAuthorizationStore::with_signing_key(dir.path().join("k"));
+        let manager = RemoteEmbeddingAuthorizationManager::with_store(store());
+        let permit = manager
+            .grant(&target, RemoteEmbeddingScope::Once)
+            .expect("permit");
+        let model = text_model(endpoint.to_owned());
+        let roots_a = vec![root_a.to_string_lossy().into_owned()];
+        let roots_b = vec![root_b.to_string_lossy().into_owned()];
+        with_remote_embedding_operation_permit(Some(permit), || {
+            let inputs = [EmbeddingInput::Text { text: "hello" }];
+            // Granted root: authorization passes; any error is transport.
+            match model.embed_scoped(EmbeddingPurpose::Query, &inputs, &roots_a) {
+                Ok(_) => {}
+                Err(error) => assert_ne!(error.code().to_string(), AUTH_REQUIRED),
+            }
+            // Different root: fails closed regardless of process cwd.
+            let error = model
+                .embed_scoped(EmbeddingPurpose::Query, &inputs, &roots_b)
+                .expect_err("other root must not authorize");
+            assert_eq!(error.code().to_string(), AUTH_REQUIRED);
+            // Bare path carries no roots: fails closed, never consults cwd.
+            let error = model
+                .embed(EmbeddingPurpose::Query, &inputs)
+                .expect_err("bare embed must not authorize");
+            assert_eq!(error.code().to_string(), AUTH_REQUIRED);
+        });
     }
 }

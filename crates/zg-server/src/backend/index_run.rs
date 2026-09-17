@@ -26,7 +26,7 @@ use zg_core::models::{EmbeddingModel, EmbeddingModelInfo};
 use zg_core::service::facade::ZvecGrepService;
 use zg_core::service::types::{ZvecGrepIndexOptions, ZvecGrepInfoResult};
 
-use super::actor::{FinishedIndex, FinishedOk, RootCommand};
+use super::actor::{FinishedIndex, FinishedOk, IndexOutcome, IndexRunFailure, RootCommand};
 use super::config::BackendShared;
 use super::runtime::load_request_for;
 use crate::change_set::ChangeSetSnapshot;
@@ -63,7 +63,7 @@ pub(crate) fn build_index_run(
                     finished: Box::new(FinishedIndex {
                         revision,
                         force_full: false,
-                        ok: None,
+                        outcome: IndexOutcome::Noop,
                     }),
                 });
                 return Ok(());
@@ -93,24 +93,29 @@ pub(crate) fn build_index_run(
                 &shared, &key, model, &snapshot, force_full, reporter, &token,
             )
             .await;
-            let (finished_ok, job_result) = match outcome {
-                Ok(finished) => (finished, Ok(())),
-                Err(error) => (None, Err(error)),
+            let (outcome, job_result) = match outcome {
+                Ok(Some(finished)) => (IndexOutcome::Completed(Box::new(finished)), Ok(())),
+                Ok(None) => (IndexOutcome::Noop, Ok(())),
+                Err(IndexRunError::Engine(error)) => (
+                    IndexOutcome::Failed(IndexRunFailure::Engine(error.clone())),
+                    Err(JobFailure::Engine(error)),
+                ),
+                Err(IndexRunError::Join(message)) => (
+                    IndexOutcome::Failed(IndexRunFailure::Join(message.clone())),
+                    Err(JobFailure::Failed(message)),
+                ),
             };
             let _ = tx.send(RootCommand::IndexFinished {
                 finished: Box::new(FinishedIndex {
                     revision,
                     force_full,
-                    ok: finished_ok,
+                    outcome,
                 }),
             });
             if token.is_cancelled() {
                 return Err(JobFailure::Cancelled);
             }
-            job_result.map_err(|error| match error {
-                IndexRunError::Engine(error) => JobFailure::Engine(error),
-                IndexRunError::Join(message) => JobFailure::Failed(message),
-            })
+            job_result
         }) as BoxFuture<'static, JobOutcome>
     })
 }

@@ -7,7 +7,7 @@ use zg_core::models::embeddings::{CreateEmbeddingModelOptions, DeviceKind};
 use zg_core::models::factory::create_embedding_model;
 use zg_core::service::facade::create_zvec_grep;
 use zg_core::service::types::{ContextSource, ZvecGrepContextOptions};
-use zg_core::types::{SearchPlanRoute, SearchPlanRouteMode};
+use zg_core::types::{CodeSymbolType, SearchPlanRoute, SearchPlanRouteMode, UnixMillis};
 
 use super::authz::{SearchPermit, authorize_plan};
 use super::catalog::catalog_reference_for;
@@ -59,6 +59,39 @@ pub(crate) async fn run_query(args: QueryArgs) -> Result<(), CliError> {
     .await
 }
 
+/// Hard result-set filters shared by the direct and server search paths.
+///
+/// These narrow the result set identically in both modes; ranking/scoring
+/// is untouched.
+struct SearchHardFilters {
+    symbol_types: Vec<CodeSymbolType>,
+    modified_after: Option<UnixMillis>,
+    modified_before: Option<UnixMillis>,
+}
+
+/// Builds the hard filters from CLI flags once for both search paths, so
+/// identical queries mean the same thing in direct and server mode.
+fn search_hard_filters(args: &QueryArgs) -> Result<SearchHardFilters, CliError> {
+    Ok(SearchHardFilters {
+        symbol_types: map_symbol_types(&args.symbol_type),
+        modified_after: map_modified_time(args.modified_after.as_deref(), "--modified-after")?,
+        modified_before: map_modified_time(args.modified_before.as_deref(), "--modified-before")?,
+    })
+}
+
+/// Maps an indexed symbol type onto its daemon wire name
+/// (`codeSymbolTypeSchema`, lowercase). Exhaustive over the domain enum.
+fn symbol_type_wire_name(symbol: CodeSymbolType) -> &'static str {
+    match symbol {
+        CodeSymbolType::Module => "module",
+        CodeSymbolType::Class => "class",
+        CodeSymbolType::Interface => "interface",
+        CodeSymbolType::Function => "function",
+        CodeSymbolType::Value => "value",
+        CodeSymbolType::Alias => "alias",
+    }
+}
+
 /// Builds direct-mode context options; `auto_update` follows the direct
 /// search policy (`wait` only).
 fn direct_context_options<'a>(
@@ -66,6 +99,7 @@ fn direct_context_options<'a>(
     queries: &[String],
     fts_only: bool,
 ) -> Result<ZvecGrepContextOptions<'a>, CliError> {
+    let filters = search_hard_filters(args)?;
     let policy = resolve_direct_search_policy(args.refresh);
     let mut primary = queries.to_vec();
     let mut fts = args.fts.clone();
@@ -102,15 +136,15 @@ fn direct_context_options<'a>(
         trace: args.trace,
         track_entity_id: None,
         prefer_symbol: args.prefer_symbol,
-        symbol_types: map_symbol_types(&args.symbol_type),
+        symbol_types: filters.symbol_types,
         include_paths: Vec::new(),
         exclude_paths: Vec::new(),
         globs: args.globs.clone(),
         insensitive_globs: args.iglobs.clone(),
         file_types: args.file_types.clone(),
         excluded_file_types: args.excluded_file_types.clone(),
-        modified_after: map_modified_time(args.modified_after.as_deref(), "--modified-after")?,
-        modified_before: map_modified_time(args.modified_before.as_deref(), "--modified-before")?,
+        modified_after: filters.modified_after,
+        modified_before: filters.modified_before,
         rg: None,
         auto_update: policy.auto_update,
         signal: None,
@@ -219,6 +253,7 @@ async fn run_query_server(
     queries: &[String],
     client: DaemonClient,
 ) -> Result<(), CliError> {
+    let filters = search_hard_filters(args)?;
     let policy = resolve_server_search_policy(args.refresh);
     let mut arguments = json!({
         "root": absolute_cwd()?,
@@ -251,6 +286,20 @@ async fn run_query_server(
                 "excludedFileTypes".to_owned(),
                 json!(args.excluded_file_types),
             );
+        }
+        if !filters.symbol_types.is_empty() {
+            let wire: Vec<&str> = filters
+                .symbol_types
+                .iter()
+                .map(|symbol| symbol_type_wire_name(*symbol))
+                .collect();
+            map.insert("symbolTypes".to_owned(), json!(wire));
+        }
+        if let Some(after) = filters.modified_after {
+            map.insert("modifiedAfter".to_owned(), json!(after.as_millis()));
+        }
+        if let Some(before) = filters.modified_before {
+            map.insert("modifiedBefore".to_owned(), json!(before.as_millis()));
         }
     }
     let result = client.call_tool("zvec_grep_search", arguments).await?;

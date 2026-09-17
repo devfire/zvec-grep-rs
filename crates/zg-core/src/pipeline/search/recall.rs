@@ -36,6 +36,7 @@ const SYMBOL_QUERY_KEYWORDS: &[&str] = &[
 pub(crate) fn embed_vector_routes(
     routes: &[ResolvedSearchPlanRoute],
     model: &dyn EmbeddingModel,
+    workspace_roots: &[String],
 ) -> EngineResult<HashMap<String, Vec<f32>>> {
     let vector_routes: Vec<&ResolvedSearchPlanRoute> = routes
         .iter()
@@ -50,7 +51,7 @@ pub(crate) fn embed_vector_routes(
                 text: route.query.as_str(),
             })
             .collect();
-        let result = model.embed(EmbeddingPurpose::Query, &inputs)?;
+        let result = model.embed_scoped(EmbeddingPurpose::Query, &inputs, workspace_roots)?;
         for (route, vector) in batch.iter().zip(result.vectors) {
             by_route.insert(route.id.clone(), vector);
         }

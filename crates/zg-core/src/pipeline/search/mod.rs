@@ -68,10 +68,19 @@ pub fn search_workspace_index(
     let mut candidates: HashMap<String, Candidate> = HashMap::new();
     let mut vector_by_route: HashMap<String, Vec<f32>> = HashMap::new();
     if !plan_filter.matches_no_files && plan_uses_vector(&normalized) {
+        // Operation's canonical root set for authorization: the searched
+        // workspace, never the process working directory.
+        let workspace_roots: Vec<String> = ctx
+            .workspace_index
+            .root_paths
+            .iter()
+            .map(|root| root.absolute_path.clone())
+            .collect();
         let embedded = timings.time("query_embedding", || {
             embed_vector_routes(
                 &normalized.routes,
                 require_embedding_model(ctx, "searchPlan")?,
+                &workspace_roots,
             )
         })?;
         vector_by_route = embedded;

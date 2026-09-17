@@ -237,16 +237,34 @@ impl DaemonClient {
             .is_ok_and(|response| response.status().is_success())
     }
 
-    /// Calls one MCP tool: initialize → notify → `tools/call`.
+    /// Calls one MCP tool: initialize → notify → `tools/call` → close.
+    ///
+    /// The session is always closed before returning — on success, tool
+    /// failure, and transport failure — so repeated CLI calls never
+    /// accumulate live daemon sessions toward the 256-session cap. A
+    /// close failure is logged to stderr and never masks the primary
+    /// result.
     pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<ToolResult, CliError> {
         let session = self.initialize().await?;
+        let outcome = self.call_tool_with_session(name, arguments, &session).await;
+        self.close_session(&session).await;
+        outcome
+    }
+
+    /// Runs `tools/call` on an open session; the caller owns closing it.
+    async fn call_tool_with_session(
+        &self,
+        name: &str,
+        arguments: Value,
+        session: &str,
+    ) -> Result<ToolResult, CliError> {
         let body = json!({
             "jsonrpc": "2.0",
             "id": 2,
             "method": "tools/call",
             "params": {"name": name, "arguments": arguments},
         });
-        let message = self.post(&body, Some(&session)).await?;
+        let message = self.post(&body, Some(session)).await?;
         if let Some(error) = message.get("error") {
             return Err(tool_error(name, error));
         }
@@ -258,6 +276,34 @@ impl DaemonClient {
                 .cloned()
                 .unwrap_or(Value::Null),
         })
+    }
+
+    /// Best-effort session close: `DELETE /mcp` with the session id.
+    ///
+    /// Never fails: transport errors and unexpected statuses are logged
+    /// to stderr so a close failure cannot mask the primary call result.
+    /// A 404 means the session is already gone and counts as closed.
+    async fn close_session(&self, session: &str) {
+        let mut request = self
+            .http
+            .delete(format!("{}/mcp", self.base_url))
+            .header("origin", self.base_url.clone())
+            .timeout(Duration::from_secs(5));
+        if let Some(token) = &self.token {
+            request = request.header("authorization", format!("Bearer {token}"));
+        }
+        request = request.header("mcp-session-id", session);
+        match request.send().await {
+            Err(error) => {
+                eprintln!("warning: failed to close the MCP session: {error}");
+            }
+            Ok(response) => {
+                let status = response.status();
+                if !status.is_success() && status.as_u16() != 404 {
+                    eprintln!("warning: failed to close the MCP session (HTTP {status})");
+                }
+            }
+        }
     }
 
     /// Opens a session: `initialize` returns the session id, then the
@@ -286,12 +332,21 @@ impl DaemonClient {
                 ))
             })?;
         let notified = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
-        let ack = self.post_raw(&notified, Some(&session)).await?;
+        let ack = match self.post_raw(&notified, Some(&session)).await {
+            Ok(ack) => ack,
+            Err(error) => {
+                // The server created the session before the handshake send
+                // failed; close it so the partial open never leaks.
+                self.close_session(&session).await;
+                return Err(error);
+            }
+        };
         if !ack.status().is_success() {
+            let status = ack.status();
+            self.close_session(&session).await;
             return Err(CliError::daemon_unavailable(format!(
-                "zvec-grep server at {} rejected the MCP handshake (HTTP {})",
+                "zvec-grep server at {} rejected the MCP handshake (HTTP {status})",
                 self.base_url,
-                ack.status()
             )));
         }
         Ok(session)

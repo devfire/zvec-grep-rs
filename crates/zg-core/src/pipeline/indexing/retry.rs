@@ -17,10 +17,11 @@ use super::context::{
     PERMANENT_REMOTE_MODEL_PROVIDER_CODES, is_cancelled_or_aborted, throw_if_aborted,
 };
 use super::scanner::CancelFlag;
-
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn embed_inputs_with_retry(
     inputs: &[EmbeddingInput<'_>],
     model: &dyn EmbeddingModel,
+    workspace_roots: &[String],
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
     cancel: Option<&CancelFlag>,
@@ -33,7 +34,7 @@ pub(crate) fn embed_inputs_with_retry(
         throw_if_aborted(abort, cancel)?;
         let outcome = scheduler.run(abort, cancel, |abort, cancel| {
             throw_if_aborted(abort, cancel)?;
-            model.embed(EmbeddingPurpose::Document, inputs)
+            model.embed_scoped(EmbeddingPurpose::Document, inputs, workspace_roots)
         });
         match outcome {
             Ok(result) => {
@@ -620,6 +621,7 @@ mod tests {
         let result = embed_inputs_with_retry(
             std::slice::from_ref(&input),
             &*model,
+            &[],
             &scheduler,
             &abort,
             None,

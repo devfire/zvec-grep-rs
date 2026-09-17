@@ -323,16 +323,30 @@ impl fmt::Display for EngineError {
 impl fmt::Debug for EngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Same boundary as `Display`: `{:?}` logging must never leak secrets.
-        let message = redact_error_text(&self.message, usize::MAX).into_owned();
-        let context: Option<String> = self
-            .context
+        // Destructure fully so a future field forces a redaction decision here.
+        let Self {
+            code,
+            message,
+            context,
+            source,
+        } = self;
+        let message = redact_error_text(message, usize::MAX).into_owned();
+        let context: Option<String> = context
             .as_deref()
             .map(|context| redact_error_text(context, usize::MAX).into_owned());
+        // Redact the rendered source while keeping `Error::source()` typed:
+        // `{:?}` of the cause is re-redacted through the same pass as
+        // `Display`, so a credential-bearing `serde_json::Error` (or any
+        // cause) never leaks via the `source` field.
+        let source: Option<String> = source.as_deref().map(|cause| {
+            let raw = format!("{cause:?}");
+            redact_error_text(&raw, usize::MAX).into_owned()
+        });
         f.debug_struct("EngineError")
-            .field("code", &self.code)
+            .field("code", code)
             .field("message", &message)
             .field("context", &context)
-            .field("source", &self.source)
+            .field("source", &source)
             .finish()
     }
 }

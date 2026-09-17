@@ -70,8 +70,8 @@ pub(crate) fn load_patterns(
 }
 
 /// Combines `patterns` into one alternation (`(?:a|b)`, plus `\b..\b` with
-/// `word_regexp`) and compiles it with a 10 MiB regex size limit (ReDoS
-/// bound).
+/// `word_regexp`, plus `^(?:..)$` with `whole_line`) and compiles it with a
+/// 10 MiB regex size limit (ReDoS bound).
 ///
 /// Caps (all rejected with `LEXICAL.INVALID_PATTERN`): at most
 /// [`MAX_PATTERN_COUNT`] patterns, each at most [`MAX_PATTERN_LEN_BYTES`]
@@ -115,6 +115,9 @@ pub(crate) fn build_matcher(
     combined = format!("(?:{combined})");
     if options.word_regexp {
         combined = format!(r"\b{combined}\b");
+    }
+    if options.whole_line {
+        combined = format!("^(?:{combined})$");
     }
     if combined.len() > MAX_COMBINED_PATTERN_LEN_BYTES {
         return Err(EngineError::new(
