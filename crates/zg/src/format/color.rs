@@ -36,10 +36,32 @@ impl Color {
     }
 }
 
-/// Settles the color verdict: explicit `--color` wins, `NO_COLOR` (or
-/// `--no-color`) always disables, otherwise `auto` follows the terminal.
+/// Settles the color verdict for stdout printers: explicit `--color` wins,
+/// `NO_COLOR` (or `--no-color`) always disables, otherwise `auto` follows
+/// the stdout terminal.
 #[must_use]
 pub fn use_color(mode: Option<ColorMode>, no_color: bool) -> Color {
+    resolve_color(
+        mode,
+        no_color,
+        std::io::IsTerminal::is_terminal(&std::io::stdout()),
+    )
+}
+
+/// Settles the color verdict for stderr painters (progress reporter):
+/// same precedence as [`use_color`], but `auto` follows the stderr
+/// terminal — the stream the paint lands on.
+#[must_use]
+pub fn use_color_stderr(mode: Option<ColorMode>, no_color: bool) -> Color {
+    resolve_color(
+        mode,
+        no_color,
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+    )
+}
+
+/// Shared precedence: explicit flags win, otherwise `auto` follows `tty`.
+fn resolve_color(mode: Option<ColorMode>, no_color: bool, tty: bool) -> Color {
     if no_color || std::env::var("NO_COLOR").is_ok() {
         return Color::Never;
     }
@@ -47,7 +69,7 @@ pub fn use_color(mode: Option<ColorMode>, no_color: bool) -> Color {
         Some(ColorMode::Always) => Color::Always,
         Some(ColorMode::Never) => Color::Never,
         Some(ColorMode::Auto) | None => {
-            if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+            if tty {
                 Color::Always
             } else {
                 Color::Never

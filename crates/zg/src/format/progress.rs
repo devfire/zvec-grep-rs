@@ -8,7 +8,8 @@
 use std::io::Write as _;
 use std::time::{Duration, Instant};
 
-use super::color::{GREEN, RESET};
+use super::color::{GREEN, RESET, use_color_stderr};
+use crate::cli::ColorMode;
 
 /// Width of the TTY file bar.
 const BAR_WIDTH: usize = 20;
@@ -153,12 +154,13 @@ pub struct ProgressReporter {
 }
 
 impl ProgressReporter {
-    /// Builds a reporter; color follows the CLI color selection and
-    /// `enabled` follows `--no-progress`/`--quiet`.
+    /// Builds a reporter; `mode`/`no_color` settle `auto` against the
+    /// stderr terminal (the stream the paint lands on) and `enabled`
+    /// follows `--no-progress`/`--quiet`.
     #[must_use]
-    pub fn new(color: bool, enabled: bool) -> Self {
+    pub fn new(mode: Option<ColorMode>, no_color: bool, enabled: bool) -> Self {
         Self {
-            color,
+            color: use_color_stderr(mode, no_color).enabled(),
             enabled,
             tty: std::io::IsTerminal::is_terminal(&std::io::stderr()),
             tick: 0,
