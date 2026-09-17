@@ -20,6 +20,8 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+terminal_size.workspace = true
+unicode-width.workspace = true
 reqwest.workspace = true
 chrono.workspace = true
 

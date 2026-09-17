@@ -9,7 +9,10 @@ use super::context_agent::format_context_agent;
 use super::context_human::format_context_human;
 use super::error::debug_lines;
 use super::index::format_index_result;
-use super::progress::{format_green_progress_bar, format_progress_line};
+use super::progress::{
+    format_green_progress_bar, format_progress_line, format_progress_line_clamped, stderr_width,
+    visible_width,
+};
 use super::range::range_label;
 use super::text::{format_score, one_line, truncate};
 use super::workspace::{WorkspaceState, format_workspace_info, workspace_state};
@@ -232,6 +235,68 @@ fn progress_line_covers_scan_download_and_indexing() {
     assert!(line.contains("(4/10)"), "{line}");
     assert!(line.contains("indexing"), "{line}");
     assert!(line.contains("a.rs"), "{line}");
+}
+
+#[test]
+fn progress_line_clamped_fits_narrow_terminals() {
+    use zg_core::types::{IndexEmbeddingProgress, IndexProgress, IndexProgressPhase};
+    // Worst case from the wrap report: bar + counts + download counters +
+    // long detail (~144 visible chars) on an 80-col terminal.
+    let full_detail = "a/very/long/path/that/keeps/going/on/and/on/file.rs";
+    let progress = IndexProgress {
+        phase: Some(IndexProgressPhase::Indexing),
+        files_total: Some(9999),
+        files_indexed: Some(9999),
+        detail: Some(full_detail.to_owned()),
+        embedding: Some(IndexEmbeddingProgress {
+            downloaded_bytes: Some(123_400_000),
+            total_bytes: Some(456_700_000),
+            ..IndexEmbeddingProgress::default()
+        }),
+        ..IndexProgress::default()
+    };
+    let line = format_progress_line_clamped(&progress, false, 0, Some(80));
+    assert!(visible_width(&line) <= 80, "{line}");
+    assert!(line.contains("(9999/9999)"), "{line}");
+    assert!(line.contains("downloading"), "{line}");
+    assert!(!line.contains(full_detail), "{line}");
+    // Narrow terminal: bar drops, phase and counters survive.
+    let line = format_progress_line_clamped(&progress, false, 0, Some(40));
+    assert!(visible_width(&line) <= 40, "{line}");
+    assert!(line.contains("indexing"), "{line}");
+    assert!(line.contains("(9999/9999)"), "{line}");
+    // Colored clamp keeps escapes balanced and within width.
+    let line = format_progress_line_clamped(&progress, true, 0, Some(80));
+    assert!(visible_width(&line) <= 80, "{line}");
+    assert_eq!(
+        line.matches("\x1b[32m").count(),
+        line.matches("\x1b[0m").count(),
+        "{line}"
+    );
+    // Wide chars count 2 columns each toward the budget.
+    let cjk = IndexProgress {
+        phase: Some(IndexProgressPhase::Scanning),
+        detail: Some("\u{65e5}\u{672c}\u{8a9e}\u{306e}\u{30d1}\u{30b9}\u{304c}\u{9577}\u{3044}\u{5834}\u{5408}\u{306e}\u{30c6}\u{30b9}\u{30c8}.rs".to_owned()),
+        ..IndexProgress::default()
+    };
+    let line = format_progress_line_clamped(&cjk, false, 0, Some(30));
+    assert!(visible_width(&line) <= 30, "{line}");
+    assert!(line.contains("scanning"), "{line}");
+    // `None` preserves the legacy unclamped layout exactly.
+    let indexing = IndexProgress {
+        phase: Some(IndexProgressPhase::Indexing),
+        files_total: Some(10),
+        files_indexed: Some(4),
+        detail: Some("a.rs".to_owned()),
+        ..IndexProgress::default()
+    };
+    let legacy = format_progress_line(&indexing, false, 0);
+    assert_eq!(
+        format_progress_line_clamped(&indexing, false, 0, None),
+        legacy
+    );
+    assert_eq!(legacy, "\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591} 40% (4/10) indexing a.rs");
+    assert!(stderr_width() >= 20);
 }
 
 #[test]
