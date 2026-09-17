@@ -56,6 +56,9 @@ pub enum SessionError {
     Closed,
     /// Opening the session failed; the error is preserved verbatim.
     Open(EngineError),
+    /// The blocking search body failed to join (panic; cancellation
+    /// surfaces as [`SessionError::Closed`] instead).
+    Blocking(String),
 }
 
 impl std::fmt::Display for SessionError {
@@ -63,6 +66,7 @@ impl std::fmt::Display for SessionError {
         match self {
             Self::Closed => write!(f, "workspace read session cache is closed"),
             Self::Open(error) => write!(f, "failed to open workspace read session: {error}"),
+            Self::Blocking(message) => write!(f, "blocking search task failed: {message}"),
         }
     }
 }
@@ -70,7 +74,7 @@ impl std::fmt::Display for SessionError {
 impl std::error::Error for SessionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Closed => None,
+            Self::Closed | Self::Blocking(_) => None,
             Self::Open(error) => Some(error),
         }
     }
@@ -170,7 +174,67 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
     /// Returns [`SessionError::Closed`] when the cache is closed, or
     /// [`SessionError::Open`] when opening the handle fails.
     pub async fn with_read<R>(&self, operation: impl FnOnce(&T) -> R) -> Result<R, SessionError> {
-        let handle: T = loop {
+        let handle = self.checkout().await?;
+        self.run_checked_out(handle, operation).await
+    }
+
+    /// Blocking variant of [`Self::with_read`]: checks the handle out as
+    /// usual, then runs `operation` on a `spawn_blocking` thread instead of
+    /// the calling tokio worker. Synchronous engine searches (tantivy +
+    /// vector + file IO, plus the thread-local embed permit scope) must use
+    /// this; running them inline blocks the actor's worker, mirroring the
+    /// exact-grep handler's `spawn_blocking` path.
+    ///
+    /// Checkout/restore semantics match `with_read`: at most one search owns
+    /// the handle at a time, and the handle is restored (or dropped, when
+    /// closed) afterwards. A panicking body loses its handle, so the
+    /// checkout is released without a restore and the next reader reopens
+    /// cold; cancellation surfaces as [`SessionError::Closed`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::Closed`] when the cache is closed or the
+    /// blocking task is cancelled, [`SessionError::Open`] when opening
+    /// fails, or [`SessionError::Blocking`] when the blocking body panics.
+    pub async fn with_read_blocking<R, F>(&self, operation: F) -> Result<R, SessionError>
+    where
+        T: Send + 'static,
+        R: Send + 'static,
+        F: FnOnce(&T) -> R + Send + 'static,
+    {
+        let handle = self.checkout().await?;
+        let joined = tokio::task::spawn_blocking(move || {
+            let output = operation(&handle);
+            (handle, output)
+        })
+        .await;
+        match joined {
+            Ok((handle, output)) => {
+                self.restore(handle).await;
+                Ok(output)
+            }
+            Err(join) => {
+                // The body panicked (or was cancelled): its handle is gone,
+                // so release the checkout without a restore; the next reader
+                // reopens cold instead of parking behind a lost checkout.
+                self.release_checkout().await;
+                if join.is_cancelled() {
+                    return Err(SessionError::Closed);
+                }
+                Err(SessionError::Blocking(format!(
+                    "blocking search task panicked: {join}"
+                )))
+            }
+        }
+    }
+
+    /// Checks out the resident handle, opening it first when cold. The
+    /// state mutex is held only for brief observe/publish steps; the cold
+    /// open runs outside it (single-flighted on the open mutex). Callers
+    /// must return the handle via [`Self::restore`] (or drop the checkout
+    /// via [`Self::release_checkout`] when the handle is lost).
+    async fn checkout(&self) -> Result<T, SessionError> {
+        loop {
             // Registered before observing so a restore/`close` that lands
             // between the observe and the park still wakes us (no lost
             // wakeup); the future does nothing until first polled.
@@ -201,10 +265,10 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
                 }
             };
             match next {
-                Next::Ready(handle) => break handle,
+                Next::Ready(handle) => return Ok(handle),
                 Next::Open => {
                     if let Some(handle) = self.open_checked_out().await? {
-                        break handle;
+                        return Ok(handle);
                     }
                     // A rival published (or a close landed, which returns
                     // above as `Err`): re-observe instead of opening.
@@ -213,8 +277,7 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
                     parked.await;
                 }
             }
-        };
-        self.run_checked_out(handle, operation).await
+        }
     }
 
     /// Single-flight cold open returning the handle already checked out.
@@ -263,6 +326,14 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
         operation: impl FnOnce(&T) -> R,
     ) -> Result<R, SessionError> {
         let output = operation(&handle);
+        self.restore(handle).await;
+        Ok(output)
+    }
+
+    /// Restores (or drops, when closed) a checked-out handle: publishes it
+    /// for the next checkout, wakes one parked rival, and re-arms the idle
+    /// sleeper once readers drain.
+    async fn restore(&self, handle: T) {
         let mut state = self.shared.state.lock().await;
         state.active_readers -= 1;
         // Same direction as construction: diagnostic only, seq-guarded.
@@ -274,7 +345,7 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
             // waiting for us. Drop the handle instead of restoring it.
             drop(state);
             handle.close().await;
-            return Ok(output);
+            return;
         }
         // Restore for the next checkout and wake one parked rival. A
         // displaced resident is impossible (the slot is empty while checked
@@ -288,7 +359,18 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
         if drained {
             self.schedule_idle_close(seq).await;
         }
-        Ok(output)
+    }
+
+    /// Releases one checkout whose handle is lost (panicking blocking body):
+    /// drops the reader count so the next reader reopens cold instead of
+    /// parking behind a checkout that will never restore.
+    async fn release_checkout(&self) {
+        let mut state = self.shared.state.lock().await;
+        state.active_readers -= 1;
+        // Same direction as construction: diagnostic only, seq-guarded.
+        state.last_read_ms = UnixMillis::now_ms_or(0);
+        drop(state);
+        self.shared.restored.notify_one();
     }
 
     /// Current cache state.
@@ -577,5 +659,47 @@ mod tests {
         // The stale handle is discarded-and-closed, never published.
         assert_eq!(closes.load(Ordering::SeqCst), 1);
         assert!(!cache.snapshot().await.open);
+    }
+
+    #[tokio::test]
+    async fn blocking_read_runs_off_worker_and_restores() {
+        let closes = Arc::new(AtomicUsize::new(0));
+        let opens = Arc::new(AtomicUsize::new(0));
+        let cache = cache(Duration::from_secs(3600), &closes, &opens);
+        let first = cache.with_read_blocking(|handle| handle.id).await.unwrap();
+        let second = cache.with_read_blocking(|handle| handle.id).await.unwrap();
+        assert_eq!(first, second);
+        assert_eq!(opens.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            cache.snapshot().await,
+            SessionCacheSnapshot {
+                open: true,
+                active_readers: 0
+            }
+        );
+        cache.close().await;
+    }
+
+    #[tokio::test]
+    async fn blocking_read_panic_releases_the_checkout() {
+        let closes = Arc::new(AtomicUsize::new(0));
+        let opens = Arc::new(AtomicUsize::new(0));
+        let cache = cache(Duration::from_secs(3600), &closes, &opens);
+        let failed = cache
+            .with_read_blocking(|_: &TestHandle| panic!("boom"))
+            .await;
+        assert!(matches!(failed, Err(SessionError::Blocking(_))));
+        // The lost checkout is released: the next reader reopens cold
+        // instead of parking behind it forever.
+        assert_eq!(
+            cache.snapshot().await,
+            SessionCacheSnapshot {
+                open: false,
+                active_readers: 0
+            }
+        );
+        cache.with_read_blocking(|handle| handle.id).await.unwrap();
+        assert_eq!(opens.load(Ordering::SeqCst), 2);
+        cache.close().await;
     }
 }

@@ -66,6 +66,9 @@ impl From<SessionError> for BackendError {
         match error {
             SessionError::Closed => Self::Daemon(DaemonError::ShuttingDown),
             SessionError::Open(error) => Self::Engine(error),
+            // Same wire mapping as `join_backend_error`: a panicking
+            // blocking body is a failed index-side task, inventing no code.
+            SessionError::Blocking(message) => Self::Daemon(DaemonError::IndexFailed { message }),
         }
     }
 }

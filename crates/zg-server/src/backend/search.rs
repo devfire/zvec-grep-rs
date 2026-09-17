@@ -89,8 +89,14 @@ impl RootActor {
         };
         let auth = Arc::clone(&self.shared.auth);
         let needs_reconcile = self.runtime.needs_reconciliation();
+        // Blocking body (permit planning, thread-local permit scope, and the
+        // synchronous tantivy+vector engine search) runs on a
+        // `spawn_blocking` thread via the cache, never on this worker — the
+        // same shape as the exact-grep handler. Everything the body touches
+        // is owned (`Send + 'static`); the permit scope is set inside the
+        // blocking thread, where the engine's thread-local guard lives.
         self.sessions
-            .with_read(|cached| {
+            .with_read_blocking(move |cached| {
                 let permit =
                     plan_search_permit(&auth, &info, cached.model_info(), needs_reconcile)?;
                 Ok(with_remote_embedding_operation_permit(permit, || {
