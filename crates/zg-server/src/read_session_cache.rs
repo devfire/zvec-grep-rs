@@ -451,7 +451,7 @@ mod tests {
         let closes = Arc::new(AtomicUsize::new(0));
         let opens = Arc::new(AtomicUsize::new(0));
         let cache = cache(Duration::from_secs(3600), &closes, &opens);
-        let entered = Arc::new(tokio::sync::Notify::new());
+        let entered = Arc::new(Notify::new());
         let entered_clone = entered.clone();
         let proceed = Arc::new(AtomicBool::new(false));
         let proceed_clone = proceed.clone();
@@ -548,7 +548,7 @@ mod tests {
     async fn close_during_open_discards_the_stale_handle() {
         let closes = Arc::new(AtomicUsize::new(0));
         let opens = Arc::new(AtomicUsize::new(0));
-        let opening = Arc::new(tokio::sync::Notify::new());
+        let opening = Arc::new(Notify::new());
         let opening_clone = opening.clone();
         let closes_clone = closes.clone();
         let opens_clone = opens.clone();

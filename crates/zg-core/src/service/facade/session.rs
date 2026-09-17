@@ -115,13 +115,13 @@ mod lifecycle_tests {
     use super::*;
     use crate::error::EngineErrorCode;
     use crate::ids::FileId;
-    use crate::storage::{StorageOptions, WorkspaceIndexStorage, create_workspace_index_storage};
+    use crate::storage::{StorageOptions, create_workspace_index_storage};
     use crate::types::{
         CURRENT_INDEX_VERSION, FileFormat, FileInfo, FileKind, RootPath, SearchMetric, UnixMillis,
         WorkspaceIndexEmbeddingSchema,
     };
 
-    fn test_info(storage_path: &std::path::Path) -> WorkspaceIndexInfo {
+    fn test_info(storage_path: &Path) -> WorkspaceIndexInfo {
         WorkspaceIndexInfo {
             id: "test".to_owned(),
             name: "test".to_owned(),
@@ -154,7 +154,7 @@ mod lifecycle_tests {
     /// The handle is closed (and its lock released on drop) before return,
     /// so callers can reopen the storage in any mode.
     fn seed_persisted_storage(
-        storage_path: &std::path::Path,
+        storage_path: &Path,
         schema: &WorkspaceIndexEmbeddingSchema,
     ) {
         std::fs::create_dir_all(storage_path).expect("create seed storage dir");
