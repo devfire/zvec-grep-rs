@@ -57,12 +57,17 @@ jobs:
             ~/Library/Caches/ort.pyke.io
           key: ort-sys-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: ort-sys-${{ runner.os }}-
+      # Own key (not the `test` job's `embedding-models-v1`): the gate needs
+      # all four parity models, while the shared key is populated by whatever
+      # the test suite downloads. Sharing deadlocks warm-on-miss on a partial
+      # hit — warm skips, the gate fails, and the failed post never repairs
+      # the cache.
       - name: Cache embedding models
         id: model-cache
         uses: actions/cache@v4
         with:
           path: ~/.zvec-grep/models
-          key: embedding-models-v1
+          key: embedding-models-parity-v1
       # On a cold cache the gate would fail by design
       # (`ZVEC_REQUIRE_MODELS=1` turns skips into hard failures), so
       # populate the cache first. Warm hits skip the download entirely.
