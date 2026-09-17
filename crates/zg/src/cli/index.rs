@@ -96,7 +96,8 @@ pub struct IndexArgs {
     /// Suppress the indexing progress bar (still prints the final summary).
     #[arg(long = "no-progress", action = clap::ArgAction::SetTrue)]
     pub no_progress: bool,
-    /// Alias for `--no-progress`.
+    /// Suppress all index output, including the progress bar and the final
+    /// summary (stronger than `--no-progress`, which still prints it).
     #[arg(long = "quiet", action = clap::ArgAction::SetTrue, hide = true)]
     pub quiet: bool,
     /// Allow one remote-embedding operation without a stored grant.

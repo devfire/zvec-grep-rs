@@ -10,8 +10,8 @@ use super::context_human::format_context_human;
 use super::error::debug_lines;
 use super::index::format_index_result;
 use super::progress::{
-    format_green_progress_bar, format_progress_line, format_progress_line_clamped, stderr_width,
-    visible_width,
+    format_done_line, format_green_progress_bar, format_progress_line,
+    format_progress_line_clamped, is_downloading, stderr_width, visible_width,
 };
 use super::range::range_label;
 use super::text::{format_score, one_line, truncate};
@@ -198,6 +198,36 @@ fn index_result_counters() {
 fn progress_bar_golden() {
     assert_eq!(format_green_progress_bar(1, 2, 4, false), "██░░ 50% (1/2)");
     assert_eq!(format_green_progress_bar(0, 0, 4, false), "");
+}
+
+#[test]
+fn done_line_is_plain_counts_without_spinner() {
+    assert_eq!(format_done_line(42), "done: 42 files");
+    assert_eq!(format_done_line(0), "done: 0 files");
+}
+
+#[test]
+fn download_detection_drives_throttle_cadence() {
+    use zg_core::types::{IndexEmbeddingProgress, IndexProgress};
+    assert!(!is_downloading(&IndexProgress::default()));
+    let active = IndexProgress {
+        embedding: Some(IndexEmbeddingProgress {
+            downloaded_bytes: Some(5_000_000),
+            total_bytes: Some(10_000_000),
+            ..IndexEmbeddingProgress::default()
+        }),
+        ..IndexProgress::default()
+    };
+    assert!(is_downloading(&active));
+    let finished = IndexProgress {
+        embedding: Some(IndexEmbeddingProgress {
+            downloaded_bytes: Some(10_000_000),
+            total_bytes: Some(10_000_000),
+            ..IndexEmbeddingProgress::default()
+        }),
+        ..IndexProgress::default()
+    };
+    assert!(!is_downloading(&finished));
 }
 
 #[test]

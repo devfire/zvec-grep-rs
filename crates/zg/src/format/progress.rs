@@ -24,8 +24,12 @@ const FALLBACK_TTY_WIDTH: usize = 80;
 const MIN_TTY_WIDTH: usize = 20;
 /// Minimum gap between TTY repaints; progress callbacks fire per file.
 const TTY_THROTTLE: Duration = Duration::from_millis(120);
-/// Minimum gap between non-TTY log lines; stderr may be a file/pipe.
-const LINE_THROTTLE: Duration = Duration::from_secs(2);
+/// Minimum gap between non-TTY log lines while a model download is in
+/// flight; stderr may be a file/pipe.
+const LINE_THROTTLE_DOWNLOAD: Duration = Duration::from_secs(2);
+/// Minimum gap between non-TTY log lines otherwise: a flat 2s emits ~300
+/// lines over a 10-minute index vs ~40 before.
+const LINE_THROTTLE: Duration = Duration::from_secs(10);
 /// Spinner frames for unknown-total phases (scan, model download).
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 /// Longest `detail` (usually a file path) kept on one TTY line.
@@ -151,6 +155,14 @@ fn truncate_visible(line: &str, max_width: usize, color: bool) -> String {
         clamped.push_str(RESET);
     }
     clamped
+}
+
+/// Final non-TTY line for the `Done` phase: plain counts, no spinner.
+/// Done events carry no totals themselves, so the caller passes the last
+/// `files_indexed` it observed across earlier events.
+#[must_use]
+pub fn format_done_line(completed: usize) -> String {
+    format!("done: {completed} files")
 }
 
 /// `12.3 MB` for embedding download counters.
@@ -281,12 +293,25 @@ fn append_embedding_suffix(
     }
 }
 
+/// True while an embedding download is still in flight (counters present
+/// and incomplete): the only phase that justifies the chatty non-TTY
+/// cadence.
+pub(crate) fn is_downloading(progress: &zg_core::types::IndexProgress) -> bool {
+    if let Some(embedding) = progress.embedding.as_ref()
+        && let (Some(downloaded), Some(total)) = (embedding.downloaded_bytes, embedding.total_bytes)
+    {
+        return total > 0 && downloaded < total;
+    }
+    false
+}
+
 /// Minimal stderr progress reporter: TTY bar plus throttled plain lines.
 pub struct ProgressReporter {
     color: bool,
     enabled: bool,
     tty: bool,
     tick: usize,
+    completed: usize,
     last_tty: Instant,
     last_line: Instant,
 }
@@ -302,12 +327,15 @@ impl ProgressReporter {
             enabled,
             tty: std::io::IsTerminal::is_terminal(&std::io::stderr()),
             tick: 0,
+            completed: 0,
             last_tty: Instant::now() - Duration::from_secs(60),
             last_line: Instant::now() - Duration::from_secs(60),
         }
     }
 
-    /// Reports one progress event.
+    /// Reports one progress event. `tick` advances once per painted frame
+    /// (never on throttled drops) so the spinner rotates steadily even when
+    /// callbacks fire per read-chunk.
     pub fn report(&mut self, progress: &zg_core::types::IndexProgress) {
         if !self.enabled {
             return;
@@ -316,9 +344,22 @@ impl ProgressReporter {
             progress.phase,
             Some(zg_core::types::IndexProgressPhase::Done)
         );
+        if let Some(done) = progress.files_indexed {
+            self.completed = self.completed.max(done);
+        }
+        if done_phase {
+            // Terminal state: the Done event carries no totals, so report
+            // the last observed count plainly (no spinner, no throttle).
+            // On TTY there is nothing to paint: finish() clears the bar
+            // and the summary carries the counts.
+            if !self.tty {
+                eprintln!("{}", format_done_line(self.completed));
+                self.last_line = Instant::now();
+            }
+            return;
+        }
         if self.tty {
             if !done_phase && self.last_tty.elapsed() < TTY_THROTTLE {
-                self.tick = self.tick.wrapping_add(1);
                 return;
             }
             let width = stderr_width();
@@ -328,11 +369,16 @@ impl ProgressReporter {
             let _ = std::io::stderr().flush();
             self.last_tty = Instant::now();
         } else {
-            self.tick = self.tick.wrapping_add(1);
-            if !done_phase && self.last_line.elapsed() < LINE_THROTTLE {
+            let throttle = if is_downloading(progress) {
+                LINE_THROTTLE_DOWNLOAD
+            } else {
+                LINE_THROTTLE
+            };
+            if self.last_line.elapsed() < throttle {
                 return;
             }
             eprintln!("{}", format_progress_line(progress, false, self.tick));
+            self.tick = self.tick.wrapping_add(1);
             self.last_line = Instant::now();
         }
     }

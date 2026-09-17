@@ -145,6 +145,12 @@ fn config_and_index_shapes() {
     let cli = parse(&["zg", "index", "a", "b"]).unwrap();
     let error = validate(&cli).expect_err("two roots must fail");
     assert_eq!(error.to_string(), "zg index accepts at most one root path");
+    let cli = parse(&["zg", "index", "--color", "always", "--no-color"]).unwrap();
+    let error = validate(&cli).expect_err("color + no-color must fail");
+    assert_eq!(
+        error.to_string(),
+        "zg index --color cannot be combined with --no-color"
+    );
     let cli = parse(&["zg", "index", "--drop", "--rebuild"]).unwrap();
     let error = validate(&cli).expect_err("drop + rebuild must fail");
     assert_eq!(

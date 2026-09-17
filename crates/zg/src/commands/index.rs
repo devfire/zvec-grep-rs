@@ -208,10 +208,12 @@ async fn run_index_direct(args: &IndexArgs, root: &PathBuf) -> Result<(), CliErr
     {
         eprintln!("debug: scan diagnostics: {diagnostics:?}");
     }
-    if result.files_scanned == 0 {
-        print_no_indexable_files_tip();
+    if !args.quiet {
+        if result.files_scanned == 0 {
+            print_no_indexable_files_tip();
+        }
+        print_index_result("Workspace index", &result);
     }
-    print_index_result("Workspace index", &result);
     Ok(())
 }
 
