@@ -18,27 +18,6 @@ use super::context::{
 };
 use super::scanner::CancelFlag;
 
-pub(crate) fn embed_contents_with_retry(
-    contents: &[Content],
-    model: &dyn EmbeddingModel,
-    scheduler: &EmbeddingScheduler,
-    abort: &AtomicBool,
-    cancel: Option<&CancelFlag>,
-    on_model_progress: Option<ModelLoadSink>,
-    on_terminal_failure: Option<&AtomicBool>,
-) -> EngineResult<EmbeddingResult> {
-    let inputs: Vec<EmbeddingInput<'_>> = contents.iter().map(content_to_input).collect();
-    embed_inputs_with_retry(
-        &inputs,
-        model,
-        scheduler,
-        abort,
-        cancel,
-        on_model_progress,
-        on_terminal_failure,
-    )
-}
-
 pub(crate) fn embed_inputs_with_retry(
     inputs: &[EmbeddingInput<'_>],
     model: &dyn EmbeddingModel,
@@ -634,11 +613,19 @@ mod tests {
         let scheduler =
             EmbeddingScheduler::new(resolve_embedding_concurrency_policy(None, &*model));
         let abort = AtomicBool::new(false);
-        let contents = vec![Content::Text {
+        let content = Content::Text {
             text: "hello".to_owned(),
-        }];
-        let result =
-            embed_contents_with_retry(&contents, &*model, &scheduler, &abort, None, None, None);
+        };
+        let input = content_to_input(&content);
+        let result = embed_inputs_with_retry(
+            std::slice::from_ref(&input),
+            &*model,
+            &scheduler,
+            &abort,
+            None,
+            None,
+            None,
+        );
         assert!(result.is_err());
         // 1 initial + 3 retries for transient failures.
         assert!(scheduler.snapshot().retryable_failures.unwrap_or(0) >= 3);
