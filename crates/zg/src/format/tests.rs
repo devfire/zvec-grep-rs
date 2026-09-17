@@ -295,7 +295,10 @@ fn progress_line_clamped_fits_narrow_terminals() {
         format_progress_line_clamped(&indexing, false, 0, None),
         legacy
     );
-    assert_eq!(legacy, "\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591} 40% (4/10) indexing a.rs");
+    assert_eq!(
+        legacy,
+        "\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591} 40% (4/10) indexing a.rs"
+    );
     assert!(stderr_width() >= 20);
 }
 

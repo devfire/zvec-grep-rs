@@ -217,7 +217,9 @@ pub fn format_progress_line_clamped(
 }
 
 /// Shared line assembly behind [`format_progress_line`] and
-/// [`format_progress_line_clamped`].
+/// [`format_progress_line_clamped`]: the prefix varies (file bar vs.
+/// spinner plus scanned counts) while the embedding/download suffix and
+/// the trailing `detail` are appended once below.
 fn build_progress_line(
     progress: &zg_core::types::IndexProgress,
     color: bool,
@@ -229,44 +231,42 @@ fn build_progress_line(
     let detail = short_detail_to(progress.detail.as_deref(), detail_budget);
     let total = progress.files_total.unwrap_or(0);
     let done = progress.files_indexed.unwrap_or(0);
-    if total > 0 {
-        let mut line = format!(
+    let mut line = if total > 0 {
+        format!(
             "{} {phase}",
             format_green_progress_bar(done, total, bar_width, color)
-        );
-        if let Some(embedding) = progress.embedding.as_ref()
-            && let (Some(downloaded), Some(total_bytes)) =
-                (embedding.downloaded_bytes, embedding.total_bytes)
-            && total_bytes > 0
-        {
-            let percent =
-                (downloaded.min(total_bytes) as f64 / total_bytes as f64 * 100.0).round() as usize;
-            line.push_str(&format!(
-                " downloading {} / {} ({percent}%)",
-                format_megabytes(downloaded),
-                format_megabytes(total_bytes)
-            ));
-        }
-        if let Some(detail) = detail {
-            line.push(' ');
-            line.push_str(&detail);
-        }
-        return line;
-    }
-    let spinner = SPINNER
-        .get(tick % SPINNER.len())
-        .copied()
-        .unwrap_or('\u{00B7}');
-    let spinner = if color {
-        format!("{GREEN}{spinner}{RESET}")
+        )
     } else {
-        spinner.to_string()
+        let spinner = SPINNER
+            .get(tick % SPINNER.len())
+            .copied()
+            .unwrap_or('\u{00B7}');
+        let spinner = if color {
+            format!("{GREEN}{spinner}{RESET}")
+        } else {
+            spinner.to_string()
+        };
+        let mut prefix = format!("{spinner} {phase}");
+        if done > 0 {
+            prefix.push_str(&format!(" {done} files"));
+        }
+        prefix
     };
-    let mut line = format!("{spinner} {phase}");
-    if done > 0 {
-        line.push_str(&format!(" {done} files"));
+    append_embedding_suffix(&mut line, progress.embedding.as_ref());
+    if let Some(detail) = detail {
+        line.push(' ');
+        line.push_str(&detail);
     }
-    if let Some(embedding) = progress.embedding.as_ref()
+    line
+}
+
+/// Appends ` downloading X / Y (Z%)` once; shared by the bar and spinner
+/// prefixes so the counters cannot drift apart.
+fn append_embedding_suffix(
+    line: &mut String,
+    embedding: Option<&zg_core::types::IndexEmbeddingProgress>,
+) {
+    if let Some(embedding) = embedding
         && let (Some(downloaded), Some(total_bytes)) =
             (embedding.downloaded_bytes, embedding.total_bytes)
         && total_bytes > 0
@@ -279,11 +279,6 @@ fn build_progress_line(
             format_megabytes(total_bytes)
         ));
     }
-    if let Some(detail) = detail {
-        line.push(' ');
-        line.push_str(&detail);
-    }
-    line
 }
 
 /// Minimal stderr progress reporter: TTY bar plus throttled plain lines.
@@ -327,8 +322,7 @@ impl ProgressReporter {
                 return;
             }
             let width = stderr_width();
-            let line =
-                format_progress_line_clamped(progress, self.color, self.tick, Some(width));
+            let line = format_progress_line_clamped(progress, self.color, self.tick, Some(width));
             self.tick = self.tick.wrapping_add(1);
             eprint!("\r\x1b[2K{line}");
             let _ = std::io::stderr().flush();
