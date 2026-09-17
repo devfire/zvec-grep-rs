@@ -97,13 +97,26 @@ impl JobScheduler {
     }
 
     /// Latest snapshot for a root, if any.
-    pub fn get_by_root(&self, canonical_root: &str) -> Option<IndexJobSnapshot> {
+    ///
+    /// Preferred name for [`get_by_root`]; the historic name stays the
+    /// canonical spelling for one release since its callers live outside
+    /// this module (no cross-file churn).
+    #[must_use]
+    pub fn by_root(&self, canonical_root: &str) -> Option<IndexJobSnapshot> {
         let state = self.shared.state.lock_ignore_poison();
         state
             .latest_by_root
             .get(canonical_root)
             .and_then(|id| state.jobs.get(id))
             .map(super::state::JobRecord::snapshot)
+    }
+
+    /// Latest snapshot for a root, if any.
+    ///
+    /// Historic name; prefer [`by_root`].
+    #[must_use]
+    pub fn get_by_root(&self, canonical_root: &str) -> Option<IndexJobSnapshot> {
+        self.by_root(canonical_root)
     }
 
     /// True while a job for the root is queued or running.

@@ -36,7 +36,7 @@ impl ModelReference {
     /// True when the reference names an entry in [`EMBEDDING_MODEL_CATALOG`].
     #[must_use]
     pub fn is_known(&self) -> bool {
-        get_embedding_model_catalog_entry(&self.0).is_some()
+        embedding_model_catalog_entry(&self.0).is_some()
     }
 }
 
@@ -59,6 +59,9 @@ impl From<String> for ModelReference {
 }
 
 /// Backend that serves a catalog entry.
+///
+/// Non-exhaustive: new backends must not break downstream matches.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BackendKind {
     LlamaCpp,
@@ -496,4 +499,15 @@ pub fn get_embedding_model_catalog_entry(
     EMBEDDING_MODEL_CATALOG
         .iter()
         .find(|entry| entry.reference() == reference)
+}
+
+/// Preferred name for [`get_embedding_model_catalog_entry`]: finds the
+/// catalog entry for `reference`, if it names a known model.
+///
+/// Thin alias only: callers outside this module still use the historic name,
+/// so the historic name stays the canonical implementation for one release
+/// (no cross-file churn).
+#[must_use]
+pub fn embedding_model_catalog_entry(reference: &str) -> Option<&'static EmbeddingCatalogEntry> {
+    get_embedding_model_catalog_entry(reference)
 }

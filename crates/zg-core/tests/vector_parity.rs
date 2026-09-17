@@ -120,6 +120,7 @@ fn local_vectors_match_ts_goldens() {
             let purpose_name = match purpose {
                 EmbeddingPurpose::Query => "query",
                 EmbeddingPurpose::Document => "document",
+                _ => unreachable!("test iterates only Query/Document"),
             };
             let batch = &golden["batches"][purpose_name];
             let order = batch["order"].as_array().cloned().unwrap_or_default();

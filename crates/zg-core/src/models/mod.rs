@@ -19,6 +19,9 @@ use crate::error::EngineResult;
 use crate::types::{ImageFormat, SearchMetric};
 
 /// What the embedding is for — some backends prefix instructions by purpose.
+///
+/// Non-exhaustive: new purposes must not break downstream matches.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EmbeddingPurpose {
     #[default]
@@ -95,8 +98,17 @@ pub type ModelLoadSink = Arc<dyn Fn(EmbeddingModelProgress) + Send + Sync>;
 ///
 /// Intentionally **un**sealed: third-party backends are a supported
 /// extension point (the pool accepts any `Arc<dyn EmbeddingModel>` via its
-/// model factory), so downstream crates may implement this. New methods
-/// must therefore carry default bodies.
+/// model factory), so downstream crates may implement this.
+///
+/// # Evolving this trait (CHECKLIST)
+///
+/// 1. New methods MUST carry default bodies so existing third-party
+///    implementors keep compiling.
+/// 2. Never add a required method (one without a default body) outside a
+///    major release.
+/// 3. The `unsealed_policy` compile-test at the bottom of this file
+///    implements the trait with required methods only; it fails to compile
+///    if a required method is ever added, which is the point.
 pub trait EmbeddingModel: Send + Sync {
     fn info(&self) -> &EmbeddingModelInfo;
 
@@ -135,4 +147,57 @@ pub trait EmbeddingModel: Send + Sync {
         purpose: EmbeddingPurpose,
         inputs: &[EmbeddingInput<'_>],
     ) -> EngineResult<embeddings::EmbeddingResult>;
+}
+
+#[cfg(test)]
+mod unsealed_policy_tests {
+    use super::*;
+
+    /// Implements `EmbeddingModel` with required methods only. If a required
+    /// method (one without a default body) is ever added to the trait, this
+    /// stops compiling — see the trait-level CHECKLIST.
+    struct RequiredOnly {
+        info: EmbeddingModelInfo,
+    }
+
+    impl EmbeddingModel for RequiredOnly {
+        fn info(&self) -> &EmbeddingModelInfo {
+            &self.info
+        }
+
+        fn max_batch_size(&self) -> usize {
+            1
+        }
+
+        fn embed(
+            &self,
+            _purpose: EmbeddingPurpose,
+            _inputs: &[EmbeddingInput<'_>],
+        ) -> EngineResult<embeddings::EmbeddingResult> {
+            Ok(embeddings::EmbeddingResult {
+                vectors: Vec::new(),
+                truncated: Vec::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn required_methods_only_satisfies_trait() {
+        let model = RequiredOnly {
+            info: EmbeddingModelInfo {
+                reference: "test/required-only".to_owned(),
+                provider: "test".to_owned(),
+                model: "required-only".to_owned(),
+                dimension: 4,
+                metric: SearchMetric::Cosine,
+                supports_images: false,
+                max_input_tokens: None,
+                input_kinds: vec![EmbeddingInputKind::Text],
+                endpoint: None,
+                default_concurrency: None,
+            },
+        };
+        assert_eq!(model.max_batch_size(), 1);
+        assert_eq!(model.info().dimension, 4);
+    }
 }

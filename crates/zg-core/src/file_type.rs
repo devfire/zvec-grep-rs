@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use crate::error::{EngineError, EngineErrorCode, EngineResult};
 use crate::types::{FileFormat, FileKind};
 
 /// A detected type: coarse kind plus specific format.
@@ -14,6 +15,40 @@ use crate::types::{FileFormat, FileKind};
 pub struct FileType {
     pub kind: FileKind,
     pub format: FileFormat,
+}
+
+impl FileType {
+    /// Strict constructor: rejects a blank `format` instead of coercing it
+    /// to `"text"` like [`FileFormat::parse`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `FILE_SELECTION.UNKNOWN_FILE_TYPE` when `format` is blank.
+    pub fn try_new(kind: FileKind, format: impl AsRef<str>) -> EngineResult<Self> {
+        let trimmed = format.as_ref().trim();
+        if trimmed.is_empty() {
+            return Err(EngineError::new(
+                EngineErrorCode::FileSelectionUnknownFileType,
+                "file type format must not be blank",
+            ));
+        }
+        Ok(Self {
+            kind,
+            format: FileFormat::parse(trimmed),
+        })
+    }
+
+    /// Coarse kind driving extraction and size policy.
+    #[must_use]
+    pub fn kind(&self) -> FileKind {
+        self.kind
+    }
+
+    /// Specific detected format identifier (e.g. `rust`, `markdown`).
+    #[must_use]
+    pub fn format(&self) -> &FileFormat {
+        &self.format
+    }
 }
 
 struct NamedTypeEntry {
@@ -304,5 +339,17 @@ mod tests {
             list_known_binary_extension_groups().len(),
             BINARY_EXTENSION_GROUPS.len()
         );
+    }
+
+    #[test]
+    fn try_new_validates_format() {
+        assert!(FileType::try_new(FileKind::Text, "").is_err());
+        assert!(FileType::try_new(FileKind::Text, "   ").is_err());
+        let file_type = match FileType::try_new(FileKind::Code, " rust ") {
+            Ok(file_type) => file_type,
+            Err(error) => panic!("unexpected try_new error: {error}"),
+        };
+        assert_eq!(file_type.kind(), FileKind::Code);
+        assert_eq!(file_type.format().as_str(), "rust");
     }
 }

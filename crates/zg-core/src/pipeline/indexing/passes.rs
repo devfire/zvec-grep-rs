@@ -163,6 +163,24 @@ pub fn get_workspace_index_status(
     })
 }
 
+/// Preferred name for [`get_workspace_index_status`]: inspect status without
+/// writing (mirrors `getWorkspaceIndexStatus`).
+///
+/// Thin alias only: callers outside this module still use the historic name,
+/// so the historic name stays the canonical implementation for one release
+/// (no cross-file churn).
+///
+/// # Errors
+///
+/// Same as [`get_workspace_index_status`].
+pub fn workspace_index_status(
+    workspace_index: &WorkspaceIndexInfo,
+    stored_files: &[FileInfo],
+    cancel: Option<&CancelFlag>,
+) -> EngineResult<WorkspaceIndexStatus> {
+    get_workspace_index_status(workspace_index, stored_files, cancel)
+}
+
 fn index_workspace_inner(ctx: &mut IndexContext<'_>) -> EngineResult<IndexResult> {
     let start = Instant::now();
     let mut timings = TimingCollector::new();

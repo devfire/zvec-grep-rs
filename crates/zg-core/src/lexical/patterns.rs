@@ -27,6 +27,19 @@ const REGEX_SIZE_LIMIT_BYTES: usize = 10 << 20;
 /// Merges inline patterns with `--file` pattern files. Every line of a
 /// pattern file is one pattern (only the line break is stripped), matching
 /// ripgrep's `--file` handling.
+///
+/// Caps: at most [`MAX_PATTERN_COUNT`] patterns in total (inline plus file
+/// lines) after dropping empties. More is rejected with
+/// `LEXICAL.INVALID_PATTERN`; an unreadable file is rejected with
+/// `LEXICAL.PATTERN_FILE_UNREADABLE`. Per-pattern and combined byte caps
+/// are enforced later by [`build_matcher`].
+///
+/// # Errors
+///
+/// Returns [`crate::error::EngineErrorCode::LexicalPatternFileUnreadable`]
+/// when a pattern file cannot be read, or
+/// [`crate::error::EngineErrorCode::LexicalInvalidPattern`] when the merged
+/// list exceeds [`MAX_PATTERN_COUNT`].
 pub(crate) fn load_patterns(
     patterns: &[String],
     pattern_files: &[PathBuf],
@@ -56,6 +69,20 @@ pub(crate) fn load_patterns(
     Ok(merged)
 }
 
+/// Combines `patterns` into one alternation (`(?:a|b)`, plus `\b..\b` with
+/// `word_regexp`) and compiles it with a 10 MiB regex size limit (ReDoS
+/// bound).
+///
+/// Caps (all rejected with `LEXICAL.INVALID_PATTERN`): at most
+/// [`MAX_PATTERN_COUNT`] patterns, each at most [`MAX_PATTERN_LEN_BYTES`]
+/// bytes, with the wrapped combined alternation at most
+/// [`MAX_COMBINED_PATTERN_LEN_BYTES`] bytes. A pattern the regex compiler
+/// itself rejects also maps to `LEXICAL.INVALID_PATTERN`.
+///
+/// # Errors
+///
+/// Returns [`crate::error::EngineErrorCode::LexicalInvalidPattern`] when any
+/// cap is exceeded or the combined pattern does not compile.
 pub(crate) fn build_matcher(
     options: &LexicalSearchOptions,
     patterns: &[String],
@@ -114,4 +141,64 @@ pub(crate) fn build_matcher(
             )
             .with_context(format!("error={error}"))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::EngineErrorCode;
+
+    fn numbered_patterns(count: usize) -> Vec<String> {
+        (0..count).map(|index| format!("pat{index}")).collect()
+    }
+
+    #[test]
+    fn pattern_count_limit_plus_minus_one() {
+        let ok = numbered_patterns(MAX_PATTERN_COUNT);
+        assert_eq!(
+            load_patterns(&ok, &[])
+                .expect("1000 patterns must load")
+                .len(),
+            MAX_PATTERN_COUNT
+        );
+        let over = numbered_patterns(MAX_PATTERN_COUNT + 1);
+        let err = load_patterns(&over, &[]).expect_err("1001 patterns must fail");
+        assert_eq!(*err.code(), EngineErrorCode::LexicalInvalidPattern);
+    }
+
+    #[test]
+    fn matcher_rejects_over_count_with_code() {
+        let options = LexicalSearchOptions::default();
+        let over = numbered_patterns(MAX_PATTERN_COUNT + 1);
+        let err = build_matcher(&options, &over).expect_err("1001 patterns must fail");
+        assert_eq!(*err.code(), EngineErrorCode::LexicalInvalidPattern);
+    }
+
+    #[test]
+    fn single_pattern_len_limit_plus_minus_one() {
+        let options = LexicalSearchOptions::default();
+        let ok = vec!["a".repeat(MAX_PATTERN_LEN_BYTES)];
+        assert!(build_matcher(&options, &ok).is_ok());
+        let over = vec!["a".repeat(MAX_PATTERN_LEN_BYTES + 1)];
+        let err = build_matcher(&options, &over).expect_err("4097-byte pattern must fail");
+        assert_eq!(*err.code(), EngineErrorCode::LexicalInvalidPattern);
+    }
+
+    #[test]
+    fn combined_pattern_len_limit_plus_minus_one() {
+        // Combined size is `sum + separators + "(?:)"` wrapper (4 bytes):
+        // 999 64-byte patterns plus one 597-byte pattern combine to exactly
+        // 65_536 (accepted); a 598-byte tail reaches 65_537 (rejected).
+        // Both stay under the per-pattern and count caps so only the
+        // combined bound is exercised.
+        let options = LexicalSearchOptions::default();
+        let mut ok: Vec<String> = (0..MAX_PATTERN_COUNT - 1).map(|_| "b".repeat(64)).collect();
+        ok.push("b".repeat(597));
+        assert!(build_matcher(&options, &ok).is_ok());
+        let mut over: Vec<String> = (0..MAX_PATTERN_COUNT - 1).map(|_| "b".repeat(64)).collect();
+        over.push("b".repeat(598));
+        let err =
+            build_matcher(&options, &over).expect_err("65_537-byte combined pattern must fail");
+        assert_eq!(*err.code(), EngineErrorCode::LexicalInvalidPattern);
+    }
 }

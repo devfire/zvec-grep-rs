@@ -20,6 +20,12 @@ pub const HARD_MAX_FILE_SIZE_BYTES: u64 = 536_870_912;
 
 /// Resolves the effective size cap: an explicit override wins (clamped to
 /// [`HARD_MAX_FILE_SIZE_BYTES`]), otherwise the per-kind default applies.
+///
+/// Valid range: `explicit` accepts `1..=u64::MAX`; anything above
+/// [`HARD_MAX_FILE_SIZE_BYTES`] clamps (512 MiB ceiling — oversized values
+/// never disable the guard). `Some(0)` passes through as `0` here and must
+/// be rejected up front with [`validate_max_file_size_bytes`]; `None`
+/// selects the per-kind default.
 #[must_use]
 pub fn resolve_max_file_size_bytes(kind: FileKind, explicit: Option<u64>) -> u64 {
     explicit
@@ -35,6 +41,9 @@ pub fn resolve_max_file_size_bytes(kind: FileKind, explicit: Option<u64>) -> u64
 /// Rejects a zero explicit cap (`Some(0)` would silently skip every file).
 /// Oversized overrides need no error: [`resolve_max_file_size_bytes`]
 /// clamps them to [`HARD_MAX_FILE_SIZE_BYTES`].
+///
+/// Valid range: `None` (default cap) and `Some(1..=u64::MAX)` pass;
+/// `Some(0)` fails.
 ///
 /// # Errors
 ///
@@ -86,5 +95,32 @@ mod tests {
     #[test]
     fn explicit_wins_without_validation() {
         assert_eq!(resolve_max_file_size_bytes(FileKind::Code, Some(7)), 7);
+    }
+
+    #[test]
+    fn zero_cap_rejected_with_code() {
+        use crate::error::EngineErrorCode;
+
+        assert!(validate_max_file_size_bytes(None).is_ok());
+        assert!(validate_max_file_size_bytes(Some(1)).is_ok());
+        let err = validate_max_file_size_bytes(Some(0)).expect_err("Some(0) must fail");
+        assert_eq!(*err.code(), EngineErrorCode::LexicalSearchFailed);
+    }
+
+    #[test]
+    fn one_byte_cap_accepted() {
+        assert_eq!(resolve_max_file_size_bytes(FileKind::Code, Some(1)), 1);
+    }
+
+    #[test]
+    fn oversized_cap_clamps_to_hard_max() {
+        assert_eq!(
+            resolve_max_file_size_bytes(FileKind::Code, Some(HARD_MAX_FILE_SIZE_BYTES + 1)),
+            HARD_MAX_FILE_SIZE_BYTES
+        );
+        assert_eq!(
+            resolve_max_file_size_bytes(FileKind::Text, Some(u64::MAX)),
+            HARD_MAX_FILE_SIZE_BYTES
+        );
     }
 }
