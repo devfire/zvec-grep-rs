@@ -112,7 +112,12 @@ fn rootless_flag_conflict(args: &IndexArgs, existing_root_paths: &[RootPath]) ->
 async fn run_index_direct(args: &IndexArgs, root: &PathBuf) -> Result<(), CliError> {
     let absolute = absolute_path(root)?;
     let explicit = !args.roots.is_empty();
-    let reporter = Arc::new(std::sync::Mutex::new(ProgressReporter::new(false)));
+    let enabled = !(args.no_progress || args.quiet);
+    let reporter = Arc::new(std::sync::Mutex::new(ProgressReporter::new(
+        args.color,
+        args.no_color,
+        enabled,
+    )));
     let sink: zg_core::pipeline::indexing::IndexProgressSink = {
         let reporter = Arc::clone(&reporter);
         Arc::new(move |progress: IndexProgress| {
@@ -203,10 +208,12 @@ async fn run_index_direct(args: &IndexArgs, root: &PathBuf) -> Result<(), CliErr
     {
         eprintln!("debug: scan diagnostics: {diagnostics:?}");
     }
-    if result.files_scanned == 0 {
-        print_no_indexable_files_tip();
+    if !args.quiet {
+        if result.files_scanned == 0 {
+            print_no_indexable_files_tip();
+        }
+        print_index_result("Workspace index", &result);
     }
-    print_index_result("Workspace index", &result);
     Ok(())
 }
 
@@ -513,6 +520,18 @@ mod tests {
         for flags in rejected {
             assert!(server_flags_set(&index_args(flags)), "{flags:?}");
         }
+    }
+
+    #[test]
+    fn display_flags_never_count_as_scope_or_server_flags() {
+        assert!(!file_scope_flags_set(&index_args(&["--color", "always"])));
+        assert!(!file_scope_flags_set(&index_args(&["--no-color"])));
+        assert!(!file_scope_flags_set(&index_args(&["--no-progress"])));
+        assert!(!server_flags_set(&index_args(&["--color", "always"])));
+        assert!(!server_flags_set(&index_args(&["--no-color"])));
+        assert!(!server_flags_set(&index_args(&["--no-progress"])));
+        assert!(index_args(&["--no-progress"]).no_progress);
+        assert!(index_args(&["--quiet"]).quiet);
     }
 
     #[test]

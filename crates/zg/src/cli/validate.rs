@@ -126,6 +126,11 @@ fn validate_index(args: &IndexArgs) -> Result<(), CliError> {
     if args.force_direct && args.mode != Some(ClientModeArg::Direct) {
         return Err(CliError::usage("--force-direct requires --mode direct"));
     }
+    if args.color.is_some() && args.no_color {
+        return Err(CliError::usage(
+            "zg index --color cannot be combined with --no-color",
+        ));
+    }
     if args.drop
         && (args.rebuild
             || args.reset_paths

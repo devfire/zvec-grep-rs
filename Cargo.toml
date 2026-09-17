@@ -74,6 +74,8 @@ subtle = "2"
 base64 = "0.22"
 url = "2"
 tempfile = "3"
+terminal_size = "0.4"
+unicode-width = "0.2"
 libc = "0.2"
 rustix = { version = "1", features = ["process"] }
 os_info = "3"
