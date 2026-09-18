@@ -483,28 +483,47 @@ async fn index_status_reports_persisted_nested_git_policy() {
     .await;
     let session = initialize(&base).await;
     let root = dir.path().to_string_lossy().into_owned();
-    let (status, reported) = message(
-        post(
-            &base,
-            &call_body(2, "zvec_grep_index_status", json!({"root": root})),
-            Some(&session),
+    // The daemon seeds a catch-up full-reconcile job when the actor first
+    // sees the pre-built index, so the first status read can land mid-rewrite
+    // with `persistent.workspace_index` momentarily absent (macOS CI hit this).
+    // Poll until the actor-side state settles, mirroring the server-side
+    // settle loop in `wait_for_index`.
+    let mut roots: Vec<Value> = Vec::new();
+    for attempt in 0..100 {
+        let (status, reported) = message(
+            post(
+                &base,
+                &call_body(2, "zvec_grep_index_status", json!({"root": root})),
+                Some(&session),
+            )
+            .await,
         )
-        .await,
-    )
-    .await;
-    assert_eq!(status, reqwest::StatusCode::OK);
-    let structured = &reported["result"]["structuredContent"];
-    let roots = structured
-        .get("workspace_index")
-        .and_then(|index| index.get("root_paths"))
-        .or_else(|| {
-            structured
-                .get("persistent")
-                .and_then(|persistent| persistent.get("workspace_index"))
-                .and_then(|index| index.get("root_paths"))
-        })
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("status reports workspace roots: {structured}"));
+        .await;
+        assert_eq!(status, reqwest::StatusCode::OK);
+        let structured = &reported["result"]["structuredContent"];
+        roots = structured
+            .get("workspace_index")
+            .and_then(|index| index.get("root_paths"))
+            .or_else(|| {
+                structured
+                    .get("persistent")
+                    .and_then(|persistent| persistent.get("workspace_index"))
+                    .and_then(|index| index.get("root_paths"))
+            })
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if !roots.is_empty() {
+            break;
+        }
+        if attempt == 99 {
+            panic!(
+                "status reports workspace roots: {}",
+                reported["result"]["structuredContent"]
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
     assert!(
         roots.iter().any(|entry| entry
             .get("include_nested_git")
