@@ -377,7 +377,7 @@ impl ProgressReporter {
             if self.last_line.elapsed() < throttle {
                 return;
             }
-            eprintln!("{}", format_progress_line(progress, false, self.tick));
+            eprintln!("{}", format_progress_line(progress, self.color, self.tick));
             self.tick = self.tick.wrapping_add(1);
             self.last_line = Instant::now();
         }

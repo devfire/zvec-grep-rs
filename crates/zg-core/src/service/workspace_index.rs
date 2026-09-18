@@ -450,6 +450,17 @@ mod lifecycle_tests {
         let dir = tempfile::TempDir::new().expect("tempdir");
         closed_index(&dir).close();
     }
+    #[test]
+    fn in_flight_manifest_reads_as_not_indexed() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        // Pre-run shape: embedding recorded, version withheld until the run
+        // commits. A kill in that window must read as incomplete.
+        let mut info = test_info(dir.path());
+        info.index_version = None;
+        assert!(!is_workspace_indexed(&info));
+        info.index_version = Some(CURRENT_INDEX_VERSION);
+        assert!(is_workspace_indexed(&info));
+    }
 
     #[test]
     fn drop_without_close_leaves_storage_reusable() {

@@ -7,8 +7,8 @@ use zg_core::types::{CodeSymbolType as CoreSymbolType, UnixMillis};
 use crate::backend::{SearchFreshness, SearchQuery, SearchRoute, SearchRouteMode};
 use crate::mcp::error::McpError;
 use crate::mcp::schemas::{
-    FreshnessInput, PathFilter, QueryText, SearchInput, SearchLimit, StringOrList, TimeInput,
-    bound_groups, bound_path_filters, parse_root,
+    FreshnessInput, MCP_MAX_PATH_FILTERS, MCP_MAX_QUERY_GROUPS, PathFilter, QueryText, SearchInput,
+    SearchLimit, StringOrList, TimeInput, bound_groups, bound_path_filters, parse_root,
 };
 use crate::root_runtime::RootKey;
 
@@ -193,9 +193,16 @@ fn normalize_query_list(
     value: Option<&StringOrList>,
     what: &str,
 ) -> Result<Vec<QueryText>, McpError> {
+    let raws = raw_items(value);
+    if raws.len() > MCP_MAX_QUERY_GROUPS {
+        return Err(McpError::invalid_params(format!(
+            "{what} exceeds {MCP_MAX_QUERY_GROUPS} groups."
+        )));
+    }
+    check_frame_budget(raws, what)?;
     let mut items = Vec::new();
-    for raw in flatten_list(value) {
-        let parsed = QueryText::parse(raw)?;
+    for raw in raws {
+        let parsed = QueryText::parse(raw.clone())?;
         let trimmed = parsed.as_str().trim();
         if !trimmed.is_empty() {
             items.push(QueryText::parse(trimmed.to_owned())?);
@@ -204,11 +211,16 @@ fn normalize_query_list(
     bound_groups(items, what)
 }
 
-/// Normalizes one path-filter field: a single string is one filter (no
-/// splitting — mirroring `normalizePlainStringList`), arrays are bounded.
 fn normalize_path_filters(value: Option<&StringOrList>) -> Result<Vec<PathFilter>, McpError> {
+    let raws = raw_items(value);
+    if raws.len() > MCP_MAX_PATH_FILTERS {
+        return Err(McpError::invalid_params(format!(
+            "Path filters exceed {MCP_MAX_PATH_FILTERS} entries."
+        )));
+    }
+    check_frame_budget(raws, "path filter list")?;
     let mut items = Vec::new();
-    for raw in flatten_list(value) {
+    for raw in raws {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {
             items.push(PathFilter::parse(trimmed.to_owned())?);
@@ -217,12 +229,30 @@ fn normalize_path_filters(value: Option<&StringOrList>) -> Result<Vec<PathFilter
     bound_path_filters(items)
 }
 
-fn flatten_list(value: Option<&StringOrList>) -> Vec<String> {
+/// Borrows the raw string-or-list values without cloning: count and byte
+/// budgets run on the borrowed slice before any owned allocation, so a
+/// hostile 500k-element / multi-megabyte array is rejected without a
+/// full-clone spike.
+fn raw_items(value: Option<&StringOrList>) -> &[String] {
     match value {
-        None => Vec::new(),
-        Some(StringOrList::Single(one)) => vec![one.clone()],
-        Some(StringOrList::Multiple(many)) => many.clone(),
+        None => &[],
+        Some(StringOrList::Single(one)) => std::slice::from_ref(one),
+        Some(StringOrList::Multiple(many)) => many,
     }
+}
+
+/// Rejects a borrowed list whose raw bytes exceed one transport frame
+/// ([`crate::http_server::MAX_REQUEST_BYTES`]): the caller clones and
+/// parses only after this passes, so a 50 MB payload never materializes twice.
+fn check_frame_budget(raw: &[String], what: &str) -> Result<(), McpError> {
+    let mut total = 0usize;
+    for item in raw {
+        total = total.saturating_add(item.len());
+        if total > crate::http_server::MAX_REQUEST_BYTES {
+            return Err(McpError::invalid_params(format!("{what} exceeds 1 MiB.")));
+        }
+    }
+    Ok(())
 }
 
 /// Parses epoch millis or a date string, mirroring TS `parseModifiedTime`
@@ -317,6 +347,19 @@ mod tests {
     fn rejects_overlong_queries() {
         let input = search(&"x".repeat(MCP_MAX_QUERY_CHARS + 1));
         assert!(normalize_search_input(&input).is_err());
+    }
+
+    #[test]
+    fn rejects_hostile_lists_before_any_clone() {
+        // 500k-element array: count pre-check rejects before allocation.
+        let many = StringOrList::Multiple(vec![String::new(); 500_000]);
+        assert!(normalize_query_list(Some(&many), "queries").is_err());
+        // Multi-megabyte payload: byte budget rejects before any clone.
+        let big = StringOrList::Multiple(vec!["x".repeat(1_000); 2_000]);
+        assert!(normalize_query_list(Some(&big), "queries").is_err());
+        // Path filters enforce their entry cap up front as well.
+        let filters = StringOrList::Multiple(vec!["a".to_owned(); 500]);
+        assert!(normalize_path_filters(Some(&filters)).is_err());
     }
 
     #[test]

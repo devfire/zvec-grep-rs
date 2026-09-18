@@ -2,7 +2,7 @@
 
 use super::ignore::{IgnoreRule, ignored_path_explicitly_included, match_ignore_rules};
 use super::types::{HARD_SKIP_HIDDEN_NAMES, file_name_of};
-use crate::pipeline::indexing::root_paths::{matches_root_exclude_patterns, matches_root_patterns};
+use crate::pipeline::indexing::root_paths::CompiledRootPatterns;
 use crate::types::RootPath;
 use crate::utils::glob::{
     normalize_path_pattern, path_pattern_matches, path_pattern_might_match_descendant,
@@ -14,6 +14,7 @@ pub(crate) fn path_can_be_scanned(
     name: &str,
     is_directory: bool,
     ignore_rules: &[IgnoreRule],
+    patterns: &CompiledRootPatterns,
 ) -> bool {
     if relative_path
         .split('/')
@@ -26,14 +27,13 @@ pub(crate) fn path_can_be_scanned(
     {
         return false;
     }
-    if matches_root_exclude_patterns(relative_path, root) {
+    if patterns.matches_exclude(relative_path) {
         return false;
     }
     if is_directory {
         return !should_skip_hidden_directory(name, relative_path, root);
     }
-    !should_skip_hidden_file(name, relative_path, root)
-        && matches_root_patterns(relative_path, root)
+    !should_skip_hidden_file(name, relative_path, root) && patterns.matches(relative_path)
 }
 
 fn is_hidden_name(name: &str) -> bool {

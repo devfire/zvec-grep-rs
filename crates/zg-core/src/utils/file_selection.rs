@@ -169,14 +169,14 @@ pub struct OrderedGlobs {
 
 #[derive(Debug, Clone)]
 struct GlobRule {
-    pattern: String,
-    case_insensitive: bool,
+    matcher: crate::utils::glob::CompiledGlob,
     negated: bool,
 }
 
 impl OrderedGlobs {
     /// Builds from `globs` (case-sensitive) then `insensitive_globs`, trimming
-    /// and dropping empty patterns.
+    /// and dropping empty patterns. Every rule compiles its regex once here,
+    /// so [`OrderedGlobs::matches`] never builds a regex per file.
     #[must_use]
     pub fn new(globs: &[String], insensitive_globs: &[String]) -> Self {
         let mut rules = Vec::with_capacity(globs.len() + insensitive_globs.len());
@@ -188,8 +188,7 @@ impl OrderedGlobs {
             };
             if !pattern.is_empty() {
                 rules.push(GlobRule {
-                    pattern: pattern.to_owned(),
-                    case_insensitive,
+                    matcher: crate::utils::glob::CompiledGlob::new(pattern, case_insensitive),
                     negated,
                 });
             }
@@ -219,12 +218,7 @@ impl OrderedGlobs {
         let has_positive = self.rules.iter().any(|r| !r.negated);
         let mut included = !has_positive;
         for rule in &self.rules {
-            let matched = if rule.case_insensitive {
-                crate::utils::glob::ripgrep_glob_matches_case_insensitive(&rule.pattern, path)
-            } else {
-                crate::utils::glob::ripgrep_glob_matches(&rule.pattern, path)
-            };
-            if matched {
+            if rule.matcher.matches(path) {
                 included = !rule.negated;
             }
         }

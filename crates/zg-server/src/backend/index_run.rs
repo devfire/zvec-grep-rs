@@ -141,17 +141,14 @@ async fn run_blocking_index(
             .service
             .facade_options(key.as_str(), Some(model.clone())),
     );
-    let info = facade.workspace_info(None).map_err(IndexRunError::Engine)?;
-    let permit = plan_index_permit(
-        &shared.auth,
-        &info,
-        model.info(),
-        force_full,
-        !snapshot.touched_files.is_empty()
-            || !snapshot.rescan_directories.is_empty()
-            || !snapshot.deleted_prefixes.is_empty(),
-    )
-    .map_err(IndexRunError::Engine)?;
+    // The manifest read and permit planning below are blocking/synchronous
+    // work: they run inside the blocking body, never on the calling async
+    // worker (#44). Only owned values cross into the closure.
+    let auth = Arc::clone(&shared.auth);
+    let model_info = model.info().clone();
+    let needs_update = !snapshot.touched_files.is_empty()
+        || !snapshot.rescan_directories.is_empty()
+        || !snapshot.deleted_prefixes.is_empty();
     // Cooperative cancel crosses as an owned abort probe (M4): the facade
     // polls it on a helper thread and trips the blocking body's CancelFlag.
     let abort = Arc::new({
@@ -167,6 +164,8 @@ async fn run_blocking_index(
         .collect();
     let root = PathBuf::from(key.as_str());
     let joined = tokio::task::spawn_blocking(move || {
+        let info = facade.workspace_info(None)?;
+        let permit = plan_index_permit(&auth, &info, &model_info, force_full, needs_update)?;
         with_remote_embedding_operation_permit(permit, || {
             let index_result = facade.ensure_index(&ZvecGrepIndexOptions {
                 root: Some(root.as_path()),
@@ -211,10 +210,12 @@ async fn resolve_model(
             _lease: None,
         });
     }
-    let request = load_request_for(&shared.service, key).map_err(|error| AcquireError::Load {
-        reference: key.to_string(),
-        error,
-    })?;
+    let request = load_request_for(&shared.service, key)
+        .await
+        .map_err(|error| AcquireError::Load {
+            reference: key.to_string(),
+            error,
+        })?;
     let lease = shared.pool.acquire(&request).await?;
     Ok(ResolvedModel {
         model: lease.model().clone(),

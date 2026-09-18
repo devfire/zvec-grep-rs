@@ -141,9 +141,34 @@ fn run_config_provider_set(set: &crate::cli::ConfigProviderSetArgs) -> Result<()
 }
 
 fn assert_http_endpoint(endpoint: &str) -> Result<(), CliError> {
-    let valid = endpoint.starts_with("http://") || endpoint.starts_with("https://");
-    if valid && endpoint.len() > "https://".len() {
+    // Same predicate the engine applies at embed time
+    // (`zg_core::config::is_http_endpoint`): prefix checks alone would store
+    // loopback / link-local / metadata / userinfo URLs that embedding then
+    // rejects, so fail fast here with the same reason.
+    if zg_core::config::is_http_endpoint(endpoint) {
         return Ok(());
     }
-    Err(CliError::usage("--endpoint must be a valid HTTP(S) URL"))
+    Err(CliError::config_invalid(
+        "endpoint must be a valid HTTP(S) URL",
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::assert_http_endpoint;
+
+    #[test]
+    fn endpoint_check_mirrors_engine_ssrf_policy() {
+        // Literal public IP: accepted without DNS, so the test is offline-safe.
+        assert!(assert_http_endpoint("http://8.8.8.8/v1").is_ok());
+        for blocked in [
+            "http://169.254.169.254/",
+            "http://127.0.0.1:8080/v1",
+            "http://localhost:8080/v1",
+            "http://user:pass@8.8.8.8/v1",
+            "ftp://8.8.8.8/v1",
+        ] {
+            assert!(assert_http_endpoint(blocked).is_err(), "{blocked}");
+        }
+    }
 }

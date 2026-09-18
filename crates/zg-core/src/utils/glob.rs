@@ -369,7 +369,127 @@ fn literal_prefix_before_first_glob(pattern: &str) -> &str {
 // Precompiled hot-path matcher
 // -----------------------------------------------------------------------------
 
+/// Precompiled [`path_pattern_matches`] rule: wildcard patterns reuse the
+/// shared [`CompiledGlob`]; literal patterns keep exact/path-prefix semantics
+/// with plain string comparison, so the hot path never builds a regex per
+/// file. Empty patterns match nothing, as do patterns whose regex fails to
+/// compile.
+#[derive(Debug, Clone)]
+pub struct CompiledPathPattern {
+    kind: CompiledPathKind,
+    /// Normalized pattern text (empty for never-matching patterns).
+    normalized: String,
+}
+
+#[derive(Debug, Clone)]
+enum CompiledPathKind {
+    /// Empty pattern: matches nothing.
+    Never,
+    /// Literal pattern: exact match or anything underneath `prefix` (`None`
+    /// for trailing-slash patterns, mirroring `path_pattern_matches`).
+    Literal {
+        expected: String,
+        prefix: Option<String>,
+        case_insensitive: bool,
+    },
+    /// Glob pattern: precompiled matcher (invalid patterns match nothing).
+    Glob { matcher: CompiledGlob },
+}
+
+impl CompiledPathPattern {
+    /// Compiles a case-sensitive pattern once for repeated matching.
+    #[must_use]
+    pub fn new(pattern: &str) -> Self {
+        Self::with_case(pattern, false)
+    }
+
+    /// Compiles a pattern with optional case-insensitive matching.
+    #[must_use]
+    pub fn with_case(pattern: &str, case_insensitive: bool) -> Self {
+        let normalized = normalize_path_pattern(pattern);
+        let stored = normalized.clone();
+        let kind = if normalized.is_empty() {
+            CompiledPathKind::Never
+        } else if has_path_glob(&normalized) {
+            CompiledPathKind::Glob {
+                matcher: CompiledGlob::new(&normalized, case_insensitive),
+            }
+        } else if normalized.ends_with('/') {
+            let expected = if case_insensitive {
+                normalized.to_lowercase()
+            } else {
+                normalized
+            };
+            CompiledPathKind::Literal {
+                expected,
+                prefix: None,
+                case_insensitive,
+            }
+        } else {
+            let (expected, prefix) = if case_insensitive {
+                (
+                    normalized.to_lowercase(),
+                    Some(format!("{}/", normalized.to_lowercase())),
+                )
+            } else {
+                let prefix = format!("{normalized}/");
+                (normalized, Some(prefix))
+            };
+            CompiledPathKind::Literal {
+                expected,
+                prefix,
+                case_insensitive,
+            }
+        };
+        Self {
+            kind,
+            normalized: stored,
+        }
+    }
+
+    /// Normalized pattern text, for prefix checks that matching alone
+    /// cannot express (e.g. an include naming a path under a directory).
+    #[must_use]
+    pub fn normalized_pattern(&self) -> &str {
+        &self.normalized
+    }
+
+    /// True when this pattern can never match (empty input).
+    #[must_use]
+    pub fn is_never(&self) -> bool {
+        matches!(self.kind, CompiledPathKind::Never)
+    }
+
+    /// Matches a candidate path with the same semantics as
+    /// [`path_pattern_matches`] (or the case-insensitive variant when built
+    /// with `case_insensitive = true`).
+    #[must_use]
+    pub fn matches(&self, path: &str) -> bool {
+        match &self.kind {
+            CompiledPathKind::Never => false,
+            CompiledPathKind::Literal {
+                expected,
+                prefix,
+                case_insensitive,
+            } => {
+                let candidate = normalize_path_for_match(path);
+                let candidate = if *case_insensitive {
+                    candidate.to_lowercase()
+                } else {
+                    candidate
+                };
+                candidate == *expected
+                    || prefix
+                        .as_deref()
+                        .is_some_and(|prefix| candidate.starts_with(prefix))
+            }
+            CompiledPathKind::Glob { matcher } => matcher.matches(path),
+        }
+    }
+}
+
 /// Precompiled glob used on hot paths.
+#[derive(Debug, Clone)]
 pub struct CompiledGlob {
     /// `None` when the pattern fails to compile: matches nothing.
     regex: Option<Regex>,
@@ -486,6 +606,37 @@ mod tests {
         assert!(glob_matches("a+b", "a+b"));
     }
 
+    #[test]
+    fn compiled_patterns_match_uncompiled_semantics() {
+        // One compilation serves every path: table-agreement with
+        // `path_pattern_matches` proves per-file matching needs no rebuild.
+        let cases = [
+            ("", "x", false),
+            ("foo", "foo", true),
+            ("foo", "foo/bar.txt", true),
+            ("foo", "foobar", false),
+            ("foo/", "foo", false),
+            ("*.log", "a/b.log", true),
+            ("*.log", "a/b.txt", false),
+            ("src/**/*.rs", "src/a/b.rs", true),
+            ("build/", "build/out.js", false),
+            ("build/**", "build/out.js", true),
+            ("a{b}", "a{b}", true),
+        ];
+        for (pattern, path, expected) in cases {
+            let compiled = CompiledPathPattern::new(pattern);
+            assert_eq!(
+                compiled.matches(path),
+                path_pattern_matches(pattern, path),
+                "pattern={pattern:?} path={path:?}"
+            );
+            assert_eq!(
+                compiled.matches(path),
+                expected,
+                "pattern={pattern:?} path={path:?}"
+            );
+        }
+    }
     fn glob_matches(pattern: &str, path: &str) -> bool {
         ripgrep_glob_matches(pattern, path)
     }

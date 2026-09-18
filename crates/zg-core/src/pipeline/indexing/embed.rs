@@ -702,6 +702,19 @@ fn embed_fragments(
     if let Some(error) = first_error {
         return Err(error);
     }
+    // A short model return (or an abort-shortened run) must never commit
+    // zero-dim padding: fail exactly like the batch path instead.
+    let filled = vectors.iter().filter(|vector| !vector.is_empty()).count();
+    if filled != fragments.len() {
+        return Err(EngineError::new(
+            EngineErrorCode::StorageEntityVectorCountMismatch,
+            "embedding returned mismatched entity/vector counts",
+        )
+        .with_context(format!(
+            "fragmentCount={} vectorCount={filled}",
+            fragments.len()
+        )));
+    }
     Ok(EmbeddingResult { vectors, truncated })
 }
 #[allow(clippy::too_many_arguments)]
@@ -803,4 +816,87 @@ fn embed_fragment_batch_one_by_one(
         }
     }
     Ok(EmbeddingResult { vectors, truncated })
+}
+
+#[cfg(test)]
+mod short_return_tests {
+    use super::super::retry::ConcurrencyPolicy;
+    use super::*;
+    use crate::ids::{EntityId, FileId};
+    use crate::models::{EmbeddingInputKind, EmbeddingModelInfo, EmbeddingPurpose};
+    use crate::types::{Content, Entity, EntityFragment, Range, SearchMetric};
+
+    /// Model returning one vector fewer than requested.
+    struct ShortModel;
+    impl EmbeddingModel for ShortModel {
+        fn info(&self) -> &EmbeddingModelInfo {
+            static INFO: std::sync::LazyLock<EmbeddingModelInfo> =
+                std::sync::LazyLock::new(|| EmbeddingModelInfo {
+                    reference: "test/short".to_owned(),
+                    provider: "test".to_owned(),
+                    model: "short".to_owned(),
+                    dimension: 4,
+                    metric: SearchMetric::Cosine,
+                    supports_images: false,
+                    max_input_tokens: None,
+                    input_kinds: vec![EmbeddingInputKind::Text],
+                    endpoint: None,
+                    default_concurrency: None,
+                });
+            &INFO
+        }
+        fn max_batch_size(&self) -> usize {
+            8
+        }
+        fn embed(
+            &self,
+            _purpose: EmbeddingPurpose,
+            inputs: &[EmbeddingInput<'_>],
+        ) -> EngineResult<EmbeddingResult> {
+            Ok(EmbeddingResult {
+                vectors: vec![vec![0.0; 4]; inputs.len().saturating_sub(1)],
+                truncated: Vec::new(),
+            })
+        }
+    }
+
+    fn fragment(index: usize) -> PreparedFragment {
+        let file_id = FileId::from_raw("file".to_owned());
+        PreparedFragment {
+            fragment: EntityFragment {
+                entity: Entity {
+                    id: EntityId::from_raw(format!("entity-{index}")),
+                    file_id,
+                    range: Range::File,
+                    content: Content::Text {
+                        text: format!("fragment {index}"),
+                    },
+                    metadata: None,
+                },
+                group: None,
+            },
+            embedding_content: Content::Text {
+                text: format!("fragment {index}"),
+            },
+        }
+    }
+
+    #[test]
+    fn short_embed_return_is_error_never_padding() {
+        let model = ShortModel;
+        let scheduler = EmbeddingScheduler::new(ConcurrencyPolicy {
+            initial: 1,
+            min: 1,
+            max: 1,
+            adaptive: false,
+        });
+        let abort = AtomicBool::new(false);
+        let fragments = vec![fragment(0), fragment(1), fragment(2)];
+        let error = embed_fragments(&fragments, &model, &[], &scheduler, &abort, None, None)
+            .expect_err("short model return must be Err");
+        assert_eq!(
+            *error.code(),
+            EngineErrorCode::StorageEntityVectorCountMismatch
+        );
+    }
 }

@@ -11,8 +11,17 @@ use crate::error::{EngineError, EngineErrorCode, EngineResult};
 use crate::paths::to_display_path;
 use crate::types::RootPath;
 use crate::utils::glob::{
-    normalize_path_pattern, path_pattern_matches, path_pattern_might_match_descendant,
+    CompiledPathPattern, normalize_path_pattern, path_pattern_matches,
+    path_pattern_might_match_descendant,
 };
+
+/// Rejects a single ignore file with more parsed rules than this, with an
+/// error rather than a silent skip (#35).
+pub(crate) const MAX_IGNORE_RULES_PER_FILE: usize = 10_000;
+
+/// Rejects an accumulated per-directory rule set larger than this, with an
+/// error rather than a silent skip (#35).
+pub(crate) const MAX_IGNORE_RULES_PER_DIRECTORY: usize = 50_000;
 
 #[derive(Debug, Clone)]
 pub(crate) struct IgnoreRule {
@@ -22,6 +31,39 @@ pub(crate) struct IgnoreRule {
     pub(crate) directory_only: bool,
     pub(crate) anchored: bool,
     pub(crate) has_slash: bool,
+    /// Precompiled `pattern`: per-file matching never builds a regex (#35).
+    matcher: CompiledPathPattern,
+}
+
+/// Semantic flags for [`IgnoreRule::new`]: a struct (not three bare
+/// `bool`s) so call sites cannot mis-order `negated`/`directory_only`/
+/// `anchored`, and adding a flag later does not reshuffle the signature.
+#[derive(Debug, Clone, Copy)]
+struct IgnoreRuleFlags {
+    negated: bool,
+    directory_only: bool,
+    anchored: bool,
+}
+
+impl IgnoreRule {
+    fn new(base_path: String, pattern: String, flags: IgnoreRuleFlags) -> Self {
+        let IgnoreRuleFlags {
+            negated,
+            directory_only,
+            anchored,
+        } = flags;
+        let has_slash = pattern.contains('/');
+        let matcher = CompiledPathPattern::new(&pattern);
+        Self {
+            base_path,
+            pattern,
+            negated,
+            directory_only,
+            anchored,
+            has_slash,
+            matcher,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -51,24 +93,26 @@ pub(crate) fn default_ignore_rules() -> Vec<IgnoreRule> {
         DEFAULT_IGNORED_DIRECTORY_NAMES.len() + DEFAULT_IGNORED_FILE_PATTERNS.len(),
     );
     for name in DEFAULT_IGNORED_DIRECTORY_NAMES {
-        rules.push(IgnoreRule {
-            base_path: String::new(),
-            pattern: (*name).to_owned(),
-            negated: false,
-            directory_only: true,
-            anchored: false,
-            has_slash: false,
-        });
+        rules.push(IgnoreRule::new(
+            String::new(),
+            (*name).to_owned(),
+            IgnoreRuleFlags {
+                negated: false,
+                directory_only: true,
+                anchored: false,
+            },
+        ));
     }
     for pattern in DEFAULT_IGNORED_FILE_PATTERNS {
-        rules.push(IgnoreRule {
-            base_path: String::new(),
-            pattern: (*pattern).to_owned(),
-            negated: false,
-            directory_only: false,
-            anchored: false,
-            has_slash: pattern.contains('/'),
-        });
+        rules.push(IgnoreRule::new(
+            String::new(),
+            (*pattern).to_owned(),
+            IgnoreRuleFlags {
+                negated: false,
+                directory_only: false,
+                anchored: false,
+            },
+        ));
     }
     rules
 }
@@ -91,7 +135,7 @@ pub(crate) fn ignore_rules_for_directory(
     }
     let path_from_root = strip_root_prefix(&root.absolute_path, directory);
     if path_from_root.is_empty() {
-        return Ok(rules);
+        return check_total_rule_count(rules, &root.absolute_path);
     }
     let mut current = PathBuf::from(&root.absolute_path);
     for segment in path_from_root.split('/').filter(|s| !s.is_empty()) {
@@ -99,6 +143,17 @@ pub(crate) fn ignore_rules_for_directory(
         if !root.no_ignore.unwrap_or(false) {
             rules.extend(read_gitignore_rules(root, &to_display_path(&current))?);
         }
+    }
+    check_total_rule_count(rules, &root.absolute_path)
+}
+
+fn check_total_rule_count(rules: Vec<IgnoreRule>, root: &str) -> EngineResult<Vec<IgnoreRule>> {
+    if rules.len() > MAX_IGNORE_RULES_PER_DIRECTORY {
+        return Err(EngineError::new(
+            EngineErrorCode::ScannerConfiguredIgnoreReadFailed,
+            "workspace index ignore rules exceed the per-directory limit",
+        )
+        .with_context(format!("root={root} rules={}", rules.len())));
     }
     Ok(rules)
 }
@@ -125,11 +180,12 @@ pub(crate) fn read_gitignore_rules(
     {
         return Ok(rules.clone());
     }
-    let rules = parse_gitignore_rules(&content, &base_path);
-    if let Ok(mut cache) = gitignore_cache().lock()
-        && cache.entries.len() > MAX_GITIGNORE_CACHE_ENTRIES
-    {
-        if let Some(oldest) = cache.order.pop_front() {
+    let rules = parse_gitignore_rules(&content, &base_path, &to_display_path(&ignore_path))?;
+    if let Ok(mut cache) = gitignore_cache().lock() {
+        while cache.entries.len() >= MAX_GITIGNORE_CACHE_ENTRIES {
+            let Some(oldest) = cache.order.pop_front() else {
+                break;
+            };
             cache.entries.remove(&oldest);
         }
         cache.order.push_back(cache_key.clone());
@@ -153,17 +209,33 @@ pub(crate) fn read_configured_ignore_rules(root: &RootPath) -> EngineResult<Vec<
             )
             .with_context(format!("path={} detail={err}", absolute.display()))
         })?;
-        rules.extend(parse_gitignore_rules(&content, ""));
+        rules.extend(parse_gitignore_rules(
+            &content,
+            "",
+            &to_display_path(&absolute),
+        )?);
     }
     Ok(rules)
 }
 
-fn parse_gitignore_rules(content: &str, base_path: &str) -> Vec<IgnoreRule> {
-    content
+fn parse_gitignore_rules(
+    content: &str,
+    base_path: &str,
+    source: &str,
+) -> EngineResult<Vec<IgnoreRule>> {
+    let rules = content
         .split('\n')
         .map(|line| line.strip_suffix('\r').unwrap_or(line))
         .filter_map(|line| parse_gitignore_rule(line, base_path))
-        .collect()
+        .collect::<Vec<_>>();
+    if rules.len() > MAX_IGNORE_RULES_PER_FILE {
+        return Err(EngineError::new(
+            EngineErrorCode::ScannerConfiguredIgnoreReadFailed,
+            "workspace index ignore file exceeds the per-file rule limit",
+        )
+        .with_context(format!("path={source} rules={}", rules.len())));
+    }
+    Ok(rules)
 }
 
 fn parse_gitignore_rule(line: &str, base_path: &str) -> Option<IgnoreRule> {
@@ -193,15 +265,15 @@ fn parse_gitignore_rule(line: &str, base_path: &str) -> Option<IgnoreRule> {
     if pattern.is_empty() {
         return None;
     }
-    let has_slash = pattern.contains('/');
-    Some(IgnoreRule {
-        base_path: base_path.to_owned(),
+    Some(IgnoreRule::new(
+        base_path.to_owned(),
         pattern,
-        negated,
-        directory_only,
-        anchored,
-        has_slash,
-    })
+        IgnoreRuleFlags {
+            negated,
+            directory_only,
+            anchored,
+        },
+    ))
 }
 
 pub(crate) fn match_ignore_rules<'a>(
@@ -274,17 +346,17 @@ fn ignore_rule_matches(rule: &IgnoreRule, relative_path: &str, is_directory: boo
     };
     if rule.directory_only {
         if rule.anchored || rule.has_slash {
-            return path_pattern_matches(&rule.pattern, &path);
+            return rule.matcher.matches(&path);
         }
-        return path_contains_matching_segment(&path, &rule.pattern);
+        return path_contains_matching_segment(&path, rule);
     }
     if rule.anchored || rule.has_slash {
-        return path_pattern_matches(&rule.pattern, &path);
+        return rule.matcher.matches(&path);
     }
-    if is_directory && path_contains_matching_segment(&path, &rule.pattern) {
+    if is_directory && path_contains_matching_segment(&path, rule) {
         return true;
     }
-    segment_matches(&rule.pattern, &file_name_of(&path))
+    rule.matcher.matches(&file_name_of(&path))
 }
 
 fn relative_to_ignore_rule_base(relative_path: &str, base_path: &str) -> Option<String> {
@@ -299,9 +371,8 @@ fn relative_to_ignore_rule_base(relative_path: &str, base_path: &str) -> Option<
         .map(str::to_owned)
 }
 
-fn path_contains_matching_segment(path: &str, pattern: &str) -> bool {
-    path.split('/')
-        .any(|segment| segment_matches(pattern, segment))
+fn path_contains_matching_segment(path: &str, rule: &IgnoreRule) -> bool {
+    path.split('/').any(|segment| rule.matcher.matches(segment))
 }
 
 fn segment_matches(pattern: &str, segment: &str) -> bool {

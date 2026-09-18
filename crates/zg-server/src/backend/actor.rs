@@ -39,6 +39,10 @@ pub struct RootHandle {
     pub key: RootKey,
     /// Actor command sender.
     pub(crate) tx: UnboundedSender<RootCommand>,
+    /// Spawn generation identifying this actor instance. The manager bumps
+    /// it per spawn; stale teardowns unregister only their own generation
+    /// so a live replacement is never removed (#33).
+    pub(crate) generation: u64,
 }
 
 /// Commands one root actor processes sequentially.

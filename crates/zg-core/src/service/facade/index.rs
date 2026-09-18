@@ -80,7 +80,10 @@ impl ZvecGrepService {
                 root_paths,
                 index_policy: Some(crate::types::WorkspaceIndexPolicy::Enabled),
                 embedding: Some(Some(embedding_schema(model.as_ref()))),
-                index_version: Some(CURRENT_INDEX_VERSION),
+                // Withheld until the run below commits: a kill between this
+                // write and completion leaves a manifest that reads as
+                // incomplete (never Fresh/complete), never a torn complete.
+                index_version: None,
                 created_time: existing
                     .as_ref()
                     .map_or(now, |manifest| manifest.info.created_time),
@@ -98,8 +101,15 @@ impl ZvecGrepService {
         drop(maintenance);
         let cancel = CancelFlag::new();
         let watcher = spawn_signal_watch(options.signal.clone(), &cancel);
+        // The persisted manifest stays versionless (incomplete) while the run
+        // is in flight; only this in-memory copy claims the current version
+        // so `open` + validation succeed for the run itself.
+        let open_info = WorkspaceIndexInfo {
+            index_version: Some(CURRENT_INDEX_VERSION),
+            ..manifest.info.clone()
+        };
         let mut index = WorkspaceIndex::open(
-            manifest.info.clone(),
+            open_info,
             WorkspaceIndexOptions {
                 mode: IndexMode::Write,
                 embedding_model: Some(Arc::clone(&model)),
@@ -126,9 +136,12 @@ impl ZvecGrepService {
         finish_signal_watch(watcher);
 
         let result = result?;
+        // Commit: only a successful run earns the version stamp, flipping the
+        // pre-run versionless manifest back to complete.
         let manifest = WorkspaceManifest {
             info: WorkspaceIndexInfo {
                 updated_time: UnixMillis::now(),
+                index_version: Some(CURRENT_INDEX_VERSION),
                 ..manifest.info
             },
             ..manifest

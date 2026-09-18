@@ -345,9 +345,11 @@ async fn run_index_server(
         .get("job_id")
         .and_then(Value::as_str)
         .unwrap_or("unknown");
-    println!("Workspace index: {state}");
-    println!("Root: {root_out}");
-    println!("Job: {job}");
+    if !args.quiet {
+        println!("Workspace index: {state}");
+        println!("Root: {root_out}");
+        println!("Job: {job}");
+    }
     if state == "failed" {
         let detail = structured
             .get("error")
@@ -362,7 +364,9 @@ async fn run_index_server(
 async fn run_index_drop(args: &IndexArgs, root: &Path) -> Result<(), CliError> {
     let absolute = absolute_path(root)?;
     if !confirm_index_drop(&absolute, args.yes)? {
-        println!("Index drop cancelled.");
+        if !args.quiet {
+            println!("Index drop cancelled.");
+        }
         return Ok(());
     }
     let display = absolute.to_string_lossy().into_owned();
@@ -389,10 +393,12 @@ async fn run_index_drop(args: &IndexArgs, root: &Path) -> Result<(), CliError> {
         server_available(args.home.as_deref()),
     )
     .await?;
-    if dropped {
-        println!("Dropped index for {display}");
-    } else {
-        println!("No index found for {display}");
+    if !args.quiet {
+        if dropped {
+            println!("Dropped index for {display}");
+        } else {
+            println!("No index found for {display}");
+        }
     }
     Ok(())
 }
@@ -532,6 +538,22 @@ mod tests {
         assert!(!server_flags_set(&index_args(&["--no-progress"])));
         assert!(index_args(&["--no-progress"]).no_progress);
         assert!(index_args(&["--quiet"]).quiet);
+    }
+
+    #[test]
+    fn drop_with_quiet_or_no_progress_is_silent_not_rejected() {
+        // `--quiet`/`--no-progress` only mute output; combining them with
+        // `--drop` must validate so the run stays silent instead of
+        // failing with a conflict error.
+        for flags in [
+            ["--drop", "--yes", "--quiet"],
+            ["--drop", "--yes", "--no-progress"],
+        ] {
+            let mut argv = vec!["zg", "index"];
+            argv.extend(flags);
+            let cli = crate::cli::Cli::try_parse_from(argv).unwrap();
+            crate::cli::validate(&cli).expect("--drop with silence flags must validate");
+        }
     }
 
     #[test]

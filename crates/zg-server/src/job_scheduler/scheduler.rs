@@ -36,6 +36,26 @@ pub struct JobScheduler {
 /// cancellation must not hang shutdown forever.
 const CLOSE_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Removes one [`JobScheduler::wait`] progress listener when the wait ends.
+/// `Drop` (not post-await cleanup) also covers the dropped-waiter path: an
+/// MCP disconnect while the terminal watch pends would otherwise leak the
+/// closure — and spawn one progress task per tick for it — forever.
+struct WaitListenerGuard {
+    scheduler: JobScheduler,
+    id: JobId,
+    listener: IndexProgressSink,
+}
+
+impl Drop for WaitListenerGuard {
+    fn drop(&mut self) {
+        let mut state = self.scheduler.shared.state.lock_ignore_poison();
+        if let Some(job) = state.jobs.get_mut(&self.id) {
+            job.listeners
+                .retain(|listener| !Arc::ptr_eq(listener, &self.listener));
+        }
+    }
+}
+
 impl JobScheduler {
     /// Empty scheduler with the given options.
     #[must_use]
@@ -152,28 +172,29 @@ impl JobScheduler {
         id: &JobId,
         on_progress: Option<IndexProgressSink>,
     ) -> Result<IndexJobSnapshot, DaemonError> {
-        let (receiver, replay) = {
+        let (receiver, replay, _listener_guard) = {
             let mut state = self.shared.state.lock_ignore_poison();
             let Some(job) = state.jobs.get_mut(id) else {
                 return Err(DaemonError::UnknownJob { id: id.to_string() });
             };
-            if let Some(sink) = &on_progress {
-                job.listeners.push(sink.clone());
-            }
-            (job.completed.subscribe(), job.progress.clone())
+            // Drop-guard removal: the old explicit post-await cleanup never ran
+            // when the waiter was dropped (MCP disconnect), leaking one listener
+            // — and one progress task per tick — per disconnect.
+            let guard = on_progress.as_ref().map(|_| {
+                let listener = on_progress_clone(&on_progress);
+                job.listeners.push(listener.clone());
+                WaitListenerGuard {
+                    scheduler: self.clone(),
+                    id: id.clone(),
+                    listener,
+                }
+            });
+            (job.completed.subscribe(), job.progress.clone(), guard)
         };
         if let Some(progress) = replay {
             safe_report(&on_progress, &progress);
         }
-        let result = self.await_terminal(receiver).await;
-        if on_progress.is_some() {
-            let mut state = self.shared.state.lock_ignore_poison();
-            if let Some(job) = state.jobs.get_mut(id) {
-                job.listeners
-                    .retain(|listener| !Arc::ptr_eq(listener, &on_progress_clone(&on_progress)));
-            }
-        }
-        result
+        self.await_terminal(receiver).await
     }
 
     /// Awaits quiescence for one root (active job plus any chained
@@ -339,5 +360,61 @@ impl JobScheduler {
         if let Some(logger) = &self.shared.logger {
             logger.event(name, fields);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::task::Poll;
+
+    use futures::future::BoxFuture;
+    use futures::task::noop_waker;
+    use zg_core::pipeline::indexing::IndexProgressSink;
+
+    use super::super::failure::{JobFailure, JobOutcome, JobRun};
+    use super::super::reason::JobReason;
+    use super::super::snapshot::{JobSchedulerOptions, SubmitIndexJob};
+    use super::JobScheduler;
+    use crate::sync::MutexExt;
+
+    fn listener_count(scheduler: &JobScheduler, id: &super::super::id::JobId) -> usize {
+        scheduler
+            .shared
+            .state
+            .lock_ignore_poison()
+            .jobs
+            .get(id)
+            .map_or(0, |job| job.listeners.len())
+    }
+
+    #[tokio::test]
+    async fn dropped_wait_removes_its_listener() {
+        let scheduler = JobScheduler::new(JobSchedulerOptions::default());
+        let hanging: JobRun = Arc::new(|_, cancel| {
+            Box::pin(async move {
+                cancel.cancelled().await;
+                Err(JobFailure::Cancelled)
+            }) as BoxFuture<'static, JobOutcome>
+        });
+        let submitted = scheduler
+            .submit(SubmitIndexJob {
+                canonical_root: "/repo".to_owned(),
+                reason: JobReason::Manual,
+                run: hanging,
+                followup_if_running: false,
+            })
+            .expect("submit");
+        let id = submitted.job.id.clone();
+        let sink: IndexProgressSink = Arc::new(|_| {});
+        let mut waiter = Box::pin(scheduler.wait(&id, Some(sink)));
+        // One poll registers the listener, then pends on the terminal watch.
+        let waker = noop_waker();
+        let mut context = std::task::Context::from_waker(&waker);
+        assert!(matches!(waiter.as_mut().poll(&mut context), Poll::Pending));
+        assert_eq!(listener_count(&scheduler, &id), 1);
+        // Dropping the waiter (MCP disconnect) must remove the listener.
+        drop(waiter);
+        assert_eq!(listener_count(&scheduler, &id), 0);
     }
 }

@@ -30,12 +30,13 @@ pub const DEFAULT_RUNTIME_IDLE_TTL: Duration = Duration::from_secs(30 * 60);
 struct ActorEntry {
     handle: RootHandle,
     join: Option<JoinHandle<()>>,
+    generation: u64,
 }
-
 #[derive(Default)]
 struct Inner {
     actors: HashMap<String, ActorEntry>,
     aliases: HashMap<String, String>,
+    next_generation: u64,
 }
 
 /// Registry of live root actors. `Clone` shares one registry.
@@ -120,18 +121,29 @@ impl RuntimeManager {
     pub fn actor_count(&self) -> usize {
         self.inner.lock_ignore_poison().actors.len()
     }
-
     /// Removes a key without stopping anything (actor-initiated exit).
     /// Returns the join handle when the manager still owned the entry.
+    /// Compare-and-remove on the spawn generation (#33): a stale teardown
+    /// whose root was already replaced is a no-op instead of deleting the
+    /// live replacement. Aliases drop only with a matching removal.
     #[must_use]
-    pub fn unregister(&self, key: &RootKey) -> Option<JoinHandle<()>> {
+    pub fn unregister(&self, key: &RootKey, generation: u64) -> Option<JoinHandle<()>> {
         let mut inner = self.inner.lock_ignore_poison();
+        let matches = inner
+            .actors
+            .get(key.as_str())
+            .is_some_and(|entry| entry.generation == generation);
+        if !matches {
+            return None;
+        }
         let entry = inner.actors.remove(key.as_str())?;
         inner.aliases.retain(|_, target| target != key.as_str());
         entry.join
     }
-
-    /// Stops and removes one actor, awaiting its teardown.
+    /// Stops and removes one actor, awaiting its teardown. The removed entry
+    /// carries its spawn generation into the actor task, so a replacement
+    /// spawned mid-teardown gets a fresh generation and the stale teardown's
+    /// identity-checked [`Self::unregister`] cannot remove it (#33).
     pub async fn evict(&self, key: &RootKey) {
         let entry = self.inner.lock_ignore_poison().actors.remove(key.as_str());
         if let Some(entry) = entry {
@@ -190,20 +202,36 @@ impl RuntimeManager {
                 return Ok(entry.handle.clone());
             }
         }
-        // Fresh actor; record the alias the caller used.
+        // Fresh actor; record the alias the caller used. The generation is
+        // claimed up front so the spawned task carries its own identity
+        // even if a sibling wins the insert race below (#33).
+        let generation = {
+            let mut inner = self.inner.lock_ignore_poison();
+            let generation = inner.next_generation;
+            inner.next_generation = generation.wrapping_add(1);
+            generation
+        };
         let (tx, rx) = unbounded_channel();
         let handle = RootHandle {
             key: canonical.clone(),
             tx: tx.clone(),
+            generation,
         };
         let slf = self.clone();
         let key = canonical.clone();
         let join = tokio::spawn(async move {
-            spawn_root_actor(slf.shared.clone(), slf.clone(), key, tx.clone(), rx).await;
+            spawn_root_actor(
+                slf.shared.clone(),
+                slf.clone(),
+                key,
+                generation,
+                tx.clone(),
+                rx,
+            )
+            .await;
         });
         let mut inner = self.inner.lock_ignore_poison();
         // close() drains under this lock and sets `closed` first: a spawn
-        // that lost the race to shutdown must not resurrect an actor.
         if self.closed.load(Ordering::SeqCst) {
             join.abort();
             return Err(DaemonError::ShuttingDown.into());
@@ -227,6 +255,7 @@ impl RuntimeManager {
             ActorEntry {
                 handle: handle.clone(),
                 join: Some(join),
+                generation,
             },
         );
         Ok(handle)
@@ -338,5 +367,22 @@ mod tests {
         let second = manager.clone();
         let ((), ()) = tokio::join!(first.close(), second.close());
         assert_eq!(manager.actor_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn stale_unregister_keeps_live_replacement() {
+        let manager = test_manager();
+        let (_dir, key) = test_key();
+        let first = manager.get_or_spawn(key.clone()).unwrap();
+        // The live actor exits; its replacement spawns with a fresh
+        // generation. Replaying the stale teardown must be a no-op (#33).
+        manager.evict(&key).await;
+        let second = manager.get_or_spawn(key.clone()).unwrap();
+        assert_ne!(first.generation, second.generation);
+        assert!(manager.unregister(&key, first.generation).is_none());
+        assert!(manager.get(&key).is_some());
+        assert!(manager.unregister(&key, second.generation).is_some());
+        assert!(manager.get(&key).is_none());
+        manager.close().await;
     }
 }

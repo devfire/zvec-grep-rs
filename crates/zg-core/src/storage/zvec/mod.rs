@@ -34,7 +34,7 @@ use codec::{
     validate_fragment_groups,
 };
 use filter::quote_filter_string;
-use schema::create_entities_schema;
+use schema::{create_entities_schema, verify_embedding_fingerprint, write_embedding_fingerprint};
 use search::{search_fts as run_fts, search_vector as run_vector};
 use store::{FileMetaStore, FileRecord};
 
@@ -117,9 +117,15 @@ impl ZvecWorkspaceIndexStorage {
             open_options
                 .set_read_only(read_only)
                 .map_err(zvec_error_open)?;
-            open_zvec_collection(&index_path, read_only, "open", || {
+            let collection = open_zvec_collection(&index_path, read_only, "open", || {
                 Collection::open(&index_path, Some(&open_options))
-            })?
+            })?;
+            // Provenance gate: a foreign index.zvec is refused here, before
+            // any read can silently serve (or empty on) its vectors.
+            if let Some(expected) = embedding {
+                verify_embedding_fingerprint(&paths.storage_path, expected)?;
+            }
+            collection
         } else if read_only {
             return Err(EngineError::new(
                 EngineErrorCode::StorageZvecCollectionMissing,
@@ -135,9 +141,11 @@ impl ZvecWorkspaceIndexStorage {
                 .with_context(format!("path={index_path}"))
             })?;
             let collection_schema = create_entities_schema(embedding)?;
-            open_zvec_collection(&index_path, read_only, "create", || {
+            let collection = open_zvec_collection(&index_path, read_only, "create", || {
                 Collection::create_and_open(&index_path, &collection_schema, None)
-            })?
+            })?;
+            write_embedding_fingerprint(&paths.storage_path, embedding)?;
+            collection
         };
         Ok(Box::new(Self {
             read_only,

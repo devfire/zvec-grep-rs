@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{EngineError, EngineErrorCode, EngineResult};
 use crate::paths::{is_path_inside, normalize_path, to_display_path};
 use crate::types::RootPath;
-use crate::utils::glob::path_pattern_matches;
+use crate::utils::glob::{normalize_path_pattern, path_pattern_matches};
 
 /// Normalizes one root path: absolute form, `recursive` defaulting to true
 /// (mirrors `normalizeRootPath`; callers pass `recursive: true` explicitly,
@@ -91,11 +91,90 @@ pub fn matches_root_include_patterns(relative_path: &str, root: &RootPath) -> bo
 pub fn matches_root_exclude_patterns(relative_path: &str, root: &RootPath) -> bool {
     matches_any(relative_path, &root.exclude)
 }
-
 fn matches_any(relative_path: &str, patterns: &[String]) -> bool {
     patterns
         .iter()
         .any(|pattern| path_pattern_matches(pattern, relative_path))
+}
+
+/// Per-scan compiled include/exclude patterns for one root (#35).
+///
+/// Built once per root per scan and shared by every per-file check, so the
+/// hot path does matching only and never builds a regex per file. Semantics
+/// mirror [`matches_root_patterns`]: exclude-first, include-gated.
+#[derive(Debug, Clone)]
+pub struct CompiledRootPatterns {
+    include: Vec<crate::utils::glob::CompiledPathPattern>,
+    exclude: Vec<crate::utils::glob::CompiledPathPattern>,
+    has_include: bool,
+}
+
+impl CompiledRootPatterns {
+    /// Compiles `root` include/exclude patterns once for repeated matching.
+    #[must_use]
+    pub fn new(root: &RootPath) -> Self {
+        let compile = |patterns: &[String]| {
+            patterns
+                .iter()
+                .map(|pattern| crate::utils::glob::CompiledPathPattern::new(pattern))
+                .filter(|compiled| !compiled.is_never())
+                .collect::<Vec<_>>()
+        };
+        let has_include = !root.include.is_empty();
+        Self {
+            include: compile(&root.include),
+            exclude: compile(&root.exclude),
+            has_include,
+        }
+    }
+
+    /// Exclude-first, include-gated matching (compiled [`matches_root_patterns`]).
+    #[must_use]
+    pub fn matches(&self, relative_path: &str) -> bool {
+        if self.matches_exclude(relative_path) {
+            return false;
+        }
+        if !self.has_include {
+            return true;
+        }
+        self.matches_include(relative_path)
+    }
+
+    /// True when any include pattern matches (compiled
+    /// [`matches_root_include_patterns`]).
+    #[must_use]
+    pub fn matches_include(&self, relative_path: &str) -> bool {
+        self.include
+            .iter()
+            .any(|pattern| pattern.matches(relative_path))
+    }
+
+    /// True when any exclude pattern matches (compiled
+    /// [`matches_root_exclude_patterns`]).
+    #[must_use]
+    pub fn matches_exclude(&self, relative_path: &str) -> bool {
+        self.exclude
+            .iter()
+            .any(|pattern| pattern.matches(relative_path))
+    }
+
+    /// True when an include pattern matches `relative_directory` or names a
+    /// path underneath it (compiled nested-git explicit-include check: a
+    /// repository directory stays visible when an include pattern covers it).
+    #[must_use]
+    pub fn include_covers_directory(&self, relative_directory: &str) -> bool {
+        if !self.has_include {
+            return false;
+        }
+        let normalized = normalize_path_pattern(relative_directory);
+        self.include.iter().any(|pattern| {
+            pattern.matches(relative_directory)
+                || (!pattern.normalized_pattern().is_empty()
+                    && pattern
+                        .normalized_pattern()
+                        .starts_with(&format!("{normalized}/")))
+        })
+    }
 }
 
 fn display_normalized(path: &str) -> String {

@@ -114,7 +114,7 @@ impl DaemonBackend {
         let key = resolve_requested_root(root, true)?;
         if let Some(handle) = self.manager.get(&key) {
             let dropped: bool = send_recv(&handle, |reply| RootCommand::Drop { reply }).await??;
-            let _ = self.manager.unregister(&key);
+            let _ = self.manager.unregister(&key, handle.generation);
             return Ok(dropped);
         }
         // Never-activated roots drop straight through the facade: no model

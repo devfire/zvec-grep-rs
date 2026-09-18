@@ -147,9 +147,12 @@ fn is_workspace_manifest(value: &Value) -> bool {
     if !embedding_valid {
         return false;
     }
+    // Absent while a run is in flight: `ensure_index` withholds the version
+    // until the run commits, so a torn build reads as incomplete, never
+    // complete. Present on every committed manifest (old and new).
     let index_version_valid = object
         .get("indexVersion")
-        .is_some_and(|version| version.is_null() || version.is_i64() || version.is_u64());
+        .is_none_or(|version| version.is_null() || version.is_i64() || version.is_u64());
     if !index_version_valid {
         return false;
     }

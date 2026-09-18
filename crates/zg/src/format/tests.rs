@@ -268,6 +268,26 @@ fn progress_line_covers_scan_download_and_indexing() {
 }
 
 #[test]
+fn non_tty_line_honors_explicit_color_flag() {
+    use zg_core::types::{IndexProgress, IndexProgressPhase};
+    // Regression #41: the non-TTY report branch hardcoded `color: false`,
+    // dropping `--color always` whenever stderr was piped. The branch now
+    // passes the resolved flag, so the line builder must emit ANSI for it.
+    let indexing = IndexProgress {
+        phase: Some(IndexProgressPhase::Indexing),
+        files_total: Some(10),
+        files_indexed: Some(4),
+        detail: Some("a.rs".to_owned()),
+        ..IndexProgress::default()
+    };
+    let line = format_progress_line(&indexing, true, 0);
+    assert!(line.contains("\x1b[32m"), "{line:?}");
+    assert!(line.contains("(4/10)"), "{line:?}");
+    let plain = format_progress_line(&indexing, false, 0);
+    assert!(!plain.contains("\x1b["), "{plain:?}");
+}
+
+#[test]
 fn progress_line_clamped_fits_narrow_terminals() {
     use zg_core::types::{IndexEmbeddingProgress, IndexProgress, IndexProgressPhase};
     // Worst case from the wrap report: bar + counts + download counters +

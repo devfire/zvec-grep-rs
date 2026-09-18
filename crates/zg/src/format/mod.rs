@@ -32,7 +32,7 @@ mod tests;
 mod text;
 mod workspace;
 
-pub use color::{Color, use_color};
+pub use color::{Color, use_color, use_color_stderr};
 pub use context::{Rendering, print_context_result, print_context_warnings};
 pub use control::print_control_status;
 pub use error::{Verbosity, print_error};

@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, error::TryRecvError};
 use zg_core::index_status::{index_completion_for_job, index_completion_from_status};
 use zg_core::lexical::{LexicalSearchOptions, LexicalSearchResult, run_lexical_search};
 use zg_core::service::facade::ZvecGrepService;
@@ -30,6 +30,7 @@ use crate::watch_manager::{WatchManager, WatchReason};
 
 pub(crate) struct RootActor {
     pub(crate) key: RootKey,
+    pub(crate) generation: u64,
     pub(crate) shared: BackendShared,
     pub(crate) manager: RuntimeManager,
     pub(crate) runtime: RootRuntime,
@@ -60,10 +61,32 @@ impl RootActor {
                     }
                 }
                 () = &mut idle => {
+                    // Drain debounced-but-unflushed watcher batches before
+                    // deciding to exit: teardown drops pending changes, so
+                    // exiting over an unflushed batch would silently lose
+                    // it (#34).
+                    self.watcher.flush_now().await;
                     if self.runtime.is_quiet() && !self.runtime.needs_reconciliation() {
-                        break;
+                        // A flushed batch re-enters as `WatchBatch`; handle
+                        // one queued command (if any) instead of exiting
+                        // over it.
+                        match self.rx.try_recv() {
+                            Ok(cmd) => {
+                                idle.as_mut().reset(tokio::time::Instant::now() + self.shared.runtime_idle_ttl);
+                                if matches!(cmd, RootCommand::Shutdown) {
+                                    break;
+                                }
+                                if !self.handle(cmd).await {
+                                    break;
+                                }
+                            }
+                            Err(
+                                TryRecvError::Empty | TryRecvError::Disconnected,
+                            ) => break,
+                        }
+                    } else {
+                        idle.as_mut().reset(tokio::time::Instant::now() + self.shared.runtime_idle_ttl);
                     }
-                    idle.as_mut().reset(tokio::time::Instant::now() + self.shared.runtime_idle_ttl);
                 }
             }
         }
@@ -78,10 +101,10 @@ impl RootActor {
                 let _ = reply.send(self.handle_search(query).await);
             }
             RootCommand::Index { input, reply } => {
-                let _ = reply.send(self.handle_index(input));
+                let _ = reply.send(self.handle_index(input).await);
             }
             RootCommand::Status { reply } => {
-                let _ = reply.send(self.handle_status());
+                let _ = reply.send(self.handle_status().await);
             }
             RootCommand::Rg { query, reply } => {
                 let _ = reply.send(self.handle_rg(query).await);
@@ -105,14 +128,19 @@ impl RootActor {
         self.runtime.close();
         self.watcher.close().await;
         self.sessions.close().await;
-        let _ = self.manager.unregister(&self.key);
+        // Identity-checked (#33): a replacement spawned since this actor
+        // exited keeps its own generation, so this is a no-op for it.
+        let _ = self.manager.unregister(&self.key, self.generation);
     }
 
     pub(crate) fn temp_service(&self) -> ZvecGrepService {
         ZvecGrepService::new(self.shared.catalog_options(self.key.as_str()))
     }
 
-    fn handle_index(&mut self, input: IndexInput) -> Result<SubmitIndexJobResult, BackendError> {
+    async fn handle_index(
+        &mut self,
+        input: IndexInput,
+    ) -> Result<SubmitIndexJobResult, BackendError> {
         self.runtime.set_writer_pending(true);
         // Explicit rebuilds reconcile fully. An incremental request with no
         // paths reconciles whatever is pending: the run takes the pending
@@ -120,15 +148,18 @@ impl RootActor {
         // (see `apply_finished`) instead of rescanning the workspace —
         // except on a root with no index yet, where the first build must
         // scan everything (mirrors the engine's create-on-missing path).
+        // The manifest read is blocking IO: it runs on a blocking thread,
+        // never on this async worker (#44).
         let changes = if input.rebuild {
             ChangeSetSnapshot {
                 force_full_reconcile: true,
                 ..ChangeSetSnapshot::default()
             }
         } else if input.changed_paths.is_empty() {
-            let indexed = self
-                .temp_service()
-                .workspace_info(None)
+            let service = self.temp_service();
+            let indexed = tokio::task::spawn_blocking(move || service.workspace_info(None))
+                .await
+                .map_err(join_backend_error)?
                 .map(|info| info.indexed)
                 .unwrap_or(false);
             ChangeSetSnapshot {
@@ -184,11 +215,17 @@ impl RootActor {
         }
     }
 
-    fn handle_status(&mut self) -> Result<DaemonIndexStatus, BackendError> {
+    async fn handle_status(&mut self) -> Result<DaemonIndexStatus, BackendError> {
+        // Both engine reads below are blocking storage IO: each runs on a
+        // blocking thread, never on this async worker (#44).
         let status = match self.status.clone() {
             Some(cached) => cached,
             None => {
-                let fresh = self.temp_service().index_status(None)?;
+                let service = self.temp_service();
+                let fresh = tokio::task::spawn_blocking(move || service.index_status(None))
+                    .await
+                    .map_err(join_backend_error)?
+                    .map_err(BackendError::Engine)?;
                 self.status = Some(fresh.clone());
                 fresh
             }
@@ -200,7 +237,10 @@ impl RootActor {
             job.as_ref().and_then(|job| job.progress.as_ref()),
         );
         let snapshot = self.runtime.snapshot();
-        let info = self.temp_service().workspace_info(None).ok();
+        let service = self.temp_service();
+        let info = tokio::task::spawn_blocking(move || service.workspace_info(None).ok())
+            .await
+            .map_err(join_backend_error)?;
         Ok(DaemonIndexStatus {
             status,
             job,

@@ -31,10 +31,16 @@ pub fn canonicalize_workspace_roots(roots: &[String]) -> Vec<String> {
                     .unwrap_or_else(|_| PathBuf::from("."))
                     .join(path)
             };
-            std::fs::canonicalize(&absolute)
-                .unwrap_or_else(|_| crate::paths::normalize_path(&absolute))
-                .to_string_lossy()
-                .replace('\\', "/")
+            let resolved = std::fs::canonicalize(&absolute)
+                .unwrap_or_else(|_| crate::paths::normalize_path(&absolute));
+            let canonical = resolved.to_string_lossy();
+            // Backslash is a separator only on Windows: folding it on Unix
+            // would alias the file `x\y` onto the directory `x/y` and its grants.
+            if cfg!(windows) {
+                canonical.replace('\\', "/")
+            } else {
+                canonical.into_owned()
+            }
         })
         .collect();
     canonical.sort();
@@ -166,6 +172,20 @@ mod tests {
         let err = create_remote_embedding_target(&["/repo".to_owned()], "qwen", "m", "  ")
             .expect_err("blank endpoint");
         assert!(matches!(err, AuthError::InvalidTarget { .. }));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn backslash_and_slash_fingerprint_distinctly_on_unix() {
+        // Backslash is a filename char on Unix: `/repo-backslash\dir` (one
+        // file) must not alias `/repo-backslash/dir` (a directory) and its grants.
+        let backslash = canonicalize_workspace_roots(&["/repo-backslash\\dir".to_owned()]);
+        let slash = canonicalize_workspace_roots(&["/repo-backslash/dir".to_owned()]);
+        assert_ne!(backslash, slash);
+        assert_ne!(
+            workspace_fingerprint(&backslash).as_str(),
+            workspace_fingerprint(&slash).as_str()
+        );
     }
 
     #[test]

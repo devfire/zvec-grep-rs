@@ -51,23 +51,41 @@ async fn main() {
             || matches!(&cli.command, Some(Command::Index(args)) if args.debug)
             || matches!(&cli.command, Some(Command::Status(args)) if args.debug),
     );
+    let err_color = error_color(&cli);
     if let Err(error) = cli::validate(&cli) {
-        report(error, verbosity);
+        report(error, err_color, verbosity);
     }
     if let Err(error) = commands::run(cli).await {
-        report(error, verbosity);
+        report(error, err_color, verbosity);
     }
 }
 
-fn report(error: CliError, verbosity: format::Verbosity) -> ! {
-    format::print_error(&error, color_stderr(), verbosity);
+fn report(error: CliError, color: format::Color, verbosity: format::Verbosity) -> ! {
+    format::print_error(&error, color, verbosity);
     std::process::exit(1);
 }
 
-fn color_stderr() -> format::Color {
-    if std::env::var("NO_COLOR").is_err() && std::io::IsTerminal::is_terminal(&std::io::stderr()) {
-        format::Color::Always
-    } else {
-        format::Color::Never
-    }
+/// Stderr color for error reports: honors the subcommand's
+/// `--color`/`--no-color` exactly like the progress reporter (same
+/// [`format::use_color_stderr`] precedence, no duplicated logic).
+/// Subcommands without color flags fall back to the stderr terminal.
+fn error_color(cli: &Cli) -> format::Color {
+    let (mode, no_color) = match &cli.command {
+        Some(Command::Query(args)) => (args.color, args.no_color),
+        Some(Command::Index(args)) => (args.color, args.no_color),
+        Some(Command::Status(args)) => (args.color, args.no_color),
+        Some(
+            Command::Install(_)
+            | Command::Uninstall(_)
+            | Command::Config(_)
+            | Command::Auth(_)
+            | Command::Server(_)
+            | Command::Help(_)
+            | Command::Version
+            | Command::Completions(_)
+            | Command::Serve,
+        )
+        | None => (None, false),
+    };
+    format::use_color_stderr(mode, no_color)
 }

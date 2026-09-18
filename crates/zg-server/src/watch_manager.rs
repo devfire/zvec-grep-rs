@@ -81,6 +81,11 @@ pub struct WatchManagerOptions {
     pub on_changes: WatchChanges,
     /// Index roots for filtering; `None` tracks everything.
     pub get_root_paths: Option<RootPathsSource>,
+    /// Pre-snapshotted index roots. When `Some`, [`WatchManager::new`]
+    /// skips its blocking manifest read (the caller snapshotted off the
+    /// async worker, #44); `None` keeps the warm-cache snapshot for
+    /// synchronous and test callers.
+    pub initial_roots: Option<Vec<RootPath>>,
     /// Pending-state observer.
     pub on_pending: Option<WatchPending>,
 }
@@ -144,7 +149,11 @@ impl WatchManager {
         let (event_tx, event_rx) = channel(EVENT_QUEUE_CAPACITY);
         // One blocking snapshot up front so the synchronous `inject_event`
         // path filters with a warm cache; the async path refreshes off-loop.
-        let roots_cache = load_roots(&options.get_root_paths).unwrap_or_default();
+        // A caller that already snapshotted off the async worker passes it
+        // in (`initial_roots`) to skip the blocking read here (#44).
+        let roots_cache = options
+            .initial_roots
+            .unwrap_or_else(|| load_roots(&options.get_root_paths).unwrap_or_default());
         let shared = Arc::new(Shared {
             root: options.root.clone(),
             changes: Mutex::new(ChangeSet::new(ChangeSetOptions {
@@ -845,6 +854,7 @@ mod tests {
                 batches_clone.lock().unwrap().push((snapshot, reason));
             }),
             get_root_paths: None,
+            initial_roots: None,
             on_pending: None,
         });
         (manager, batches)
@@ -887,6 +897,7 @@ mod tests {
                 batches_clone.lock().unwrap().push((snapshot, reason));
             }),
             get_root_paths: Some(source),
+            initial_roots: None,
             on_pending: None,
         });
         // Construction takes one blocking snapshot up front.
@@ -1066,6 +1077,7 @@ mod tests {
                 batches_clone.lock().unwrap().push((snapshot, reason));
             }),
             get_root_paths: Some(source),
+            initial_roots: None,
             on_pending: None,
         });
         let touched_batches = || {
