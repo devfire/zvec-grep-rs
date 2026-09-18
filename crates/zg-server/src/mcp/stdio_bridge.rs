@@ -7,7 +7,7 @@
 //! is no subprocess to supervise and no elicitation to forward —
 //! `shouldStopStdioBridge` has no subject here (see
 //! `docs/ts-divergence.md`).
-//! [`CappedStdin`] budgets every stdio frame like the HTTP transport
+//! `CappedStdin` budgets every stdio frame like the HTTP transport
 //! (`crate::http_server::MAX_REQUEST_BYTES`), failing an over-budget frame
 //! before rmcp deserializes it. Fails the session closed; memory stays bounded.
 use std::pin::Pin;
