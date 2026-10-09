@@ -182,8 +182,7 @@ fn endpoint_host(endpoint: &str) -> Option<String> {
     }
     let without_scheme = endpoint
         .split_once("://")
-        .map(|(_, rest)| rest)
-        .unwrap_or(endpoint);
+        .map_or(endpoint, |(_, rest)| rest);
     let host = without_scheme.split('/').next().unwrap_or("");
     if host.is_empty() {
         None

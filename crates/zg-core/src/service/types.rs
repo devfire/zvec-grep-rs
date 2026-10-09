@@ -2,7 +2,7 @@
 //! info results shared by CLI, daemon, and MCP layers.
 //!
 //! JSON field naming follows the TS wire format: camelCase except where the
-//! daemon status DTO explicitly uses snake_case.
+//! daemon status DTO explicitly uses `snake_case`.
 
 use std::sync::Arc;
 
@@ -202,7 +202,7 @@ pub struct ZvecGrepContextOptions<'a> {
     pub signal: Option<AbortCheck>,
 }
 
-impl<'a> Default for ZvecGrepContextOptions<'a> {
+impl Default for ZvecGrepContextOptions<'_> {
     fn default() -> Self {
         Self {
             root: None,

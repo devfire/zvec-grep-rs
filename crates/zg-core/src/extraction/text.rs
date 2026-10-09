@@ -172,8 +172,7 @@ fn split_long_line(
         };
         let cut_bytes: usize = chars
             .get(char_cursor..char_cursor + cut_chars)
-            .map(|window| window.iter().map(|c| c.len_utf8()).sum())
-            .unwrap_or(0);
+            .map_or(0, |window| window.iter().map(|c| c.len_utf8()).sum());
         let Some(slice) = line.get(byte_cursor..byte_cursor + cut_bytes) else {
             break;
         };

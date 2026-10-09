@@ -80,7 +80,7 @@ pub struct ExtractedFragment {
 /// `EXTRACTORS.EMPTY_RELATIVE_PATH` when the source file identity is invalid, or the
 /// routed extractor's error (bad chunk options, empty image data).
 pub fn extract(source: &Source<'_>, options: &ChunkOptions) -> EngineResult<Vec<EntityFragment>> {
-    extract_internal(source, options).map(|out| out.into_fragments())
+    extract_internal(source, options).map(ExtractionOutput::into_fragments)
 }
 
 /// Extracts fragments plus per-fragment embedding content for indexing.

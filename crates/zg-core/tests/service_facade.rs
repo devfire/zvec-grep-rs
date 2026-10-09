@@ -48,14 +48,14 @@ fn stub_service(dir: &TempDir) -> ZvecGrepService {
     })
 }
 
-fn index_options<'a>(dir: &'a TempDir) -> ZvecGrepIndexOptions<'a> {
+fn index_options(dir: &TempDir) -> ZvecGrepIndexOptions<'_> {
     ZvecGrepIndexOptions {
         root: Some(dir.path()),
         ..ZvecGrepIndexOptions::default()
     }
 }
 
-fn search_options<'a>(dir: &'a TempDir) -> ZvecGrepContextOptions<'a> {
+fn search_options(dir: &TempDir) -> ZvecGrepContextOptions<'_> {
     ZvecGrepContextOptions {
         root: Some(dir.path()),
         query: Some("hello".to_owned()),
@@ -193,7 +193,7 @@ fn bare_query_is_hybrid_without_fts_crutch() {
         found
             .items
             .iter()
-            .any(|item| matches!(item.matched_by.as_deref(), Some("fts") | Some("fts+vector"))),
+            .any(|item| matches!(item.matched_by.as_deref(), Some("fts" | "fts+vector"))),
         "bare query must run the lexical leg"
     );
     let groups = found.group_results.expect("groups");

@@ -29,7 +29,7 @@ pub enum InstallTarget {
     Claude,
     /// Codex (`~/.codex/config.toml`).
     Codex,
-    /// OpenCode (`~/.config/opencode/opencode.json`).
+    /// `OpenCode` (`~/.config/opencode/opencode.json`).
     OpenCode,
     /// Cursor (`~/.cursor/mcp.json`).
     Cursor,
@@ -524,8 +524,7 @@ fn unique_tmp_path(path: &Path) -> PathBuf {
     let count = TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos())
-        .unwrap_or(0);
+        .map_or(0, |elapsed| elapsed.as_nanos());
     path.with_extension(format!("{}.{}.{}.tmp", std::process::id(), nanos, count))
 }
 

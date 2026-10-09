@@ -50,8 +50,7 @@ pub(crate) fn expand_context_item(
             start_offset: 0,
             end_offset: lines
                 .get(window_end - 1)
-                .map(|line| line.chars().count())
-                .unwrap_or(0),
+                .map_or(0, |line| line.chars().count()),
         },
     );
     item.excerpt_range = Some(original);
@@ -78,7 +77,7 @@ fn read_text_lines<'a>(
                     .split('\n')
                     .map(|line| line.strip_suffix('\r').unwrap_or(line).to_owned())
                     .collect();
-                if parts.last().is_some_and(|last| last.is_empty()) {
+                if parts.last().is_some_and(String::is_empty) {
                     parts.pop();
                 }
                 parts

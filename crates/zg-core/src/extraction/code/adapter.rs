@@ -384,11 +384,11 @@ mod tests {
         assert!(!adapter.is_entity_type("class_definition"));
         assert!(resolve_adapter("ruby").is_none());
         assert_eq!(
-            resolve_adapter("csharp").map(|adapter| adapter.format()),
+            resolve_adapter("csharp").map(LanguageAdapter::format),
             Some("csharp")
         );
         assert_eq!(
-            resolve_adapter("vb").map(|adapter| adapter.format()),
+            resolve_adapter("vb").map(LanguageAdapter::format),
             Some("vb")
         );
         let resolved = resolve_adapter("tsx");
@@ -397,10 +397,10 @@ mod tests {
 
     #[test]
     fn jsx_shares_javascript_tsx_shares_typescript() {
-        let js = resolve_adapter("javascript").map(|a| a.format());
-        let jsx = resolve_adapter("jsx").map(|a| a.format());
-        let ts = resolve_adapter("typescript").map(|a| a.format());
-        let tsx = resolve_adapter("tsx").map(|a| a.format());
+        let js = resolve_adapter("javascript").map(LanguageAdapter::format);
+        let jsx = resolve_adapter("jsx").map(LanguageAdapter::format);
+        let ts = resolve_adapter("typescript").map(LanguageAdapter::format);
+        let tsx = resolve_adapter("tsx").map(LanguageAdapter::format);
         assert_eq!(js, jsx);
         assert_eq!(ts, tsx);
     }

@@ -92,8 +92,7 @@ pub(crate) fn index_files(
     // earlier storage writes are visible while later files still prepare and
     // live owned text/vectors stay bounded independent of the file count.
     let prepare_width = std::thread::available_parallelism()
-        .map(|cores| cores.get())
-        .unwrap_or(1)
+        .map_or(1, std::num::NonZero::get)
         .max(1);
     let prepare_model = Arc::clone(&ctx.embedding_model);
     let prepare_cancel = ctx.cancel.clone();
@@ -352,15 +351,12 @@ fn embed_and_commit_wave(
         }
         handles
             .into_iter()
-            .map(|handle| match handle.join() {
-                Ok(outcome) => outcome,
-                Err(_) => {
-                    abort.store(true, Ordering::Relaxed);
-                    UnitOutcome::Failed(EngineError::new(
-                        EngineErrorCode::IndexingEmbeddingThreadFailed,
-                        "embedding worker thread failed",
-                    ))
-                }
+            .map(|handle| if let Ok(outcome) = handle.join() { outcome } else {
+                abort.store(true, Ordering::Relaxed);
+                UnitOutcome::Failed(EngineError::new(
+                    EngineErrorCode::IndexingEmbeddingThreadFailed,
+                    "embedding worker thread failed",
+                ))
             })
             .collect()
     });

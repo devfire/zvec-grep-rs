@@ -516,12 +516,10 @@ async fn index_status_reports_persisted_nested_git_policy() {
         if !roots.is_empty() {
             break;
         }
-        if attempt == 99 {
-            panic!(
-                "status reports workspace roots: {}",
-                reported["result"]["structuredContent"]
-            );
-        }
+        assert!(attempt != 99, 
+            "status reports workspace roots: {}",
+            reported["result"]["structuredContent"]
+        );
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     assert!(

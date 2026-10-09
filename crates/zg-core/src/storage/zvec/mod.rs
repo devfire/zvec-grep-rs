@@ -1,4 +1,4 @@
-//! ZvecWorkspaceIndexStorage: open/retry/lock, trait implementation.
+//! `ZvecWorkspaceIndexStorage`: open/retry/lock, trait implementation.
 //!
 //! Ports `engine/storage/zvec.ts`. Entity fragments live in the `index.zvec`
 //! collection; file metadata lives in `files.json` (see [`store`]) rather
@@ -402,12 +402,9 @@ impl ZvecWorkspaceIndexStorage {
                                 }
                                 break;
                             };
-                            match doc_to_stored_fragment(doc, files) {
-                                Ok(Some(next)) => *current = next,
-                                Ok(None) | Err(_) => {
-                                    *slot = None;
-                                    break;
-                                }
+                            if let Ok(Some(next)) = doc_to_stored_fragment(doc, files) { *current = next } else {
+                                *slot = None;
+                                break;
                             }
                         }
                         _ => break,
@@ -515,19 +512,16 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
             Err(_) => return Vec::new(),
         };
         let files = self.meta.records();
-        let docs = match collection.fetch_with_options(&selected, None, false) {
-            Ok(docs) => docs,
-            Err(_) => {
-                // A poisoned batch (e.g. one bad key) must not drop the whole
-                // listing: fall back to per-id fetches with per-entity omission.
-                let mut entities = Vec::with_capacity(selected.len());
-                for id in &selected {
-                    if let Ok(Some(entity)) = self.stored_entity(id, "listEntitiesByFile", files) {
-                        entities.push(entity);
-                    }
+        let docs = if let Ok(docs) = collection.fetch_with_options(&selected, None, false) { docs } else {
+            // A poisoned batch (e.g. one bad key) must not drop the whole
+            // listing: fall back to per-id fetches with per-entity omission.
+            let mut entities = Vec::with_capacity(selected.len());
+            for id in &selected {
+                if let Ok(Some(entity)) = self.stored_entity(id, "listEntitiesByFile", files) {
+                    entities.push(entity);
                 }
-                return entities;
             }
+            return entities;
         };
         let mut by_pk: HashMap<&str, &Doc> = HashMap::with_capacity(docs.len());
         for doc in &docs {
@@ -633,8 +627,7 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
                     entity_count: entity_ids.len(),
                     truncated_fragment_count: Some(
                         diagnostics
-                            .map(|d| d.truncated_fragment_count.unwrap_or(0))
-                            .unwrap_or(0),
+                            .map_or(0, |d| d.truncated_fragment_count.unwrap_or(0)),
                     ),
                     ..FileIndexStatus::default()
                 }),

@@ -150,7 +150,7 @@ mod lifecycle_tests {
 
     /// Checkpoints one file record so `files.json` exists: `close`/`drop`
     /// only flush staged writes, so a never-written store has no metadata
-    /// file and a read-only open correctly fails with FILE_META_MISSING.
+    /// file and a read-only open correctly fails with `FILE_META_MISSING`.
     /// The handle is closed (and its lock released on drop) before return,
     /// so callers can reopen the storage in any mode.
     fn seed_persisted_storage(storage_path: &Path, schema: &WorkspaceIndexEmbeddingSchema) {

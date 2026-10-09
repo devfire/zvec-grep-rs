@@ -6,7 +6,7 @@ use crate::ids::{EntityId, FileId};
 
 /// Source location of an entity within its file.
 ///
-/// Wire shape follows the TS contract exactly: `kind` is snake_case
+/// Wire shape follows the TS contract exactly: `kind` is `snake_case`
 /// (`page_text`) while struct fields are camelCase (`startLine`). The
 /// enum-level rule covers variants; each struct variant re-declares the
 /// field rule.

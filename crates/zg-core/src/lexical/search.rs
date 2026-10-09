@@ -184,7 +184,7 @@ pub fn run_lexical_search(options: &LexicalSearchOptions) -> EngineResult<Lexica
             Some(metadata) => Some(metadata),
             None => fs::metadata(path).ok(),
         };
-        let Some(file_len) = owned_metadata.as_ref().map(|m| m.len()) else {
+        let Some(file_len) = owned_metadata.as_ref().map(fs::Metadata::len) else {
             continue;
         };
         if crate::file_size_policy::file_size_exceeds_cap(

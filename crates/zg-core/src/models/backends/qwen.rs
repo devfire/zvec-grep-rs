@@ -3,7 +3,7 @@
 //! Mirrors `src/engine/models/backends/qwen.ts`: text models speak the
 //! OpenAI-compatible embeddings API (`POST {model, input, dimensions,
 //! encoding_format}` returning `{data: [{index, embedding}]}`), while
-//! `qwen3-vl-embedding` speaks the DashScope multimodal API (`POST
+//! `qwen3-vl-embedding` speaks the `DashScope` multimodal API (`POST
 //! {model, input: {contents}, parameters: {dimension}}` returning
 //! `{output: {embeddings: [{index | text_index, embedding}]}}`). Requests
 //! are synchronous via `ureq` with `Bearer` API-key auth and a 60 s global
@@ -102,25 +102,22 @@ fn post_embedding_json(
                 "model={reference} endpoint={endpoint} timeoutMs={REMOTE_TIMEOUT_MS}"
             )));
         }
-        let mut response = match use_get {
-            true => {
-                let request = agent.get(&current);
-                let request = if is_same_origin(endpoint, &current) {
-                    request.header("Authorization", &format!("Bearer {}", api_key.as_str()))
-                } else {
-                    request
-                };
-                request.call()
-            }
-            false => {
-                let request = agent.post(&current);
-                let request = if is_same_origin(endpoint, &current) {
-                    request.header("Authorization", &format!("Bearer {}", api_key.as_str()))
-                } else {
-                    request
-                };
-                request.send_json(body.clone())
-            }
+        let mut response = if use_get {
+            let request = agent.get(&current);
+            let request = if is_same_origin(endpoint, &current) {
+                request.header("Authorization", &format!("Bearer {}", api_key.as_str()))
+            } else {
+                request
+            };
+            request.call()
+        } else {
+            let request = agent.post(&current);
+            let request = if is_same_origin(endpoint, &current) {
+                request.header("Authorization", &format!("Bearer {}", api_key.as_str()))
+            } else {
+                request
+            };
+            request.send_json(body.clone())
         }
         .map_err(|err| {
             EngineError::new(request_failed, format!("{display} request failed")).with_context(
@@ -488,9 +485,7 @@ impl QwenTextEmbeddingModel {
             // `INVALID_INDEX` / `INDEX_OUT_OF_RANGE` split.
             let raw_index = object.get("index");
             let index = raw_index.and_then(Value::as_i64).ok_or_else(|| {
-                let raw = raw_index
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "unknown".to_owned());
+                let raw = raw_index.map_or_else(|| "unknown".to_owned(), ToString::to_string);
                 EngineError::new(
                     self.code(QwenTextFailure::InvalidIndex),
                     format!("{} response included an invalid index", self.display_name),

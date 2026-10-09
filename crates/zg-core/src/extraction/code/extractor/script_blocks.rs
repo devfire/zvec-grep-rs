@@ -66,7 +66,7 @@ fn script_lang_attr(attrs: &str) -> Option<String> {
     while index + 4 <= bytes.len() {
         if match_lang_keyword(bytes, index) {
             let mut cursor = index + 4;
-            while bytes.get(cursor).is_some_and(|b| b.is_ascii_whitespace()) {
+            while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
                 cursor += 1;
             }
             if bytes.get(cursor) != Some(&b'=') {
@@ -74,10 +74,10 @@ fn script_lang_attr(attrs: &str) -> Option<String> {
                 continue;
             }
             cursor += 1;
-            while bytes.get(cursor).is_some_and(|b| b.is_ascii_whitespace()) {
+            while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
                 cursor += 1;
             }
-            if matches!(bytes.get(cursor), Some(b'"') | Some(b'\'')) {
+            if matches!(bytes.get(cursor), Some(b'"' | b'\'')) {
                 cursor += 1;
             }
             let start = cursor;
@@ -167,7 +167,7 @@ fn find_script_blocks(text: &str) -> Vec<ScriptBlock> {
         let mut close_end = close + 8;
         while bytes
             .get(close_end)
-            .is_some_and(|b| b.is_ascii_whitespace())
+            .is_some_and(u8::is_ascii_whitespace)
         {
             close_end += 1;
         }

@@ -2,7 +2,7 @@
 //! JSON-RPC client (`client/` in TypeScript).
 //!
 //! The TypeScript `DaemonClient` drives `@modelcontextprotocol/client`
-//! over StreamableHTTP with elicitation and progress heartbeats. The port
+//! over `StreamableHTTP` with elicitation and progress heartbeats. The port
 //! speaks raw JSON-RPC 2.0 over reqwest with the same framing the
 //! `zg-server` endpoint tests pin (initialize → `notifications/initialized`
 //! → `tools/call`, `mcp-session-id` header, plain-JSON or SSE bodies) —
@@ -407,9 +407,7 @@ fn http_error(base_url: &str, status: u16, body: &str) -> CliError {
     let message = parse_message(body)
         .get("error")
         .and_then(|error| error.get("message"))
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .unwrap_or_else(|| body.trim().to_owned());
+        .and_then(Value::as_str).map_or_else(|| body.trim().to_owned(), str::to_owned);
     match status {
         401 => CliError::daemon_unavailable(format!(
             "zvec-grep server at {base_url} rejected the bearer token: {message}"

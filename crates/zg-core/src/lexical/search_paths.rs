@@ -87,27 +87,24 @@ pub(crate) fn canonical_through_ancestors(path: &Path) -> PathBuf {
     let mut current = path.to_path_buf();
     let mut missing: Vec<std::ffi::OsString> = Vec::new();
     loop {
-        match current.canonicalize() {
-            Ok(canonical) => {
-                let mut full = canonical;
-                for segment in missing {
-                    full.push(segment);
-                }
-                return full;
+        if let Ok(canonical) = current.canonicalize() {
+            let mut full = canonical;
+            for segment in missing {
+                full.push(segment);
             }
-            Err(_) => {
-                let Some(name) = current.file_name().map(|name| name.to_owned()) else {
-                    return path.to_path_buf();
-                };
-                let Some(parent) = current.parent().map(Path::to_path_buf) else {
-                    return path.to_path_buf();
-                };
-                if parent == current {
-                    return path.to_path_buf();
-                }
-                missing.insert(0, name);
-                current = parent;
+            return full;
+        } else {
+            let Some(name) = current.file_name().map(ToOwned::to_owned) else {
+                return path.to_path_buf();
+            };
+            let Some(parent) = current.parent().map(Path::to_path_buf) else {
+                return path.to_path_buf();
+            };
+            if parent == current {
+                return path.to_path_buf();
             }
+            missing.insert(0, name);
+            current = parent;
         }
     }
 }

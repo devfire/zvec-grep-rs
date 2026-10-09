@@ -4,7 +4,7 @@
 //! `print_*` wrappers own stdout/stderr. Layouts are idiomatic ports, not
 //! byte copies, of `format/context.ts` + `format/status.ts` +
 //! `format/progress.ts` + `format/range.ts` (see `docs/ts-divergence.md`):
-//! the agent markdown keeps file:range headers, scores, and previews; the
+//! the agent markdown keeps <file:range> headers, scores, and previews; the
 //! human view keeps labeled fields with optional ANSI color.
 //!
 //! Layout: pure builders and their `print_*` wrappers live beside each

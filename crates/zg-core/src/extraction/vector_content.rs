@@ -81,7 +81,7 @@ pub fn fit_text_to_chars(value: &str, max_chars: usize) -> String {
         return ".".repeat(max_chars);
     }
     let raw_end = max_chars - 3;
-    let end_byte: usize = value.chars().take(raw_end).map(|c| c.len_utf8()).sum();
+    let end_byte: usize = value.chars().take(raw_end).map(char::len_utf8).sum();
     format!("{}...", value[..end_byte].trim_end())
 }
 

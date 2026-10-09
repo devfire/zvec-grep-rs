@@ -219,8 +219,7 @@ fn split_text_by_lines(
         let next_index = end_index.saturating_sub(overlap_lines).max(line_index + 1);
         offset += lines
             .get(line_index..next_index)
-            .map(|window| window.join("\n").len())
-            .unwrap_or(0);
+            .map_or(0, |window| window.join("\n").len());
         if next_index > line_index {
             offset += 1;
         }
@@ -548,7 +547,7 @@ mod tests {
             // Byte offsets stay on char boundaries for multi-byte text.
             assert!(text.contains(&window.text));
         }
-        let first_len = windows.first().map(|w| w.text.len()).unwrap_or(0);
+        let first_len = windows.first().map_or(0, |w| w.text.len());
         assert_eq!(
             windows.first().map(|w| &w.range),
             Some(&Range::Text {

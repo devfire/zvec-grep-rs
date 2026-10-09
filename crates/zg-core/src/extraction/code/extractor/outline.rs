@@ -36,8 +36,7 @@ pub(crate) fn code_entity_outline(
         entity
             .name
             .clone()
-            .unwrap_or_else(|| format!("{:?}", entity.symbol_type))
-            .to_owned()
+            .unwrap_or_else(|| format!("{:?}", entity.symbol_type)).clone()
     } else {
         header
     }];

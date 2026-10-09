@@ -328,8 +328,8 @@ impl ProgressReporter {
             tty: std::io::IsTerminal::is_terminal(&std::io::stderr()),
             tick: 0,
             completed: 0,
-            last_tty: Instant::now() - Duration::from_secs(60),
-            last_line: Instant::now() - Duration::from_secs(60),
+            last_tty: Instant::now().checked_sub(Duration::from_secs(60)).unwrap(),
+            last_line: Instant::now().checked_sub(Duration::from_secs(60)).unwrap(),
         }
     }
 

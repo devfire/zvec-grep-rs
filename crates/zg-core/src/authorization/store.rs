@@ -134,9 +134,7 @@ fn default_signing_key_path() -> PathBuf {
     {
         return PathBuf::from(path);
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
     home.join(".zvec-grep").join("authorization-signing.key")
 }
 /// HMAC-signed workspace grant store.
@@ -511,9 +509,7 @@ impl RemoteEmbeddingAuthorizationStore {
         update: impl FnOnce(&mut RemoteEmbeddingDocument) -> bool,
     ) -> EngineResult<bool> {
         let lock_path = path
-            .parent()
-            .map(|parent| parent.join("authorization-store"))
-            .unwrap_or_else(|| PathBuf::from("authorization-store"));
+            .parent().map_or_else(|| PathBuf::from("authorization-store"), |parent| parent.join("authorization-store"));
         let _guard = acquire_read_write_lock(
             &lock_path,
             LockMode::Write,
@@ -725,7 +721,7 @@ fn is_workspace_grant(value: &serde_json::Value) -> bool {
     else {
         return false;
     };
-    if !roots.iter().all(|root| root.is_string()) {
+    if !roots.iter().all(serde_json::Value::is_string) {
         return false;
     }
     for key in [

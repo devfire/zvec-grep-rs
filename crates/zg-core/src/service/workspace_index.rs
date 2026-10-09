@@ -226,9 +226,7 @@ fn validate_index_version(info: &WorkspaceIndexInfo) -> EngineResult<()> {
         return Ok(());
     }
     let actual = info
-        .index_version
-        .map(|version| version.to_string())
-        .unwrap_or_else(|| "null".to_owned());
+        .index_version.map_or_else(|| "null".to_owned(), |version| version.to_string());
     let detail = error_details(vec![
         DetailEntry::Line(&workspace_index_detail(&info.name)),
         DetailEntry::Pair("expected", DetailValue::Int(CURRENT_INDEX_VERSION)),
@@ -390,7 +388,7 @@ mod lifecycle_tests {
 
     /// One indexed file record so `files.json` exists: `close`/`drop` only
     /// checkpoint staged writes, so a never-written store has no metadata
-    /// file and a read-only reopen correctly fails with FILE_META_MISSING.
+    /// file and a read-only reopen correctly fails with `FILE_META_MISSING`.
     fn seed_file_info(storage_path: &std::path::Path) -> FileInfo {
         let absolute_path = storage_path.join("seed.txt").to_string_lossy().into_owned();
         std::fs::write(&absolute_path, "0123456789abcdef").expect("write seed file");

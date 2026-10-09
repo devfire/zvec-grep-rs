@@ -6,7 +6,7 @@
 //! `engine/storage/zvec.ts`.
 //!
 //! Divergences: range JSON round-trips through the Rust [`Range`] serde
-//! shape (snake_case); image payloads use a strict built-in base64 codec
+//! shape (`snake_case`); image payloads use a strict built-in base64 codec
 //! instead of `Buffer`.
 
 use std::collections::{HashMap, HashSet};

@@ -18,14 +18,12 @@ pub(crate) fn report_index_finalizing(
         IndexProgress {
             phase: Some(IndexProgressPhase::Indexing),
             files_total: Some(
-                progress_base
-                    .map(|base| base.files_total)
-                    .unwrap_or_else(|| {
+                progress_base.map_or_else(|| {
                         pass.diff.added.len() + pass.diff.modified.len() + pass.diff.pending.len()
-                    }),
+                    }, |base| base.files_total),
             ),
             files_indexed: Some(
-                progress_base.map(|base| base.files_succeeded).unwrap_or(0)
+                progress_base.map_or(0, |base| base.files_succeeded)
                     + pass.stats.files_indexed
                     + pass.stats.files_failed,
             ),
@@ -75,11 +73,10 @@ pub(crate) fn report_indexing(
             phase: Some(IndexProgressPhase::Indexing),
             files_total: Some(
                 progress_base
-                    .map(|base| base.files_total)
-                    .unwrap_or(pending_len),
+                    .map_or(pending_len, |base| base.files_total),
             ),
             files_indexed: Some(
-                progress_base.map(|base| base.files_succeeded).unwrap_or(0)
+                progress_base.map_or(0, |base| base.files_succeeded)
                     + stats.files_indexed
                     + stats.files_failed,
             ),
@@ -101,7 +98,7 @@ pub(crate) fn lock_stats(stats: &Arc<Mutex<IndexStats>>) -> IndexStats {
     // silently zeroing progress.
     stats
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone()
 }
 
@@ -185,9 +182,9 @@ pub(crate) fn thread_progress_sink(
         let snapshot = lock_stats(&stats);
         callback(IndexProgress {
             phase: Some(IndexProgressPhase::Indexing),
-            files_total: Some(progress_base.map(|base| base.files_total).unwrap_or(total)),
+            files_total: Some(progress_base.map_or(total, |base| base.files_total)),
             files_indexed: Some(
-                progress_base.map(|base| base.files_succeeded).unwrap_or(0)
+                progress_base.map_or(0, |base| base.files_succeeded)
                     + snapshot.files_indexed
                     + snapshot.files_failed,
             ),

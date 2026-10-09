@@ -111,15 +111,13 @@ fn run_auth_grant(args: &AuthArgs, grant: &AuthGrantArgs) -> Result<(), CliError
     })?;
     let roots: Vec<String> = info
         .workspace_index
-        .as_ref()
-        .map(|index| {
+        .as_ref().map_or_else(|| vec![root.clone()], |index| {
             index
                 .root_paths
                 .iter()
                 .map(|path| path.absolute_path.clone())
                 .collect()
-        })
-        .unwrap_or_else(|| vec![root.clone()]);
+        });
     let target = create_remote_embedding_target(&roots, provider, model, &endpoint)?;
     let manager = RemoteEmbeddingAuthorizationManager::new();
     manager.grant(&target, RemoteEmbeddingScope::Workspace)?;

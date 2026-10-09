@@ -141,9 +141,7 @@ fn enrich_lexical_item(
     enriched_files.insert(key);
     let entity_id = container
         .group
-        .clone()
-        .map(crate::ids::EntityId::from_raw)
-        .unwrap_or_else(|| container.entity.id.clone());
+        .clone().map_or_else(|| container.entity.id.clone(), crate::ids::EntityId::from_raw);
     let mut enriched = item.clone();
     // `container.metadata ?? item.metadata`: the fragment wins when present.
     if container.entity.metadata.is_some() {
@@ -186,8 +184,8 @@ fn parse_structural_fragments(
 fn is_structural_fragment(fragment: &EntityFragment) -> bool {
     matches!(
         fragment.entity.metadata,
-        Some(crate::types::EntityMetadata::Code(_))
-            | Some(crate::types::EntityMetadata::Markdown(_))
+        Some(crate::types::EntityMetadata::Code(_) |
+crate::types::EntityMetadata::Markdown(_))
     )
 }
 

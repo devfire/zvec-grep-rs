@@ -446,9 +446,8 @@ fn find_provider_message(text: &str) -> Option<String> {
     let start = position + key.len();
     let rest = text.get(start..)?;
     let end = find_ascii_insensitive(rest, "zvec_grep.")
-        .map(|offset| start + offset)
-        .unwrap_or(text.len());
-    text.get(start..end).map(|message| message.to_owned())
+        .map_or(text.len(), |offset| start + offset);
+    text.get(start..end).map(ToOwned::to_owned)
 }
 
 fn contains_word(haystack: &str, word: &str) -> bool {
@@ -517,8 +516,7 @@ fn retry_delay_ms(attempt: u32, retry: &RetryClassification) -> u64 {
 fn jitter_ms() -> u64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|duration| u64::from(duration.subsec_nanos()) % (EMBEDDING_RETRY_JITTER_MS + 1))
-        .unwrap_or(0)
+        .map_or(0, |duration| u64::from(duration.subsec_nanos()) % (EMBEDDING_RETRY_JITTER_MS + 1))
 }
 
 fn http_status_from_text(text: &str) -> Option<u16> {
@@ -560,7 +558,7 @@ mod tests {
                         .run(abort_ref, None, |_, _| {
                             *counter
                                 .lock()
-                                .unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
+                                .unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
                             Ok::<_, EngineError>(())
                         })
                         .expect("run");
@@ -570,7 +568,7 @@ mod tests {
         assert_eq!(
             *counter
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
             4
         );
     }

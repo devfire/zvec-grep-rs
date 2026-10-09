@@ -76,8 +76,7 @@ impl UnixMillis {
         // `try_now` only yields non-negative values, so the `as u64` cast
         // is exact; the fallback is chosen (and justified) per call site.
         Self::try_now()
-            .map(|stamped| stamped.as_millis() as u64)
-            .unwrap_or(fallback)
+            .map_or(fallback, |stamped| stamped.as_millis() as u64)
     }
 
     /// Wraps a raw millisecond count (file mtimes, wire values).

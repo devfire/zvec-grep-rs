@@ -125,7 +125,7 @@ fn extract_raw_c_function_name(node: &SyntaxNode<'_>) -> Option<String> {
         _ => {
             let text = declarator
                 .as_ref()
-                .and_then(|declarator| declarator.text())
+                .and_then(SyntaxNode::text)
                 .or_else(|| node.text())?;
             extract_c_function_name(text)
         }
@@ -195,7 +195,7 @@ fn extract_c_function_name(text: &str) -> Option<String> {
                 index += 1;
             }
             let mut end = index;
-            while bytes.get(end).is_some_and(|b| b.is_ascii_whitespace()) {
+            while bytes.get(end).is_some_and(u8::is_ascii_whitespace) {
                 end += 1;
             }
             if bytes.get(end) == Some(&b'(') {

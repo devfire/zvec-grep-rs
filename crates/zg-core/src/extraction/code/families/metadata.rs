@@ -41,7 +41,7 @@ pub fn extract_generic_signature(node: &SyntaxNode<'_>) -> Option<String> {
     let header = match body {
         Some(body) if body.start_byte() > node.start_byte() => {
             let end = body.start_byte() - node.start_byte();
-            text.get(..end).map(str::trim_end).unwrap_or("").to_string()
+            text.get(..end).map_or("", str::trim_end).to_string()
         }
         _ => first_non_empty_line(text).to_string(),
     };

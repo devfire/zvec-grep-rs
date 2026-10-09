@@ -372,7 +372,7 @@ fn resolve_unknown_token_id(
     let parsed: serde_json::Value = serde_json::from_str(&text).ok()?;
     let model = parsed.get("model")?;
     if let Some(id) = model.get("unk_id").and_then(serde_json::Value::as_u64)
-        && id <= u32::MAX as u64
+        && u32::try_from(id).is_ok()
     {
         return Some(id as u32);
     }
@@ -442,13 +442,13 @@ fn pool_token_ids(
     }
     let count = ids.len() as f32;
     let mut squared_norm = 0f32;
-    for value in vector.iter_mut() {
+    for value in &mut vector {
         *value /= count;
         squared_norm += *value * *value;
     }
     if normalize && squared_norm > 0.0 {
         let inverse_norm = 1.0 / squared_norm.sqrt();
-        for value in vector.iter_mut() {
+        for value in &mut vector {
             *value *= inverse_norm;
         }
     }

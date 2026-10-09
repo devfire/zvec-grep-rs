@@ -341,9 +341,7 @@ pub fn scan_directory_path(
 }
 
 fn real_path_of(path: &str) -> String {
-    std::fs::canonicalize(path)
-        .map(|real| to_display_path(&real))
-        .unwrap_or_else(|_| path.to_owned())
+    std::fs::canonicalize(path).map_or_else(|_| path.to_owned(), |real| to_display_path(&real))
 }
 
 /// Resolves `absolute_path` metadata honoring `root.follow`: a symlink is
@@ -575,8 +573,7 @@ fn scan_root_path(
 fn is_nested_git_repository_directory(absolute_path: &str) -> bool {
     let marker = Path::new(absolute_path).join(".git");
     std::fs::symlink_metadata(&marker)
-        .map(|meta| meta.is_file() || meta.is_dir())
-        .unwrap_or(false)
+        .is_ok_and(|meta| meta.is_file() || meta.is_dir())
 }
 
 fn dedupe_files(files: Vec<FileInfo>) -> Vec<FileInfo> {

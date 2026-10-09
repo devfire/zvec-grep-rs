@@ -1,6 +1,6 @@
 //! Agent markdown renderer (the default CLI layout).
 //!
-//! Ranked file:range headers with score/provenance, then content previews;
+//! Ranked <file:range> headers with score/provenance, then content previews;
 //! empty results name the query and the reason.
 
 use zg_core::service::types::{ContentStatus, ContextItem, ZvecGrepContextResult};
@@ -12,7 +12,7 @@ use super::text::{format_score, one_line, truncate};
 
 /// Renders a context result as agent markdown (the default CLI layout).
 ///
-/// Ranked file:range headers with score/provenance, then content
+/// Ranked <file:range> headers with score/provenance, then content
 /// previews; empty results name the query and the reason.
 #[must_use]
 pub fn format_context_agent(result: &ZvecGrepContextResult) -> String {

@@ -345,9 +345,7 @@ async fn run_index_server(
         .unwrap_or("submitted");
     let root_out = structured
         .get("root")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .unwrap_or_else(|| absolute.to_string_lossy().into_owned());
+        .and_then(Value::as_str).map_or_else(|| absolute.to_string_lossy().into_owned(), str::to_owned);
     let job = structured
         .get("job_id")
         .and_then(Value::as_str)

@@ -10,10 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::SearchMetric;
 
-/// DashScope OpenAI-compatible endpoint for Qwen text embeddings.
+/// `DashScope` OpenAI-compatible endpoint for Qwen text embeddings.
 pub const QWEN_TEXT_EMBEDDING_ENDPOINT: &str =
     "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings";
-/// DashScope endpoint for Qwen multimodal (VL) embeddings.
+/// `DashScope` endpoint for Qwen multimodal (VL) embeddings.
 pub const QWEN3_VL_EMBEDDING_ENDPOINT: &str = "https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding";
 
 /// Fully-qualified catalog reference, e.g. `local/potion-retrieval-32m`.

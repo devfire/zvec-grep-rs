@@ -117,12 +117,9 @@ fn local_vectors_match_ts_goldens() {
     let mode = CoverageMode::from_env();
     for file in GOLDEN_FILES {
         let path = format!("{dir}/{file}");
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                skipped.push(format!("{file}: missing golden file"));
-                continue;
-            }
+        let bytes = if let Ok(bytes) = std::fs::read(&path) { bytes } else {
+            skipped.push(format!("{file}: missing golden file"));
+            continue;
         };
         let golden: serde_json::Value = match serde_json::from_slice(&bytes) {
             Ok(golden) => golden,

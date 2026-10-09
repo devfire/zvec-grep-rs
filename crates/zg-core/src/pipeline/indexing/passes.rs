@@ -119,8 +119,7 @@ pub fn get_workspace_index_status(
             .map(|file| {
                 file.index_status
                     .as_ref()
-                    .map(|status| status.entity_count)
-                    .unwrap_or(0)
+                    .map_or(0, |status| status.entity_count)
             })
             .sum();
         let fragments_truncated: usize = indexed_files
@@ -362,8 +361,7 @@ fn run_path_index_pass(
                 cancel: ctx.cancel.clone(),
             };
             let is_dir = std::fs::metadata(path)
-                .map(|meta| meta.is_dir())
-                .unwrap_or(false);
+                .is_ok_and(|meta| meta.is_dir());
             let scan = if is_dir {
                 scan_directory_path(
                     &ctx.workspace_index.id,
@@ -453,10 +451,9 @@ fn run_diff_pass(
             phase: Some(IndexProgressPhase::Scanning),
             files_total: Some(
                 progress_base
-                    .map(|base| base.files_total)
-                    .unwrap_or(scanned_len),
+                    .map_or(scanned_len, |base| base.files_total),
             ),
-            files_indexed: Some(progress_base.map(|base| base.files_succeeded).unwrap_or(0)),
+            files_indexed: Some(progress_base.map_or(0, |base| base.files_succeeded)),
             files_failed: None,
             detail: Some(format!(
                 "{} added, {} modified, {} pending, {} deleted, {} unchanged",

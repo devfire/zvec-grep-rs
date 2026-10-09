@@ -9,18 +9,14 @@ pub fn default_home() -> PathBuf {
     {
         return PathBuf::from(home);
     }
-    let home_dir = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    let home_dir = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
     home_dir.join(".zvec-grep")
 }
 
 /// Global config file: `~/.zvec-grep/config.json` (mirrors TS
 /// `globalConfigPath`; uses the real home directory, not `$ZVEC_GREP_HOME`).
 pub fn global_config_path() -> PathBuf {
-    let home_dir = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    let home_dir = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
     home_dir.join(".zvec-grep").join("config.json")
 }
 

@@ -194,7 +194,7 @@ pub enum ModelError {
         /// Inputs the caller passed.
         input_count: usize,
     },
-    /// Model2Vec weights/tokenizer failed to load.
+    /// `Model2Vec` weights/tokenizer failed to load.
     #[error("unable to load Model2Vec model")]
     Model2VecLoad {
         /// Catalog reference being loaded.
@@ -206,7 +206,7 @@ pub enum ModelError {
         /// What failed.
         detail: String,
     },
-    /// Model2Vec artifact download failed.
+    /// `Model2Vec` artifact download failed.
     #[error("unable to download Model2Vec model artifact")]
     Model2VecDownload {
         /// Catalog reference being loaded.
@@ -218,7 +218,7 @@ pub enum ModelError {
         /// What failed.
         detail: String,
     },
-    /// Model2Vec embedding run failed.
+    /// `Model2Vec` embedding run failed.
     #[error("Model2Vec embedding failed")]
     Model2VecEmbed {
         /// Catalog reference being embedded with.
@@ -228,7 +228,7 @@ pub enum ModelError {
         /// What failed.
         detail: String,
     },
-    /// Model2Vec tokenization failed.
+    /// `Model2Vec` tokenization failed.
     #[error("Model2Vec tokenization failed")]
     Model2VecTokenize {
         /// Catalog reference being embedded with.
@@ -246,7 +246,7 @@ pub enum ModelError {
         /// Table row count.
         rows: usize,
     },
-    /// A Model2Vec worker thread failed.
+    /// A `Model2Vec` worker thread failed.
     #[error("Model2Vec worker thread failed")]
     WorkerFailed {
         /// Catalog reference being embedded with.

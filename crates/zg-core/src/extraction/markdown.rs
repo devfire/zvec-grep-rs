@@ -254,8 +254,7 @@ fn parse_atx_heading(line: &str) -> Option<(u32, String)> {
         let last_ws = after[..body_start]
             .chars()
             .next_back()
-            .map(|c| c.len_utf8())
-            .unwrap_or(0);
+            .map_or(0, char::len_utf8);
         if body_start <= last_ws {
             return None;
         }
@@ -470,7 +469,7 @@ fn is_heading_line(line: &str) -> bool {
         && line[hashes..]
             .chars()
             .next()
-            .is_some_and(|c| c.is_whitespace())
+            .is_some_and(char::is_whitespace)
 }
 
 /// Mirrors `/^([-*+]|\d+\.)\s+/`.
@@ -480,7 +479,7 @@ fn is_list_item(line: &str) -> bool {
         return false;
     }
     if matches!(bytes.first(), Some(b'-' | b'*' | b'+')) {
-        return line[1..].chars().next().is_some_and(|c| c.is_whitespace());
+        return line[1..].chars().next().is_some_and(char::is_whitespace);
     }
     let digits = bytes.iter().take_while(|&&b| b.is_ascii_digit()).count();
     if digits == 0 || bytes.get(digits) != Some(&b'.') {
@@ -489,13 +488,13 @@ fn is_list_item(line: &str) -> bool {
     line[digits + 1..]
         .chars()
         .next()
-        .is_some_and(|c| c.is_whitespace())
+        .is_some_and(char::is_whitespace)
 }
 
 /// Mirrors `/^>\s+/`.
 fn is_blockquote(line: &str) -> bool {
     line.as_bytes().first() == Some(&b'>')
-        && line[1..].chars().next().is_some_and(|c| c.is_whitespace())
+        && line[1..].chars().next().is_some_and(char::is_whitespace)
 }
 
 fn split_long_markdown_line(
@@ -521,8 +520,7 @@ fn split_long_markdown_line(
         };
         let cut_bytes: usize = chars
             .get(char_cursor..char_cursor + cut_chars)
-            .map(|window| window.iter().map(|c| c.len_utf8()).sum())
-            .unwrap_or(0);
+            .map_or(0, |window| window.iter().map(|c| c.len_utf8()).sum());
         let text = &line[byte_cursor..byte_cursor + cut_bytes];
         let line_number = line_index + 1;
         windows.push(MarkdownWindow {
@@ -557,7 +555,7 @@ fn lines_to_window(
             end_line: end_index + 1,
             start_offset: line_offsets.get(start_index).copied().unwrap_or(0),
             end_offset: line_offsets.get(end_index).copied().unwrap_or(0)
-                + lines.get(end_index).map(|line| line.len()).unwrap_or(0),
+                + lines.get(end_index).map_or(0, |line| line.len()),
         },
     }
 }

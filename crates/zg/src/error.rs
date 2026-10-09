@@ -172,7 +172,7 @@ impl CliError {
             | Self::NotReady { .. }
             | Self::Io { .. } => self.own_code().map_or_else(
                 || "ZVEC_GREP.ENGINE.CLI.UNKNOWN".to_owned(),
-                |code| code.qualified(),
+                EngineErrorCode::qualified,
             ),
         }
     }

@@ -11,7 +11,7 @@ use crate::types::{RootPath, UnixMillis};
 /// coincidence of a shared origin, not by compatibility (see
 /// `docs/ts-divergence.md`).
 /// Bumped for the `Range` wire-shape alignment (`startLine` camelCase
-/// fields): v1 indexes persist snake_case ranges and are rejected with
+/// fields): v1 indexes persist `snake_case` ranges and are rejected with
 /// `WORKSPACE_INDEX.VERSION_MISMATCH`, directing a rebuild.
 pub const CURRENT_INDEX_VERSION: i64 = 2;
 

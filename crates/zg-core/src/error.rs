@@ -478,7 +478,7 @@ pub enum DetailValue<'a> {
     Null,
 }
 
-impl<'a> DetailValue<'a> {
+impl DetailValue<'_> {
     fn render(&self) -> String {
         match self {
             Self::Str(s) => (*s).to_owned(),

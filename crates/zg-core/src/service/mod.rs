@@ -1,4 +1,4 @@
-//! ZvecGrepService orchestrator: locks, manifest, embedding lifecycle.
+//! `ZvecGrepService` orchestrator: locks, manifest, embedding lifecycle.
 
 pub mod facade;
 pub mod root;

@@ -257,8 +257,8 @@ mod tests {
     use super::*;
 
     fn sel(globs: &[&str], insensitive: &[&str]) -> OrderedGlobs {
-        let g: Vec<String> = globs.iter().map(|s| s.to_string()).collect();
-        let i: Vec<String> = insensitive.iter().map(|s| s.to_string()).collect();
+        let g: Vec<String> = globs.iter().map(ToString::to_string).collect();
+        let i: Vec<String> = insensitive.iter().map(ToString::to_string).collect();
         OrderedGlobs::new(&g, &i)
     }
 

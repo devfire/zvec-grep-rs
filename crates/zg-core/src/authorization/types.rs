@@ -128,7 +128,7 @@ pub struct RemoteEmbeddingDisclosure {
     pub workspace_content: WorkspaceContentDisclosure,
 }
 
-/// Why a plan exists (wire: snake_case reason strings).
+/// Why a plan exists (wire: `snake_case` reason strings).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanReason {

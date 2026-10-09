@@ -245,9 +245,7 @@ fn hit_to_item(hit: &SearchHit, group: &ContextGroup, trace: bool) -> ContextIte
         },
         range: hit
             .evidence
-            .first()
-            .map(|evidence| evidence.range.clone())
-            .unwrap_or_else(|| hit.entity.range.clone()),
+            .first().map_or_else(|| hit.entity.range.clone(), |evidence| evidence.range.clone()),
         excerpt_range: None,
         content: hit.entity.content.clone(),
         content_role: None,

@@ -140,8 +140,7 @@ pub(crate) fn classify_code_node(node: &SyntaxNode<'_>, breadcrumb: &[String]) -
             child.kind() == "function_definition" || child.kind() == "class_definition"
         });
         return inner
-            .map(|child| classify_code_node(&child, breadcrumb))
-            .unwrap_or(CodeSymbolType::Value);
+            .map_or(CodeSymbolType::Value, |child| classify_code_node(&child, breadcrumb));
     }
     if (node_type == "field_definition"
         || node_type == "public_field_definition"

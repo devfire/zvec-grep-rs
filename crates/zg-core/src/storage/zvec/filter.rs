@@ -23,7 +23,7 @@ pub fn build_filter(filter: Option<&StorageSearchFilter>) -> Option<String> {
     push_in_clause(
         &mut clauses,
         "file_id",
-        filter.file_ids.iter().map(|id| id.as_str()),
+        filter.file_ids.iter().map(crate::ids::FileId::as_str),
     );
     push_in_clause(
         &mut clauses,

@@ -21,7 +21,7 @@ pub(crate) const MAX_PATTERN_LEN_BYTES: usize = 4096;
 /// Maximum length of the combined alternation in bytes.
 pub(crate) const MAX_COMBINED_PATTERN_LEN_BYTES: usize = 65_536;
 /// Cap on the compiled regex size passed to `RegexMatcherBuilder`, bounding
-/// catastrophic (ReDoS) automata.
+/// catastrophic (`ReDoS`) automata.
 const REGEX_SIZE_LIMIT_BYTES: usize = 10 << 20;
 
 /// Merges inline patterns with `--file` pattern files. Every line of a
@@ -71,7 +71,7 @@ pub(crate) fn load_patterns(
 
 /// Combines `patterns` into one alternation (`(?:a|b)`, plus `\b..\b` with
 /// `word_regexp`, plus `^(?:..)$` with `whole_line`) and compiles it with a
-/// 10 MiB regex size limit (ReDoS bound).
+/// 10 MiB regex size limit (`ReDoS` bound).
 ///
 /// Caps (all rejected with `LEXICAL.INVALID_PATTERN`): at most
 /// [`MAX_PATTERN_COUNT`] patterns, each at most [`MAX_PATTERN_LEN_BYTES`]
@@ -130,7 +130,7 @@ pub(crate) fn build_matcher(
             && !patterns
                 .iter()
                 .flat_map(|pattern| pattern.chars())
-                .any(|ch| ch.is_uppercase()));
+                .any(char::is_uppercase));
     RegexMatcherBuilder::new()
         .case_insensitive(case_insensitive)
         .unicode(true)

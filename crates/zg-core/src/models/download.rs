@@ -228,7 +228,7 @@ fn download_agent() -> ureq::Agent {
 }
 
 /// True when `host` may serve model artifacts: `huggingface.co` itself or
-/// a sub-domain of `huggingface.co` / `hf.co` (the LFS and XetHub CDN
+/// a sub-domain of `huggingface.co` / `hf.co` (the LFS and `XetHub` CDN
 /// redirect targets live there).
 fn is_allowed_artifact_host(host: &str) -> bool {
     let lower = host.to_lowercase();
