@@ -26,6 +26,8 @@ pub struct PlanIndexInput<'a> {
 }
 
 /// Search-side planning input (pre-normalized MCP signals).
+// Four independent MCP signals; grouping would churn callers for no safety gain.
+#[allow(clippy::struct_excessive_bools)]
 pub struct PlanSearchInput<'a> {
     pub info: &'a ZvecGrepInfoResult,
     pub model: &'a EmbeddingModelInfo,
