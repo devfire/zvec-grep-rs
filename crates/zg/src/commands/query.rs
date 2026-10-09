@@ -126,6 +126,7 @@ fn direct_context_options<'a>(
         .collect();
     Ok(ZvecGrepContextOptions {
         root: None,
+        index_location: None,
         query,
         queries: rest,
         routes,

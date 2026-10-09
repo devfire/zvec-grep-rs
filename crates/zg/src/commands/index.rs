@@ -173,6 +173,7 @@ async fn run_index_direct(args: &IndexArgs, root: &PathBuf) -> Result<(), CliErr
     let cancel = cancel_flag();
     let options = ZvecGrepIndexOptions {
         root: Some(absolute.as_path()),
+        index_location: None,
         root_paths: root_spec,
         rebuild: args.rebuild,
         reset_paths: args.reset_paths,
@@ -605,6 +606,7 @@ mod tests {
         setup
             .ensure_index(&ZvecGrepIndexOptions {
                 root: Some(dir.path()),
+                index_location: None,
                 root_paths: Vec::new(),
                 rebuild: false,
                 reset_paths: false,
