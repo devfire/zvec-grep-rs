@@ -285,6 +285,7 @@ impl EngineError {
     /// Attaches the typed cause (an `io::Error`, `serde_json::Error`, …)
     /// instead of flattening it into the context string. Prefer this at
     /// conversion sites; keep `with_context` for the `key=value` detail.
+    #[must_use]
     pub fn with_source(mut self, source: impl std::error::Error + Send + Sync + 'static) -> Self {
         self.source = Some(std::sync::Arc::new(source));
         self
