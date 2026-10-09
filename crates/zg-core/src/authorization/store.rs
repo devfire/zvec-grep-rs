@@ -237,7 +237,7 @@ impl RemoteEmbeddingAuthorizationStore {
                 return Ok(false);
             }
             let path = Path::new(root).join(".zvec-grep").join(GRANT_FILE);
-            let document = self.read_document(&path)?;
+            let document = Self::read_document(&path)?;
             let covered = document.grants.iter().any(|grant| {
                 grant.target_fingerprint == target.target_fingerprint.as_str()
                     && grant.workspace_fingerprint == target.workspace_fingerprint.as_str()
@@ -445,7 +445,7 @@ impl RemoteEmbeddingAuthorizationStore {
             .next()
             .unwrap_or_else(|| root.to_owned());
         let path = Path::new(&canonical).join(".zvec-grep").join(GRANT_FILE);
-        let document = self.read_document(&path)?;
+        let document = Self::read_document(&path)?;
         let keys = self.candidate_keys(&canonical)?;
         let grants = document
             .grants
@@ -467,7 +467,7 @@ impl RemoteEmbeddingAuthorizationStore {
             .collect();
         Ok(AuthorizationStatus { path, grants })
     }
-    fn read_document(&self, path: &Path) -> EngineResult<RemoteEmbeddingDocument> {
+    fn read_document(path: &Path) -> EngineResult<RemoteEmbeddingDocument> {
         let text = match fs::read_to_string(path) {
             Ok(text) => text,
             Err(error) if error.kind() == ErrorKind::NotFound => {
@@ -515,7 +515,7 @@ impl RemoteEmbeddingAuthorizationStore {
             LockMode::Write,
             &LockOptions::new("remote-embedding-authorization"),
         )?;
-        let mut document = self.read_document(path)?;
+        let mut document = Self::read_document(path)?;
         if !update(&mut document) {
             return Ok(false);
         }
