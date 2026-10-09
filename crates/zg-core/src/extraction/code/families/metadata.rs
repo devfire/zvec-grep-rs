@@ -125,13 +125,12 @@ pub fn extract_common_modifiers(node: &SyntaxNode<'_>) -> Vec<CodeEntityModifier
     for word in haystack.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
         let lowered = word.to_ascii_lowercase();
         let modifier = match lowered.as_str() {
-            "public" => Some(CodeEntityModifier::Public),
+            "public" | "pub" => Some(CodeEntityModifier::Public),
             "private" => Some(CodeEntityModifier::Private),
             "protected" => Some(CodeEntityModifier::Protected),
             "internal" => Some(CodeEntityModifier::Internal),
             "static" => Some(CodeEntityModifier::Static),
             "async" => Some(CodeEntityModifier::Async),
-            "pub" => Some(CodeEntityModifier::Public),
             _ => None,
         };
         if let Some(modifier) = modifier {
