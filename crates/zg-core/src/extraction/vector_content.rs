@@ -139,7 +139,9 @@ fn markdown_metadata_lines(meta: &MarkdownEntityMetadata) -> Vec<Option<String>>
 }
 
 fn metadata_budget(max_chars: Option<usize>) -> Option<usize> {
-    max_chars.map(|max| ((max as f64) * MAX_METADATA_BUDGET_RATIO).floor() as usize)
+    // MAX_METADATA_BUDGET_RATIO is exactly 0.25, so integer division keeps the
+    // budget exact and avoids any float-to-int cast.
+    max_chars.map(|max| max / 4)
 }
 
 fn compact_metadata_lines(lines: &[Option<String>], max_chars: Option<usize>) -> String {
