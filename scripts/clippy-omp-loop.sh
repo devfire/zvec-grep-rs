@@ -5,9 +5,8 @@
 # Each omp run loads @AGENTS.md itself, fixes ONE error, tests, commits, exits.
 # Re-selects the error every pass (line numbers shift after edits), so no stale list.
 #
-# Usage:
 #   scripts/clippy-omp-loop.sh [--max N] [--mode error|file] [--dry-run]
-#                              [--model X] [--max-time 10m] [--no-auto-approve]
+#                              [--model X] [--max-time 10m] [--no-auto-approve] [--no-commit]
 #
 #   --max N           stop after N fixes (default 0 = until clean)
 #   --mode error      one error line per session (default; smallest context)
@@ -16,6 +15,7 @@
 #   --model X         pass --model X to omp
 #   --max-time T      pass --max-time T to omp (default 10m)
 #   --no-auto-approve don't pass --auto-approve (default passes it; unattended loop hangs without it)
+#   --no-commit       don't enforce a commit per fix (default: script guarantees one commit per error-count drop)
 #
 # Examples:
 #   scripts/clippy-omp-loop.sh --dry-run            # see what the next session would get
@@ -30,6 +30,8 @@ DRY_RUN=0
 MODEL=""
 MAX_TIME="10m"
 AUTO_APPROVE=1
+COMMIT=1
+PAGER=''
 
 while (($# > 0)); do
   case "$1" in
@@ -43,6 +45,8 @@ while (($# > 0)); do
     --max-time) MAX_TIME="${2:?}"; shift 2 ;;
     --max-time=*) MAX_TIME="${1#--max-time=}"; shift ;;
     --no-auto-approve) AUTO_APPROVE=0; shift ;;
+    --no-commit) COMMIT=0; shift ;;
+    --commit) COMMIT=1; shift ;;
     -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1 (see --help)" >&2; exit 1 ;;
   esac
@@ -122,6 +126,38 @@ run_omp() {
   "${cmd[@]}"
 }
 
+# Backstop: exactly one commit per error-count drop, even if the agent forgot.
+# Agent-committed    -> just report it (plus commit any leftover dirt as follow-up).
+# Fixed but uncommitted -> stage tracked changes plus new source files and commit.
+# Never `git add -A`: ignored paths (target/ etc.) stay out; remaining ?? entries
+# are almost certainly agent-created split-out modules.
+stage_fix() {
+  git add -u
+  git status --porcelain | awk '$1=="??"{print substr($0,4)}' | while IFS= read -r f; do
+    git add -- "$f"
+  done
+}
+ensure_commit() {
+  local head_before="$1" subject="$2"
+  local head_after
+  head_after=$(git rev-parse HEAD)
+  if [[ "$head_after" != "$head_before" ]]; then
+    echo "agent committed: $(git log --oneline -1)"
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+      echo "leftover changes after agent commit — committing follow-up" >&2
+      stage_fix && git commit -qm "$subject (follow-up)"
+      echo "follow-up committed: $(git log --oneline -1)"
+    fi
+    return 0
+  fi
+  if git diff --quiet && git diff --cached --quiet && [[ -z "$(git status --porcelain | awk '$1=="??"')" ]]; then
+    echo "ERROR: error count dropped but tree is clean with no new commit — cannot attribute fix" >&2
+    return 1
+  fi
+  stage_fix && git commit -qm "$subject"
+  echo "script committed (agent forgot): $(git log --oneline -1)"
+}
+
 before=$(count_errors)
 echo "clippy-omp-loop: start $before errors (mode=$MODE, max=${MAX:-until-clean})"
 if ((before == 0)); then echo "clean: no errors"; exit 0; fi
@@ -151,19 +187,34 @@ while true; do
   fi
 
   before_one=$(printf '%s\n' "$errs" | wc -l | tr -d ' ')
+  head_before=$(git rev-parse HEAD)
   if ! run_omp "$prompt"; then
     echo "omp session failed (exit $?) — stopping. Re-run to resume; fixed errors stay fixed." >&2
     exit 1
   fi
   after_one=$(count_errors)
-  done_n=$((done_n + 1))
-  echo "session $done_n done: $before_one -> $after_one errors remaining"
-  git log --oneline -1
-  if ((after_one == 0)); then echo "clean: no errors"; break; fi
   if ((after_one >= before_one)); then
-    echo "no progress (still $after_one). Stopping — inspect the last commit/session before re-running." >&2
+    echo "no progress ($before_one -> $after_one). Stopping — no commit, inspect session before re-running." >&2
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+      echo "note: working tree is dirty despite no progress; leaving uncommitted:" >&2
+      git status --short >&2
+    fi
     exit 2
   fi
+  fixed=$((before_one - after_one))
+  if [[ "$MODE" == "error" ]]; then
+    subject="clippy: fix $err ($before_one->$after_one)"
+  else
+    subject="clippy: clean $file ($fixed errors, $before_one->$after_one)"
+  fi
+  if ((COMMIT == 1)); then
+    ensure_commit "$head_before" "$subject" || exit 1
+  else
+    echo "commit skipped (--no-commit): $(git log --oneline -1)"
+  fi
+  done_n=$((done_n + 1))
+  echo "session $done_n done: $before_one -> $after_one errors remaining"
+  if ((after_one == 0)); then echo "clean: no errors"; break; fi
 done
 
 echo "clippy-omp-loop: finished $done_n session(s), $(count_errors) errors remaining"
