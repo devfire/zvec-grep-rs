@@ -624,7 +624,7 @@ fn compute_markdown_overlap_lines(
 fn markdown_metadata(section: &Section) -> MarkdownEntityMetadata {
     MarkdownEntityMetadata {
         heading: section.heading.as_ref().map(|heading| heading.text.clone()),
-        level: section.heading.as_ref().map(|heading| heading.level as i32),
+        level: section.heading.as_ref().map(|heading| heading.level.cast_signed()),
         scope: if section.breadcrumb.is_empty() {
             None
         } else {
