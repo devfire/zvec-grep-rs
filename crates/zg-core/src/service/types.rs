@@ -46,6 +46,9 @@ pub struct ZvecGrepIndexOptions<'a> {
     /// Workspace root override; `None` (default) uses the bound root.
     pub root: Option<&'a std::path::Path>,
     /// Explicit root set; non-empty wins over `root` and stored paths.
+    /// Writable index storage directory overriding `<root>/.zvec-grep`
+    /// (CLI `--index-location`); `None` keeps the default in-tree home.
+    pub index_location: Option<&'a std::path::Path>,
     pub root_paths: Vec<RootPathSpec<'a>>,
     /// Force a full reindex even when the index is fresh.
     pub rebuild: bool,
@@ -147,6 +150,9 @@ pub struct EmbeddingInfo {
 pub struct ZvecGrepContextOptions<'a> {
     /// Workspace root override; `None` (default) uses the bound root.
     pub root: Option<&'a std::path::Path>,
+    /// Writable index storage directory overriding `<root>/.zvec-grep`
+    /// (CLI `--index-location`); `None` keeps the default in-tree home.
+    pub index_location: Option<&'a std::path::Path>,
     /// Primary natural-language query.
     pub query: Option<String>,
     /// Additional primary queries.
@@ -200,6 +206,7 @@ impl<'a> Default for ZvecGrepContextOptions<'a> {
     fn default() -> Self {
         Self {
             root: None,
+            index_location: None,
             query: None,
             queries: Vec::new(),
             routes: Vec::new(),

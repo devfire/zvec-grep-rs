@@ -213,6 +213,7 @@ define_engine_error_codes! {
     StorageZvecOptimizeFailed => "STORAGE.ZVEC_OPTIMIZE_FAILED",
     StorageZvecQueryFailed => "STORAGE.ZVEC_QUERY_FAILED",
     StorageZvecUpsertFailed => "STORAGE.ZVEC_UPSERT_FAILED",
+    WorkspaceInvalidIndexLocation => "WORKSPACE.INVALID_INDEX_LOCATION",
     WorkspaceRootUnavailable => "WORKSPACE.ROOT_UNAVAILABLE",
     WorkspaceIndexEmbeddingDimensionMismatch => "WORKSPACE_INDEX.EMBEDDING_DIMENSION_MISMATCH",
     WorkspaceIndexEmbeddingMetricMismatch => "WORKSPACE_INDEX.EMBEDDING_METRIC_MISMATCH",
