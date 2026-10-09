@@ -29,6 +29,10 @@ pub enum LexicalBackend {
 /// flags (`fixedStrings`, `ignoreCase`, `wordRegexp`, `beforeContext`,
 /// `afterContext`, `hidden`) and the per-file `maxCount` cap.
 #[derive(Debug, Clone, Default)]
+// Eight independent ripgrep/text flags map 1:1 onto `RgSearchOptions` +
+// `ZvecGrepSearchOptions`; grouping them would diverge from the TS shape
+// and churn every call site, so keep flat bools.
+#[allow(clippy::struct_excessive_bools)]
 pub struct LexicalSearchOptions {
     /// Workspace root: search paths resolve against this and results are
     /// relativized against it.
