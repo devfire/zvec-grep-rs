@@ -76,7 +76,8 @@ impl From<AuthError> for EngineError {
                     purpose.as_str()
                 );
                 if let Some(detail) = detail {
-                    context.push_str(&format!(" detail={detail}"));
+                    context.push_str(" detail=");
+                    context.push_str(&detail);
                 }
                 Some(context)
             }
