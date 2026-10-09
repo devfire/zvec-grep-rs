@@ -307,7 +307,7 @@ pub fn run_lexical_search(options: &LexicalSearchOptions) -> EngineResult<Lexica
             "at least one search pattern is required",
         ));
     }
-    diagnostics.patterns = all_patterns.clone();
+    diagnostics.patterns.clone_from(&all_patterns);
 
     let context = build_search_context(options, &all_patterns)?;
     let (root, canonical_root, searched_roots) = resolve_search_roots(options, &checked)?;
