@@ -273,7 +273,7 @@ fn parse_atx_heading(line: &str) -> Option<(u32, String)> {
             rest.len()
         };
         if is_hash_tail(&rest[tail_byte..]) {
-            return Some((hashes as u32, rest[..tail_byte].trim().to_owned()));
+            return Some((u32::try_from(hashes).ok()?, rest[..tail_byte].trim().to_owned()));
         }
     }
     None
