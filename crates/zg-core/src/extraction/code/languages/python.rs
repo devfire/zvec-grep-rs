@@ -79,10 +79,7 @@ impl LanguageAdapter for PythonLanguage {
     }
     fn extract_modifiers(&self, node: &SyntaxNode<'_>) -> Vec<CodeEntityModifier> {
         let mut modifiers = extract_common_modifiers(node);
-        let text = match node.text() {
-            Some(text) => text,
-            None => return modifiers,
-        };
+        let Some(text) = node.text() else { return modifiers };
         if has_leading_async_def(text) && !modifiers.contains(&CodeEntityModifier::Async) {
             modifiers.push(CodeEntityModifier::Async);
         }
