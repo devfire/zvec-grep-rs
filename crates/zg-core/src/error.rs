@@ -526,6 +526,39 @@ pub fn workspace_index_detail(name: &str) -> String {
     format!("workspaceIndex={name}")
 }
 
+// Guards the `regex` crate cannot express as look-around: a value that
+// is already `[redacted]` passes through (double redaction is a no-op),
+// and a `bearer`/`basic`-led value stays owned by the bearer pass.
+// Bearer token chars mirror the `BEARER` class in `redact_error_text`
+// (`[a-z0-9._\-+/=]`, case-insensitive): `Bearer abc` skips, `bearertoken` still redacts.
+fn is_redacted_value(value: &str) -> bool {
+    value.starts_with("[redacted")
+}
+
+fn is_bearer_value(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let prefix_len = if bytes
+        .get(..6)
+        .is_some_and(|p| p.eq_ignore_ascii_case(b"bearer"))
+    {
+        6
+    } else if bytes
+        .get(..5)
+        .is_some_and(|p| p.eq_ignore_ascii_case(b"basic"))
+    {
+        5
+    } else {
+        return false;
+    };
+    match bytes.get(prefix_len) {
+        None => true,
+        Some(next) => !matches!(
+            next,
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-' | b'+' | b'/' | b'='
+        ),
+    }
+}
+
 /// Redacts credentials from arbitrary error text, then truncates to `max_length`
 /// with an ellipsis. Returns a borrow when nothing needs redacting or cutting,
 /// so the common no-secret path allocates zero times.
@@ -638,37 +671,6 @@ pub fn redact_error_text(value: &str, max_length: usize) -> Cow<'_, str> {
             .unwrap_or_else(|e| panic!("static redaction regex must compile: {e}"))
     });
 
-    // Guards the `regex` crate cannot express as look-around: a value that
-    // is already `[redacted]` passes through (double redaction is a no-op),
-    // and a `bearer`/`basic`-led value stays owned by the bearer pass.
-    // Bearer token chars mirror the `BEARER` class below (`[a-z0-9._\-+/=]`,
-    // case-insensitive): `Bearer abc` skips, `bearertoken` still redacts.
-    fn is_redacted_value(value: &str) -> bool {
-        value.starts_with("[redacted")
-    }
-    fn is_bearer_value(value: &str) -> bool {
-        let bytes = value.as_bytes();
-        let prefix_len = if bytes
-            .get(..6)
-            .is_some_and(|p| p.eq_ignore_ascii_case(b"bearer"))
-        {
-            6
-        } else if bytes
-            .get(..5)
-            .is_some_and(|p| p.eq_ignore_ascii_case(b"basic"))
-        {
-            5
-        } else {
-            return false;
-        };
-        match bytes.get(prefix_len) {
-            None => true,
-            Some(next) => !matches!(
-                next,
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-' | b'+' | b'/' | b'='
-            ),
-        }
-    }
     // Each pass borrows when it matches nothing, so the common no-secret
     // path allocates zero times; only an actual redaction forces ownership
     // (reassigned solely in the `Owned` arm, where nothing borrows `out`).
