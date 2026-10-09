@@ -903,12 +903,12 @@ mod scoped_authorization_tests {
             .grant(&target, RemoteEmbeddingScope::Once)
             .expect("permit");
         let model = text_model(endpoint.to_owned());
-        let roots_a = vec![root_a.to_string_lossy().into_owned()];
+        let granted_roots = vec![root_a.to_string_lossy().into_owned()];
         let roots_b = vec![root_b.to_string_lossy().into_owned()];
         with_remote_embedding_operation_permit(Some(permit), || {
             let inputs = [EmbeddingInput::Text { text: "hello" }];
             // Granted root: authorization passes; any error is transport.
-            match model.embed_scoped(EmbeddingPurpose::Query, &inputs, &roots_a) {
+            match model.embed_scoped(EmbeddingPurpose::Query, &inputs, &granted_roots) {
                 Ok(_) => {}
                 Err(error) => assert_ne!(error.code().to_string(), AUTH_REQUIRED),
             }
