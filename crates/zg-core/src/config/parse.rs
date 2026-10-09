@@ -298,7 +298,7 @@ fn optional_positive_port(value: &Value, path: &str) -> EngineResult<u16> {
     if port > u64::from(u16::MAX) {
         return Err(invalid_config(path, "server.port must not exceed 65535"));
     }
-    Ok(port as u16)
+    u16::try_from(port).map_err(|_| invalid_config(path, "server.port must not exceed 65535"))
 }
 
 fn optional_non_empty_string(
