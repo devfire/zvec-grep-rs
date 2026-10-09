@@ -93,19 +93,18 @@ pub(crate) fn canonical_through_ancestors(path: &Path) -> PathBuf {
                 full.push(segment);
             }
             return full;
-        } else {
-            let Some(name) = current.file_name().map(ToOwned::to_owned) else {
-                return path.to_path_buf();
-            };
-            let Some(parent) = current.parent().map(Path::to_path_buf) else {
-                return path.to_path_buf();
-            };
-            if parent == current {
-                return path.to_path_buf();
-            }
-            missing.insert(0, name);
-            current = parent;
         }
+        let Some(name) = current.file_name().map(ToOwned::to_owned) else {
+            return path.to_path_buf();
+        };
+        let Some(parent) = current.parent().map(Path::to_path_buf) else {
+            return path.to_path_buf();
+        };
+        if parent == current {
+            return path.to_path_buf();
+        }
+        missing.insert(0, name);
+        current = parent;
     }
 }
 
