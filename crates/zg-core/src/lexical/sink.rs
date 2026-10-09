@@ -90,7 +90,7 @@ impl Sink for MatchSink<'_> {
         let mut item = build_context_item(
             self.root,
             &path,
-            line_number as usize,
+            usize::try_from(line_number).unwrap_or(usize::MAX),
             start_column,
             end_column,
             line_text.to_owned(),
