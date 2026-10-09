@@ -221,7 +221,7 @@ fn file_info_for_structure(
         .and_then(|time| {
             time.duration_since(std::time::UNIX_EPOCH)
                 .ok()
-                .map(|d| d.as_millis() as i64)
+                .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
         })
         .unwrap_or(0);
     Some(crate::types::FileInfo {
