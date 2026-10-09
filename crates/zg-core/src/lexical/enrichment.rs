@@ -317,7 +317,7 @@ fn compare_fragment_container(left: &EntityFragment, right: &EntityFragment) -> 
             start_line,
             end_line,
             ..
-        } => end_line as i64 - start_line as i64,
+        } => i64::try_from(end_line).unwrap_or(i64::MAX) - i64::try_from(start_line).unwrap_or(i64::MAX),
         crate::types::Range::File
         | crate::types::Range::Byte { .. }
         | crate::types::Range::Page { .. }
