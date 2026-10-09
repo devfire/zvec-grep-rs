@@ -276,6 +276,7 @@ impl EngineError {
         }
     }
 
+    #[must_use]
     pub fn with_context(mut self, context: impl Into<String>) -> Self {
         self.context = Some(context.into());
         self
