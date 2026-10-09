@@ -106,9 +106,8 @@ fn inner_python_definition<'a>(node: &SyntaxNode<'a>) -> Option<SyntaxNode<'a>> 
 fn has_leading_async_def(text: &str) -> bool {
     text.split('\n').any(|line| {
         let rest = line.trim_start_matches(|c: char| c.is_whitespace() && c != '\n');
-        let after_async = match rest.strip_prefix("async") {
-            Some(rest) => rest,
-            None => return false,
+        let Some(after_async) = rest.strip_prefix("async") else {
+            return false;
         };
         if !after_async.starts_with(char::is_whitespace) {
             return false;
