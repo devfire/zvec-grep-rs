@@ -10,7 +10,8 @@
 #   scripts/clippy-one.sh next                 # smallest file with errors + its errors (best next task)
 #   scripts/clippy-one.sh show <path>          # all errors for one file
 #   scripts/clippy-one.sh lint <pattern> [N]   # up to N errors matching lint text (default 20)
-#   scripts/clippy-one.sh fixable              # auto-apply machine fix for ONE smallest file only
+#   scripts/clippy-one.sh fixable              # one `cargo clippy --fix` pass + refresh
+#   scripts/clippy-one.sh unattended [--max-passes N] [--commit]  # loop --fix until no progress, report manual remainder
 #
 # Typical loop (human or agent):
 #   1. scripts/clippy-one.sh refresh
@@ -85,11 +86,6 @@ cmd_next() {
 }
 
 cmd_fixable() {
-  # Machine-applicable fixes, scoped to the single smallest file by stashing the rest? No:
-  # cargo has no per-file --fix, so we fix the smallest file via rustfix-filtered apply:
-  # 1. run --fix with --allow-dirty (applies all machine fixes), then show diff stat limited to next file.
-  # Safer default: just show what `cargo clippy --fix` WOULD touch for the next file is not queryable,
-  # so we apply one `--fix` pass and immediately re-refresh; user reviews with git diff.
   ensure_cache
   local f
   f=$(error_lines | cut -d: -f1 | sort | uniq -c | sort -n | head -n 1 | awk '{print $2}')
@@ -97,6 +93,46 @@ cmd_fixable() {
   cargo clippy --fix --workspace --all-targets --allow-dirty -- -Dclippy::pedantic 2>&1 | tail -n 5 || true
   refresh > /dev/null 2>&1 || true
   count_cached
+}
+
+cmd_unattended() {
+  # Loop machine fixes with no prompts. Stops when count hits 0 or a pass makes no progress.
+  # Remaining errors are manual-only (casts, struct design, long fns) and get summarized at the end.
+  local max_passes=5 commit_each=0
+  for arg in "$@"; do
+    case "$arg" in
+      --max-passes=*) max_passes="${arg#--max-passes=}" ;;
+      --commit) commit_each=1 ;;
+    esac
+  done
+  [[ "${1:-}" =~ ^[0-9]+$ ]] && max_passes="$1"
+  [[ "${2:-}" == "--commit" ]] && commit_each=1
+  refresh > /dev/null 2>&1 || true
+  local before after pass=0
+  before=$(error_lines | wc -l | tr -d ' ')
+  after="$before" # no passes yet => remainder is everything
+  echo "unattended: start $before errors, up to $max_passes passes"
+  while (( pass < max_passes )); do
+    pass=$((pass + 1))
+    cargo clippy --fix --workspace --all-targets --allow-dirty -- -Dclippy::pedantic > /dev/null 2>&1 || true
+    cargo check --workspace --all-targets > /dev/null 2>&1 || { echo "unattended: check FAILED after pass $pass, stopping"; break; }
+    if (( commit_each == 1 )) && ! git diff --quiet; then
+      git add -A && git commit -qm "clippy --fix unattended pass $pass" || true
+    fi
+    refresh > /dev/null 2>&1 || true
+    after=$(error_lines | wc -l | tr -d ' ')
+    echo "unattended: pass $pass: $before -> $after"
+    if (( after == 0 )); then break; fi
+    if (( after >= before )); then echo "unattended: no progress, stopping"; break; fi
+    before="$after"
+  done
+  echo "--- remaining (manual) ---"
+  count_cached
+  echo "--- by file ---"
+  cmd_files 20
+  echo "--- by lint ---"
+  cmd_lints 20
+  if (( after == 0 )); then echo "clean: no errors"; return 0; else return 2; fi
 }
 
 case "${1:-help}" in
@@ -108,5 +144,6 @@ case "${1:-help}" in
   show) cmd_show "${2:-}" ;;
   lint) cmd_lint "${2:-}" "${3:-20}" ;;
   fixable) cmd_fixable ;;
+  unattended) shift; cmd_unattended "$@" ;;
   *) sed -n '2,20p' "$0" ;;
 esac
