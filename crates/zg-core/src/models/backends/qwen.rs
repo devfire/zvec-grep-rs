@@ -904,7 +904,7 @@ mod scoped_authorization_tests {
             .expect("permit");
         let model = text_model(endpoint.to_owned());
         let granted_roots = vec![root_a.to_string_lossy().into_owned()];
-        let roots_b = vec![root_b.to_string_lossy().into_owned()];
+        let denied = vec![root_b.to_string_lossy().into_owned()];
         with_remote_embedding_operation_permit(Some(permit), || {
             let inputs = [EmbeddingInput::Text { text: "hello" }];
             // Granted root: authorization passes; any error is transport.
@@ -914,7 +914,7 @@ mod scoped_authorization_tests {
             }
             // Different root: fails closed regardless of process cwd.
             let error = model
-                .embed_scoped(EmbeddingPurpose::Query, &inputs, &roots_b)
+                .embed_scoped(EmbeddingPurpose::Query, &inputs, &denied)
                 .expect_err("other root must not authorize");
             assert_eq!(error.code().to_string(), AUTH_REQUIRED);
             // Bare path carries no roots: fails closed, never consults cwd.
