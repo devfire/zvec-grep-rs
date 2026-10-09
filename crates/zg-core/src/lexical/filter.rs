@@ -18,6 +18,8 @@ pub const HARD_IGNORED_DIRECTORIES: &[&str] = &[".git", ".zvec-grep"];
 /// Expands one include/exclude path pattern the way `expandRipgrepPathGlob`
 /// does: `./`-prefixed patterns are stripped, `**/`-prefixed and absolute
 /// patterns stay as-is, everything else also matches at any depth.
+// `rest` borrows `normalized`, so `rest.clone_into(&mut normalized)` fails E0502; keep the assignment.
+#[allow(clippy::assigning_clones)]
 fn expand_path_pattern(pattern: &str) -> Vec<String> {
     let mut normalized = pattern.trim().to_owned();
     while let Some(rest) = normalized.strip_prefix("./") {
