@@ -219,7 +219,7 @@ fn collect_matches(
             .as_ref()
             .and_then(|m| m.modified().ok())
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_millis() as i64);
+            .and_then(|d| i64::try_from(d.as_millis()).ok());
         if !matches_modified_time(mtime, options.modified_after, options.modified_before) {
             continue;
         }
