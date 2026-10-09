@@ -451,7 +451,7 @@ fn is_blocked_ip(ip: &IpAddr) -> bool {
         return true;
     }
     match ip {
-        IpAddr::V4(addr) => is_blocked_ipv4(addr),
+        IpAddr::V4(addr) => is_blocked_ipv4(*addr),
         IpAddr::V6(addr) => is_blocked_ipv6(addr),
     }
 }
@@ -459,8 +459,8 @@ fn is_blocked_ip(ip: &IpAddr) -> bool {
 /// IPv4 SSRF policy as explicit octet ranges (no reliance on
 /// version-gated std helpers): private, link-local, multicast,
 /// special-use/reserved, and the metadata endpoints.
-fn is_blocked_ipv4(addr: &Ipv4Addr) -> bool {
-    if *addr == Ipv4Addr::new(169, 254, 169, 254) || *addr == Ipv4Addr::new(100, 100, 100, 254) {
+fn is_blocked_ipv4(addr: Ipv4Addr) -> bool {
+    if addr == Ipv4Addr::new(169, 254, 169, 254) || addr == Ipv4Addr::new(100, 100, 100, 254) {
         return true;
     }
     let [a, b, c, d] = addr.octets();
@@ -523,7 +523,7 @@ fn is_blocked_ipv6(addr: &Ipv6Addr) -> bool {
         return true;
     }
     if s0 == 0 && s1 == 0 && s2 == 0 && s3 == 0 && s4 == 0 && s5 == 0xffff {
-        return is_blocked_ipv4(&Ipv4Addr::new(
+        return is_blocked_ipv4(Ipv4Addr::new(
             (s6 >> 8) as u8,
             (s6 & 0xff) as u8,
             (s7 >> 8) as u8,
