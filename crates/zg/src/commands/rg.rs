@@ -84,6 +84,7 @@ pub(crate) async fn run_rg_direct(args: QueryArgs, queries: Vec<String>) -> Resu
         None,
         args.model_cache.clone(),
         args.device,
+        None,
     ))
     .rg_search(&options)?;
     let query = options.patterns.join(" | ");
@@ -135,7 +136,8 @@ mod tests {
             patterns: vec!["alpha".to_owned()],
             ..LexicalSearchOptions::default()
         };
-        let service = ZvecGrepService::new(service_options(None, None, None, None, None, None));
+        let service =
+            ZvecGrepService::new(service_options(None, None, None, None, None, None, None));
         let searched = service.rg_search(&options).unwrap();
         assert_eq!(searched.items.len(), 1);
         assert_eq!(searched.items[0].file.relative_path, "a.rs");

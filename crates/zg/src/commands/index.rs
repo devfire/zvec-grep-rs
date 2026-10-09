@@ -133,6 +133,7 @@ async fn run_index_direct(args: &IndexArgs, root: &PathBuf) -> Result<(), CliErr
         args.endpoint.clone(),
         args.model_cache.clone(),
         args.device,
+        args.index_location.clone(),
     ));
     let info_before = service.workspace_info(Some(absolute.as_path()))?;
     assert_model_compatible(&info_before, args.embedding.as_deref(), args.rebuild)?;
@@ -173,7 +174,7 @@ async fn run_index_direct(args: &IndexArgs, root: &PathBuf) -> Result<(), CliErr
     let cancel = cancel_flag();
     let options = ZvecGrepIndexOptions {
         root: Some(absolute.as_path()),
-        index_location: None,
+        index_location: args.index_location.as_deref(),
         root_paths: root_spec,
         rebuild: args.rebuild,
         reset_paths: args.reset_paths,
@@ -315,6 +316,11 @@ async fn run_index_server(
     root: &PathBuf,
     client: DaemonClient,
 ) -> Result<(), CliError> {
+    if args.index_location.is_some() {
+        return Err(CliError::usage(
+            "--index-location cannot be used with server mode; index storage is daemon configuration",
+        ));
+    }
     if server_flags_set(args) {
         return Err(CliError::usage(
             "index credentials and file-scope options cannot be used with server mode; configure the daemon instead",
@@ -382,12 +388,18 @@ async fn run_index_drop(args: &IndexArgs, root: &Path) -> Result<(), CliError> {
                 None,
                 None,
                 None,
+                args.index_location.clone(),
             ));
             service
                 .drop_index(Some(absolute.as_path()))
                 .map_err(CliError::from)
         },
         async {
+            if args.index_location.is_some() {
+                return Err(CliError::usage(
+                    "--index-location cannot be used with server mode; index storage is daemon configuration",
+                ));
+            }
             let client = DaemonClient::from_env(None, args.home.as_deref())?;
             drop_via_server(&client, &display).await
         },
@@ -602,6 +614,7 @@ mod tests {
             api_key: None,
             endpoint: None,
             model_cache_dir: None,
+            index_location: None,
         });
         setup
             .ensure_index(&ZvecGrepIndexOptions {

@@ -22,6 +22,7 @@ pub(crate) fn service_options(
     endpoint: Option<String>,
     model_cache: Option<PathBuf>,
     device: Option<DeviceArg>,
+    index_location: Option<PathBuf>,
 ) -> CreateZvecGrepOptions {
     let _ = device;
     CreateZvecGrepOptions {
@@ -31,6 +32,7 @@ pub(crate) fn service_options(
         api_key,
         endpoint,
         model_cache_dir: model_cache,
+        index_location,
     }
 }
 

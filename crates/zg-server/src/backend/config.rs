@@ -50,6 +50,7 @@ impl ServiceConfig {
             api_key: self.api_key.clone(),
             endpoint: self.endpoint.clone(),
             model_cache_dir: self.model_cache_dir.clone(),
+            index_location: None,
         }
     }
 

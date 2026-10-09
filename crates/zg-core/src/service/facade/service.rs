@@ -13,7 +13,6 @@ use crate::models::catalog::ModelReference;
 use crate::paths::to_display_path;
 use crate::service::root::{
     WorkspaceIndexLocation, find_nearest_workspace_index, resolve_zvec_grep_root,
-    workspace_index_location,
 };
 use crate::service::types::workspace_index_not_found;
 
@@ -46,6 +45,10 @@ pub struct CreateZvecGrepOptions {
     pub endpoint: Option<String>,
     /// Local model cache directory override.
     pub model_cache_dir: Option<PathBuf>,
+    /// Index storage directory override, winning over
+    /// `$ZVEC_GREP_INDEX_LOCATION` and the default in-tree home. Per-call
+    /// `index_location` fields win over this binding.
+    pub index_location: Option<PathBuf>,
 }
 
 /// Builds a [`ZvecGrepService`], mirroring `createZvecGrep`.
@@ -66,6 +69,7 @@ pub struct ZvecGrepService {
     pub(super) api_key: Option<String>,
     pub(super) endpoint: Option<String>,
     pub(super) model_cache_dir: Option<PathBuf>,
+    pub(super) index_location: Option<PathBuf>,
 }
 
 impl ZvecGrepService {
@@ -84,7 +88,32 @@ impl ZvecGrepService {
             api_key: options.api_key,
             endpoint: options.endpoint,
             model_cache_dir: options.model_cache_dir,
+            index_location: options.index_location,
         }
+    }
+
+    /// Index storage directory the facade is bound to, if any.
+    #[must_use]
+    pub fn index_location(&self) -> Option<&Path> {
+        self.index_location.as_deref()
+    }
+
+    /// Effective storage override: `explicit` wins over the service binding,
+    /// which wins over `$ZVEC_GREP_INDEX_LOCATION`.
+    pub(super) fn effective_index_location(&self, explicit: Option<&Path>) -> Option<PathBuf> {
+        crate::service::root::effective_index_location(explicit, self.index_location.as_deref())
+    }
+
+    /// Full locations for `root` under the effective storage override.
+    pub(super) fn location_for(
+        &self,
+        root: &str,
+        index_location: Option<&Path>,
+    ) -> EngineResult<WorkspaceIndexLocation> {
+        crate::service::root::workspace_index_location_with_override(
+            root,
+            self.effective_index_location(index_location).as_deref(),
+        )
     }
 
     /// Workspace root the facade is bound to.
@@ -100,7 +129,7 @@ impl ZvecGrepService {
     ///
     /// Returns `WORKSPACE.ROOT_UNAVAILABLE` when the workspace root cannot be resolved.
     pub fn open_workspace(&self, root: Option<&Path>) -> EngineResult<WorkspaceIndexLocation> {
-        workspace_index_location(&self.root_string(root))
+        self.location_for(&self.root_string(root), None)
     }
 
     /// Exhaustive in-process lexical search — never a subprocess, mirroring
@@ -120,8 +149,16 @@ impl ZvecGrepService {
     pub(super) fn require_indexed_location(
         &self,
         root: Option<&Path>,
+        index_location: Option<&Path>,
     ) -> EngineResult<WorkspaceIndexLocation> {
         let start = self.root_string(root);
+        if self.effective_index_location(index_location).is_some() {
+            let location = self.location_for(&start, index_location)?;
+            if !crate::service::root::has_workspace_index(&location) {
+                return Err(workspace_index_not_found(&start));
+            }
+            return Ok(location);
+        }
         find_nearest_workspace_index(&start).ok_or_else(|| workspace_index_not_found(&start))
     }
 
@@ -139,6 +176,7 @@ impl std::fmt::Debug for ZvecGrepService {
         f.debug_struct("ZvecGrepService")
             .field("root", &self.root)
             .field("embedding", &self.embedding)
+            .field("index_location", &self.index_location)
             .field("has_embedding_model", &self.embedding_model.is_some())
             .finish()
     }

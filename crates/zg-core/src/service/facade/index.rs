@@ -17,7 +17,7 @@ use crate::paths::to_display_path;
 use crate::pipeline::indexing::scanner::CancelFlag;
 use crate::service::root::{
     WorkspaceIndexLocation, acquire_index_maintenance_guard, has_workspace_index,
-    reset_workspace_index, workspace_index_location,
+    reset_workspace_index,
 };
 use crate::service::types::{RootPathSpec, ZvecGrepIndexOptions};
 use crate::service::workspace_index::{
@@ -42,7 +42,7 @@ impl ZvecGrepService {
         options: &ZvecGrepIndexOptions<'_>,
     ) -> EngineResult<crate::types::IndexResult> {
         let root = self.root_string(options.root);
-        let location = workspace_index_location(&root)?;
+        let location = self.location_for(&root, options.index_location)?;
         let home = PathBuf::from(&location.home);
         let existing = read_workspace_manifest(&home)?;
         let model = self.model_for_manifest(existing.as_ref())?;
@@ -158,7 +158,7 @@ impl ZvecGrepService {
     /// Returns an error when the workspace root cannot be resolved or stored index data cannot
     /// be deleted.
     pub fn drop_index(&self, root: Option<&Path>) -> EngineResult<bool> {
-        let location = workspace_index_location(&self.root_string(root))?;
+        let location = self.location_for(&self.root_string(root), None)?;
         if !has_workspace_index(&location) {
             return Ok(false);
         }

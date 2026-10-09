@@ -126,7 +126,7 @@ fn direct_context_options<'a>(
         .collect();
     Ok(ZvecGrepContextOptions {
         root: None,
-        index_location: None,
+        index_location: args.index_location.as_deref(),
         query,
         queries: rest,
         routes,
@@ -167,6 +167,7 @@ async fn run_query_direct(args: &QueryArgs, queries: &[String]) -> Result<(), Cl
         None,
         args.model_cache.clone(),
         args.device,
+        args.index_location.clone(),
     ));
     let info = service.workspace_info(None)?;
     let uses_vector = !queries.is_empty() || !args.vector.is_empty();
@@ -254,6 +255,11 @@ async fn run_query_server(
     queries: &[String],
     client: DaemonClient,
 ) -> Result<(), CliError> {
+    if args.index_location.is_some() {
+        return Err(CliError::usage(
+            "--index-location cannot be used with server mode; index storage is daemon configuration",
+        ));
+    }
     let filters = search_hard_filters(args)?;
     let policy = resolve_server_search_policy(args.refresh);
     let mut arguments = json!({

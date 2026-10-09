@@ -11,6 +11,11 @@ use super::values::{ClientModeArg, ColorMode, DeviceArg};
 pub struct IndexArgs {
     /// Workspace root to index (default: current directory).
     pub roots: Vec<PathBuf>,
+    /// Store the index outside the source tree (e.g. under a writable
+    /// directory for read-only checkouts). Overrides
+    /// `$ZVEC_GREP_INDEX_LOCATION`. Direct mode only.
+    #[arg(long = "index-location")]
+    pub index_location: Option<PathBuf>,
     /// Delete the index instead of building it.
     #[arg(long = "drop", action = clap::ArgAction::SetTrue)]
     pub drop: bool,

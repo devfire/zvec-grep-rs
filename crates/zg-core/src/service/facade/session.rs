@@ -24,7 +24,7 @@ impl ZvecGrepService {
     /// Returns an error when no built index is found, the index is disabled or unbuilt, or model
     /// resolution or index open fails.
     pub fn open_read_session(&self, root: Option<&Path>) -> EngineResult<ReadSession> {
-        let location = self.require_indexed_location(root)?;
+        let location = self.require_indexed_location(root, None)?;
         let manifest = self.require_manifest(&location)?;
         if manifest.info.index_policy == Some(crate::types::WorkspaceIndexPolicy::Disabled) {
             return Err(workspace_index_disabled(&location.root));

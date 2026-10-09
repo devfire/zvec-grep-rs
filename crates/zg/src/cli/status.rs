@@ -11,6 +11,11 @@ use super::values::{ClientModeArg, ColorMode, DeviceArg};
 pub struct StatusArgs {
     /// Workspace root (default: current directory).
     pub roots: Vec<PathBuf>,
+    /// Index storage directory override (matches `zg index
+    /// --index-location`). Overrides `$ZVEC_GREP_INDEX_LOCATION`. Direct
+    /// mode only.
+    #[arg(long = "index-location")]
+    pub index_location: Option<PathBuf>,
     /// Fail when the index is not ready.
     #[arg(long = "check-ready", action = clap::ArgAction::SetTrue)]
     pub check_ready: bool,

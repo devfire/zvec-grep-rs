@@ -20,6 +20,11 @@ pub(crate) async fn run_status(args: StatusArgs) -> Result<(), CliError> {
         mode,
         run_status_direct(&args, &absolute),
         async {
+            if args.index_location.is_some() {
+                return Err(CliError::usage(
+                    "--index-location cannot be used with server mode; index storage is daemon configuration",
+                ));
+            }
             let client = DaemonClient::from_env(None, args.home.as_deref())?;
             run_status_server(&client, &absolute).await
         },
@@ -43,6 +48,7 @@ async fn run_status_direct(args: &StatusArgs, absolute: &Path) -> Result<String,
         args.endpoint.clone(),
         args.model_cache.clone(),
         args.device,
+        args.index_location.clone(),
     ));
     let info = service.workspace_info(Some(absolute))?;
     let state = print_workspace_info(&info, color.enabled());

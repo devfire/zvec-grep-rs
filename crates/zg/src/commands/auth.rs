@@ -58,6 +58,7 @@ fn run_auth_grant(args: &AuthArgs, grant: &AuthGrantArgs) -> Result<(), CliError
         args.endpoint.clone(),
         args.model_cache.clone(),
         args.device,
+        None,
     ));
     let info = service.workspace_info(Some(Path::new(&root)))?;
     let configured = args.embedding.clone().or_else(|| {

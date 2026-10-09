@@ -503,3 +503,59 @@ fn nested_git_manifest_validation() {
     let error = read_workspace_manifest(&scratch_home).expect_err("malformed must fail");
     assert_eq!(error.code(), &zg_core::error::codes::manifest_invalid());
 }
+
+#[test]
+fn out_of_tree_index_location_round_trip() {
+    let src = fixture_workspace();
+    let external = TempDir::new().expect("tempdir");
+    let stub: Arc<dyn EmbeddingModel> = Arc::new(StubEmbeddingModel::new(STUB_DIMENSION));
+    let service = create_zvec_grep(CreateZvecGrepOptions {
+        root: Some(src.path().to_path_buf()),
+        embedding_model: Some(stub),
+        index_location: Some(external.path().to_path_buf()),
+        ..CreateZvecGrepOptions::default()
+    });
+
+    service.ensure_index(&index_options(&src)).expect("index");
+    // Storage lives out of tree; the source checkout is untouched.
+    assert!(external.path().join("manifest.json").is_file());
+    assert!(!src.path().join(".zvec-grep").exists());
+
+    let info = service.workspace_info(None).expect("info");
+    assert!(info.indexed);
+    let status = service.index_status(None).expect("status");
+    let _ = status;
+
+    let found = service
+        .context(&ZvecGrepContextOptions {
+            root: Some(src.path()),
+            query: Some("hello".to_owned()),
+            fts: vec!["hello".to_owned()],
+            auto_update: false,
+            index_location: Some(external.path()),
+            ..ZvecGrepContextOptions::default()
+        })
+        .expect("context");
+    assert!(
+        found
+            .items
+            .iter()
+            .any(|item| item.file.relative_path.ends_with("a.txt")),
+        "{}",
+        serde_json::to_string_pretty(&found.items).expect("json")
+    );
+
+    // Per-call paths win over the service binding.
+    let other = TempDir::new().expect("tempdir");
+    service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(src.path()),
+            index_location: Some(other.path()),
+            ..ZvecGrepIndexOptions::default()
+        })
+        .expect("reindex elsewhere");
+    assert!(other.path().join("manifest.json").is_file());
+
+    assert!(service.drop_index(None).expect("drop"));
+    assert!(!external.path().join("manifest.json").exists());
+}

@@ -93,6 +93,11 @@ pub struct QueryArgs {
     /// Follow symlinks (index or `--rg` only).
     #[arg(long = "follow", short = 'L', action = clap::ArgAction::SetTrue)]
     pub follow: bool,
+    /// Index storage directory override (matches `zg index
+    /// --index-location`). Overrides `$ZVEC_GREP_INDEX_LOCATION`. Direct
+    /// mode only; ignored by `--rg`.
+    #[arg(long = "index-location")]
+    pub index_location: Option<PathBuf>,
     /// Transport selection: direct, server, or auto.
     #[arg(long = "mode")]
     pub mode: Option<ClientModeArg>,

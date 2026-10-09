@@ -18,7 +18,7 @@ impl ZvecGrepService {
     ///
     /// Returns an error when no built index is found or the index cannot be opened for status.
     pub fn index_status(&self, root: Option<&Path>) -> EngineResult<WorkspaceIndexStatus> {
-        let location = self.require_indexed_location(root)?;
+        let location = self.require_indexed_location(root, None)?;
         let manifest = self.require_manifest(&location)?;
         let index = WorkspaceIndex::open(
             manifest.info.clone(),
@@ -37,8 +37,17 @@ impl ZvecGrepService {
     /// Returns an error when the manifest cannot be read or the workspace index is disabled.
     pub fn workspace_info(&self, root: Option<&Path>) -> EngineResult<ZvecGrepInfoResult> {
         let start = self.root_string(root);
-        let Some(location) = crate::service::root::find_nearest_workspace_index(&start) else {
-            return Ok(not_indexed_result(&start));
+        let location = if self.effective_index_location(None).is_some() {
+            let location = self.location_for(&start, None)?;
+            if !crate::service::root::has_workspace_index(&location) {
+                return Ok(not_indexed_result(&start));
+            }
+            location
+        } else {
+            let Some(location) = crate::service::root::find_nearest_workspace_index(&start) else {
+                return Ok(not_indexed_result(&start));
+            };
+            location
         };
         let manifest = self.require_manifest(&location)?;
         if manifest.info.index_policy == Some(crate::types::WorkspaceIndexPolicy::Disabled) {

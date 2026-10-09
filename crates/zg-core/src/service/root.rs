@@ -72,6 +72,20 @@ pub fn index_location_from_env() -> Option<PathBuf> {
         .filter(|path| !path.as_os_str().is_empty())
 }
 
+/// Effective index storage override: an explicit per-call path wins over the
+/// service binding, which wins over `$ZVEC_GREP_INDEX_LOCATION`. `None`
+/// keeps the default in-tree home (`<root>/.zvec-grep`).
+#[must_use]
+pub fn effective_index_location(
+    explicit: Option<&Path>,
+    service: Option<&Path>,
+) -> Option<PathBuf> {
+    explicit
+        .map(Path::to_path_buf)
+        .or_else(|| service.map(Path::to_path_buf))
+        .or_else(index_location_from_env)
+}
+
 /// Full locations for `root` (mirrors `workspaceIndexLocation`).
 ///
 /// # Errors
@@ -356,5 +370,24 @@ mod tests {
         let canonical = std::fs::canonicalize(&dir).expect("canonicalize");
         assert_eq!(location.home, to_display_path(&canonical));
         assert_eq!(location.root, "/repo");
+    }
+    #[test]
+    fn effective_index_location_prefers_explicit_then_service() {
+        let explicit = Path::new("/tmp/explicit-index");
+        let bound = Path::new("/tmp/bound-index");
+        assert_eq!(
+            effective_index_location(Some(explicit), Some(bound)),
+            Some(PathBuf::from(explicit))
+        );
+        assert_eq!(
+            effective_index_location(None, Some(bound)),
+            Some(PathBuf::from(bound))
+        );
+        // Explicit passes through verbatim (even empty: the empty-path
+        // error surfaces downstream in `workspace_index_location_with_override`).
+        assert_eq!(
+            effective_index_location(Some(Path::new("")), Some(bound)),
+            Some(PathBuf::from(""))
+        );
     }
 }

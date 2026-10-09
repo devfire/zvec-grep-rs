@@ -33,10 +33,10 @@ impl ZvecGrepService {
         options: &ZvecGrepContextOptions<'_>,
     ) -> EngineResult<ZvecGrepContextResult> {
         let request = normalize_context_request(options)?;
-        let location = self.require_indexed_location(options.root)?;
+        let location = self.require_indexed_location(options.root, options.index_location)?;
         let manifest = self.require_manifest(&location)?;
         if options.wants_auto_update() {
-            self.refresh(&location)?;
+            self.refresh(&location, options)?;
             return self.context_after_refresh(options, &request);
         }
         let model = self.model_for_manifest(Some(&manifest))?;
@@ -51,10 +51,15 @@ impl ZvecGrepService {
         run_context_search(&index, &location.root, &info, &request, options)
     }
 
-    fn refresh(&self, location: &WorkspaceIndexLocation) -> EngineResult<()> {
+    fn refresh(
+        &self,
+        location: &WorkspaceIndexLocation,
+        options: &ZvecGrepContextOptions<'_>,
+    ) -> EngineResult<()> {
         let root = PathBuf::from(&location.root);
         self.ensure_index(&ZvecGrepIndexOptions {
             root: Some(&root),
+            index_location: options.index_location,
             ..ZvecGrepIndexOptions::default()
         })?;
         Ok(())
@@ -65,7 +70,7 @@ impl ZvecGrepService {
         options: &ZvecGrepContextOptions<'_>,
         request: &NormalizedContextRequest,
     ) -> EngineResult<ZvecGrepContextResult> {
-        let location = self.require_indexed_location(options.root)?;
+        let location = self.require_indexed_location(options.root, options.index_location)?;
         let manifest = self.require_manifest(&location)?;
         let model = self.model_for_manifest(Some(&manifest))?;
         let info = manifest.info.clone();
