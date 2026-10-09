@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Rust build output
 /target/
 **/*.rs.bk
@@ -62,3 +63,8 @@ result-*
 # Distribution / packaging scratch
 dist/
 *.tgz
+=======
+/target
+.zvec-grep/
+.env
+>>>>>>> 48c73b1 (agents + ignore)
