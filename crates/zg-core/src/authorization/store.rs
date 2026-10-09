@@ -292,7 +292,7 @@ impl RemoteEmbeddingAuthorizationStore {
             };
             let path = Path::new(root).join(".zvec-grep").join(GRANT_FILE);
             let stored = grant.clone();
-            self.with_document_write(&path, |document| {
+            Self::with_document_write(&path, |document| {
                 document
                     .grants
                     .retain(|candidate| candidate.target_fingerprint != stored.target_fingerprint);
@@ -333,7 +333,7 @@ impl RemoteEmbeddingAuthorizationStore {
                 continue;
             }
             let path = Path::new(root).join(".zvec-grep").join(GRANT_FILE);
-            let changed = self.with_document_write(&path, |document| {
+            let changed = Self::with_document_write(&path, |document| {
                 let before = document.grants.len();
                 document
                     .grants
@@ -375,7 +375,7 @@ impl RemoteEmbeddingAuthorizationStore {
         let keys = self.candidate_keys(&boundary)?;
         let mut revoked = 0usize;
         let mut valid: Vec<RemoteEmbeddingGrant> = Vec::new();
-        self.with_document_write(&path, |document| {
+        Self::with_document_write(&path, |document| {
             revoked = document.grants.len();
             if revoked == 0 {
                 return false;
@@ -421,7 +421,7 @@ impl RemoteEmbeddingAuthorizationStore {
             }
         }
         for (sibling, fingerprints) in &siblings {
-            self.with_document_write(sibling, |document| {
+            Self::with_document_write(sibling, |document| {
                 let before = document.grants.len();
                 document
                     .grants
@@ -504,7 +504,6 @@ impl RemoteEmbeddingAuthorizationStore {
     /// written. Skipping no-op writes keeps revokes over missing roots from
     /// creating directories or files.
     fn with_document_write(
-        &self,
         path: &Path,
         update: impl FnOnce(&mut RemoteEmbeddingDocument) -> bool,
     ) -> EngineResult<bool> {
