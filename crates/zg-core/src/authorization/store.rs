@@ -241,7 +241,7 @@ impl RemoteEmbeddingAuthorizationStore {
             let covered = document.grants.iter().any(|grant| {
                 grant.target_fingerprint == target.target_fingerprint.as_str()
                     && grant.workspace_fingerprint == target.workspace_fingerprint.as_str()
-                    && keys.iter().any(|key| self.verify_grant(grant, key))
+                    && keys.iter().any(|key| Self::verify_grant(grant, key))
             });
             if !covered {
                 return Ok(false);
@@ -384,7 +384,7 @@ impl RemoteEmbeddingAuthorizationStore {
                 valid = document
                     .grants
                     .iter()
-                    .filter(|grant| keys.iter().any(|key| self.verify_grant(grant, key)))
+                    .filter(|grant| keys.iter().any(|key| Self::verify_grant(grant, key)))
                     .cloned()
                     .collect();
             }
@@ -462,7 +462,7 @@ impl RemoteEmbeddingAuthorizationStore {
                 endpoint: grant.endpoint.clone(),
                 target_fingerprint: grant.target_fingerprint.clone(),
                 granted_at: grant.granted_at,
-                valid: !keys.is_empty() && keys.iter().any(|key| self.verify_grant(grant, key)),
+                valid: !keys.is_empty() && keys.iter().any(|key| Self::verify_grant(grant, key)),
             })
             .collect();
         Ok(AuthorizationStatus { path, grants })
@@ -521,7 +521,7 @@ impl RemoteEmbeddingAuthorizationStore {
         write_json_file(path, &document, SECURE_MODES)?;
         Ok(true)
     }
-    fn verify_grant(&self, grant: &RemoteEmbeddingGrant, key: &[u8]) -> bool {
+    fn verify_grant(grant: &RemoteEmbeddingGrant, key: &[u8]) -> bool {
         let Ok(expected) = sign(&unsigned_grant(grant), key) else {
             return false;
         };
@@ -853,11 +853,11 @@ mod tests {
             .expect("read keys");
         assert_eq!(keys.len(), 1);
         let key = keys.into_iter().next().expect("key present");
-        assert!(store.verify_grant(&grant, &key));
+        assert!(RemoteEmbeddingAuthorizationStore::verify_grant(&grant, &key));
         // Length mismatch fails before content comparison.
         let mut short = grant.clone();
         short.signature.truncate(short.signature.len() / 2);
-        assert!(!store.verify_grant(&short, &key));
+        assert!(!RemoteEmbeddingAuthorizationStore::verify_grant(&short, &key));
     }
 
     #[test]
