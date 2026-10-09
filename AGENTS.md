@@ -5,4 +5,4 @@
 - keep new code to 500 LOCs or less per module
 - upon completion, make sure to run `cargo clippy --workspace --all-targets -- -Dclippy::pedantic`
 - commit your work once done
-- IMPORTANT: avoid using serena when working in a worktree because it causes write conflicts
+- IMPORTANT: avoid using serena when working with multiple worktrees because it causes write conflicts
