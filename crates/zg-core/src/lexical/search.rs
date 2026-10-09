@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use grep_searcher::SearcherBuilder;
@@ -23,10 +23,220 @@ use super::options::{
 };
 use super::patterns::{build_matcher, load_patterns};
 use super::search_paths::{
-    absolute_normalized, canonical_through_ancestors, check_search_paths, display_paths,
-    resolve_search_path,
+    CheckedSearchPaths, absolute_normalized, canonical_through_ancestors, check_search_paths,
+    display_paths, resolve_search_path,
 };
 use super::sink::{MatchSink, record_file};
+
+/// Runs an exhaustive in-process lexical search.
+///
+/// Never spawns a subprocess. Returns an [`crate::error::EngineError`] only for invalid
+/// search setup (no pattern, unreadable pattern/ignore file, unknown file
+/// type, unusable matcher); per-file IO failures during the walk skip that
+/// file, mirroring ripgrep's tolerance.
+///
+/// # Errors
+///
+/// Returns `LEXICAL.EMPTY_PATTERN` when no pattern is given, `LEXICAL.UNKNOWN_FILE_TYPE`
+/// for unknown file types, `LEXICAL.PATTERN_FILE_UNREADABLE` or `LEXICAL.INVALID_PATTERN`
+/// for bad patterns (including too many, overlong, or an overlarge combined
+/// alternation), `LEXICAL.IGNORE_FILE_INVALID` for bad ignore files,
+/// `SEARCH_PLAN.INVALID_MODIFIED_TIME_RANGE` for inverted mtime bounds, or
+/// `LEXICAL.SEARCH_FAILED` when a search path escapes the root, the file-size
+/// cap is zero, or the walk itself fails.
+/// Owned matchers/filters for one search, built once so the hot walk path
+/// never recompiles per file.
+struct SearchContext {
+    matcher: grep_regex::RegexMatcher,
+    type_matcher: crate::utils::file_selection::FileTypesMatcher,
+    glob_filter: GlobFilter,
+    include_filters: Vec<String>,
+    exclude_filters: Vec<String>,
+    ignore_matcher: Option<ignore::gitignore::Gitignore>,
+}
+
+fn build_search_context(
+    options: &LexicalSearchOptions,
+    patterns: &[String],
+) -> EngineResult<SearchContext> {
+    use crate::error::{EngineError, EngineErrorCode};
+
+    let matcher = build_matcher(options, patterns)?;
+    let type_matcher = crate::utils::file_selection::resolve_file_types(
+        &options.file_types,
+        &options.excluded_file_types,
+    )
+    .map_err(|error| {
+        EngineError::new(
+            EngineErrorCode::LexicalUnknownFileType,
+            error.message().to_owned(),
+        )
+    })?;
+    Ok(SearchContext {
+        matcher,
+        type_matcher,
+        glob_filter: GlobFilter::new(&options.globs, &options.insensitive_globs),
+        include_filters: expand_path_patterns(&options.include_paths),
+        exclude_filters: expand_path_patterns(&options.exclude_paths),
+        ignore_matcher: build_ignore_matcher(&options.root, &options.ignore_files)?,
+    })
+}
+
+fn resolve_search_roots(
+    options: &LexicalSearchOptions,
+    checked: &CheckedSearchPaths,
+) -> EngineResult<(PathBuf, PathBuf, Vec<PathBuf>)> {
+    let root = absolute_normalized(&options.root);
+    let canonical_root = canonical_through_ancestors(&root);
+    if checked.existing.is_empty() {
+        return Ok((root.clone(), canonical_root, vec![root]));
+    }
+    let mut roots = Vec::with_capacity(checked.existing.len());
+    for path in &checked.existing {
+        // Containment re-checked: denies `..`/symlink escapes even if the
+        // earlier split classified them as existing.
+        roots.push(resolve_search_path(&options.root, path)?);
+    }
+    Ok((root, canonical_root, roots))
+}
+
+fn configure_walker(walk: &mut ignore::WalkBuilder, options: &LexicalSearchOptions) {
+    walk.hidden(!options.searches_hidden())
+        .git_ignore(!options.no_ignore)
+        .git_global(!options.no_ignore)
+        .git_exclude(!options.no_ignore)
+        .ignore(!options.no_ignore)
+        .parents(!options.no_ignore)
+        .max_depth(options.max_depth)
+        .follow_links(options.follow)
+        .filter_entry(|entry| {
+            if entry.depth() == 0 {
+                return true;
+            }
+            if entry.file_type().is_some_and(|kind| kind.is_dir()) {
+                return !is_hard_ignored_name(entry.file_name());
+            }
+            true
+        });
+}
+
+fn path_passes_filters(
+    options: &LexicalSearchOptions,
+    context: &SearchContext,
+    root: &Path,
+    canonical_root: &Path,
+    path: &Path,
+    relative: &str,
+    absolute: &str,
+) -> bool {
+    if options.follow {
+        // Never follow a symlink outside the root or into a hard-ignored
+        // directory: judge the canonical target, not the link name.
+        let target = canonical_through_ancestors(path);
+        if !crate::paths::is_path_inside(canonical_root, &target) {
+            return false;
+        }
+        if is_hard_ignored_path(canonical_root, &target) {
+            return false;
+        }
+    }
+    if is_hard_ignored_path(root, path) {
+        return false;
+    }
+    if !options.include_paths.is_empty()
+        && !matches_any_path_pattern(&context.include_filters, relative, absolute)
+    {
+        return false;
+    }
+    if matches_any_path_pattern(&context.exclude_filters, relative, absolute) {
+        return false;
+    }
+    if !context.glob_filter.matches(relative, absolute) {
+        return false;
+    }
+    if !context.type_matcher.matches(path) {
+        return false;
+    }
+    !context
+        .ignore_matcher
+        .as_ref()
+        .is_some_and(|ignore| ignore.matched(path, false).is_ignore())
+}
+
+fn collect_matches(
+    options: &LexicalSearchOptions,
+    root: &Path,
+    canonical_root: &Path,
+    context: &SearchContext,
+    walk: ignore::Walk,
+    mut diagnostics: LexicalDiagnostics,
+) -> LexicalSearchResult {
+    let mut searcher = SearcherBuilder::new().line_number(true).build();
+    let mut sink = MatchSink {
+        items: Vec::new(),
+        next_rank: 1,
+        limit: options.limit,
+        truncated: false,
+        root,
+        options,
+        matcher: &context.matcher,
+        line_cache: HashMap::new(),
+        per_file_counts: HashMap::new(),
+    };
+    for entry in walk {
+        let Ok(entry) = entry else { continue };
+        if sink.truncated {
+            break;
+        }
+        let path = entry.path();
+        if !is_searchable_file(entry.file_type(), path, options.follow) {
+            continue;
+        }
+        let owned_metadata = entry.metadata().ok().or_else(|| fs::metadata(path).ok());
+        let Some(file_len) = owned_metadata.as_ref().map(fs::Metadata::len) else {
+            continue;
+        };
+        if crate::file_size_policy::file_size_exceeds_cap(
+            path,
+            file_len,
+            options.max_file_size_bytes,
+        ) {
+            continue;
+        }
+        let (relative, absolute) = display_paths(root, path);
+        if !path_passes_filters(
+            options,
+            context,
+            root,
+            canonical_root,
+            path,
+            &relative,
+            &absolute,
+        ) {
+            continue;
+        }
+        let mtime = owned_metadata
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as i64);
+        if !matches_modified_time(mtime, options.modified_after, options.modified_before) {
+            continue;
+        }
+        // Per-file IO failures skip the file, like ripgrep's tolerance for
+        // unreadable files.
+        record_file(path);
+        let _ = searcher.search_path(&context.matcher, path, &mut sink);
+    }
+    if let Some(limit) = options.limit {
+        sink.items.truncate(limit);
+    }
+    diagnostics.truncated = sink.truncated;
+    LexicalSearchResult {
+        items: sink.items,
+        diagnostics,
+    }
+}
 
 /// Runs an exhaustive in-process lexical search.
 ///
@@ -86,7 +296,7 @@ pub fn run_lexical_search(options: &LexicalSearchOptions) -> EngineResult<Lexica
         });
     }
     if !checked.missing.is_empty() {
-        diagnostics.missing_paths = Some(checked.missing);
+        diagnostics.missing_paths = Some(checked.missing.clone());
     }
     diagnostics.searched_paths = Some(checked.searched.clone());
 
@@ -99,157 +309,28 @@ pub fn run_lexical_search(options: &LexicalSearchOptions) -> EngineResult<Lexica
     }
     diagnostics.patterns = all_patterns.clone();
 
-    let matcher = build_matcher(options, &all_patterns)?;
-    let type_matcher = crate::utils::file_selection::resolve_file_types(
-        &options.file_types,
-        &options.excluded_file_types,
-    )
-    .map_err(|error| {
-        EngineError::new(
-            EngineErrorCode::LexicalUnknownFileType,
-            error.message().to_owned(),
-        )
-    })?;
-    let glob_filter = GlobFilter::new(&options.globs, &options.insensitive_globs);
-    let include_filters = expand_path_patterns(&options.include_paths);
-    let exclude_filters = expand_path_patterns(&options.exclude_paths);
-    let ignore_matcher = build_ignore_matcher(&options.root, &options.ignore_files)?;
+    let context = build_search_context(options, &all_patterns)?;
+    let (root, canonical_root, searched_roots) = resolve_search_roots(options, &checked)?;
 
-    let root = absolute_normalized(&options.root);
-    let canonical_root = canonical_through_ancestors(&root);
-    let searched_roots: Vec<PathBuf> = if checked.existing.is_empty() {
-        vec![root.clone()]
-    } else {
-        let mut roots = Vec::with_capacity(checked.existing.len());
-        for path in &checked.existing {
-            // Containment re-checked: denies `..`/symlink escapes even if the
-            // earlier split classified them as existing.
-            roots.push(resolve_search_path(&options.root, path)?);
-        }
-        roots
-    };
-
-    let Some(first) = searched_roots.first().cloned() else {
+    let Some(first) = searched_roots.first() else {
         return Ok(LexicalSearchResult {
             items: Vec::new(),
             diagnostics,
         });
     };
-    let mut walk = ignore::WalkBuilder::new(&first);
+    let mut walk = ignore::WalkBuilder::new(first);
     for extra in searched_roots.iter().skip(1) {
         walk.add(extra);
     }
-    walk.hidden(!options.searches_hidden())
-        .git_ignore(!options.no_ignore)
-        .git_global(!options.no_ignore)
-        .git_exclude(!options.no_ignore)
-        .ignore(!options.no_ignore)
-        .parents(!options.no_ignore)
-        .max_depth(options.max_depth)
-        .follow_links(options.follow)
-        .filter_entry(|entry| {
-            if entry.depth() == 0 {
-                return true;
-            }
-            if entry.file_type().is_some_and(|kind| kind.is_dir()) {
-                return !is_hard_ignored_name(entry.file_name());
-            }
-            true
-        });
-
-    let mut searcher = SearcherBuilder::new().line_number(true).build();
-    let mut sink = MatchSink {
-        items: Vec::new(),
-        next_rank: 1,
-        limit: options.limit,
-        truncated: false,
-        root: &root,
+    configure_walker(&mut walk, options);
+    Ok(collect_matches(
         options,
-        matcher: &matcher,
-        line_cache: HashMap::new(),
-        per_file_counts: HashMap::new(),
-    };
-
-    for entry in walk.build() {
-        let Ok(entry) = entry else { continue };
-        if sink.truncated {
-            break;
-        }
-        let path = entry.path();
-        if !is_searchable_file(entry.file_type(), path, options.follow) {
-            continue;
-        }
-        let metadata = entry.metadata().ok();
-        let owned_metadata = match metadata {
-            Some(metadata) => Some(metadata),
-            None => fs::metadata(path).ok(),
-        };
-        let Some(file_len) = owned_metadata.as_ref().map(fs::Metadata::len) else {
-            continue;
-        };
-        if crate::file_size_policy::file_size_exceeds_cap(
-            path,
-            file_len,
-            options.max_file_size_bytes,
-        ) {
-            continue;
-        }
-        if options.follow {
-            // Never follow a symlink outside the root or into a hard-ignored
-            // directory: judge the canonical target, not the link name.
-            let target = canonical_through_ancestors(path);
-            if !crate::paths::is_path_inside(&canonical_root, &target) {
-                continue;
-            }
-            if is_hard_ignored_path(&canonical_root, &target) {
-                continue;
-            }
-        }
-        if is_hard_ignored_path(&root, path) {
-            continue;
-        }
-        let (relative, absolute) = display_paths(&root, path);
-        if !options.include_paths.is_empty()
-            && !matches_any_path_pattern(&include_filters, &relative, &absolute)
-        {
-            continue;
-        }
-        if matches_any_path_pattern(&exclude_filters, &relative, &absolute) {
-            continue;
-        }
-        if !glob_filter.matches(&relative, &absolute) {
-            continue;
-        }
-        if !type_matcher.matches(path) {
-            continue;
-        }
-        if let Some(ignore) = ignore_matcher.as_ref()
-            && ignore.matched(path, false).is_ignore()
-        {
-            continue;
-        }
-        let mtime = owned_metadata
-            .as_ref()
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_millis() as i64);
-        if !matches_modified_time(mtime, options.modified_after, options.modified_before) {
-            continue;
-        }
-        // Per-file IO failures skip the file, like ripgrep's tolerance for
-        // unreadable files.
-        record_file(path);
-        let _ = searcher.search_path(&matcher, path, &mut sink);
-    }
-
-    if let Some(limit) = options.limit {
-        sink.items.truncate(limit);
-    }
-    diagnostics.truncated = sink.truncated;
-    Ok(LexicalSearchResult {
-        items: sink.items,
+        &root,
+        &canonical_root,
+        &context,
+        walk.build(),
         diagnostics,
-    })
+    ))
 }
 
 #[cfg(test)]
