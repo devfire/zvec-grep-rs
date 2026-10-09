@@ -115,9 +115,8 @@ pub fn extract_common_modifiers(node: &SyntaxNode<'_>) -> Vec<CodeEntityModifier
     let mut modifiers: Vec<CodeEntityModifier> = Vec::new();
     let signature = extract_generic_signature(node)
         .or_else(|| node.text().map(|t| first_non_empty_line(t).to_string()));
-    let haystack = match signature.as_deref() {
-        Some(s) => s,
-        None => return modifiers,
+    let Some(haystack) = signature.as_deref() else {
+        return modifiers;
     };
 
     if is_inside_node_type(node, "export_statement") {
