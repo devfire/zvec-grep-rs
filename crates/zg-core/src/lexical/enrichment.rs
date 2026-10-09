@@ -145,7 +145,7 @@ fn enrich_lexical_item(
     let mut enriched = item.clone();
     // `container.metadata ?? item.metadata`: the fragment wins when present.
     if container.entity.metadata.is_some() {
-        enriched.metadata = container.entity.metadata.clone();
+        enriched.metadata.clone_from(&container.entity.metadata);
     }
     enriched.container = Some(StructuralContainer {
         entity_id,
