@@ -13,7 +13,7 @@
 
 use crate::code_formats::is_component_code_format;
 use crate::error::{EngineError, EngineResult, codes};
-use crate::extraction::code::adapter::{SyntaxNode, resolve_adapter};
+use crate::extraction::code::adapter::{LanguageAdapter, SyntaxNode, resolve_adapter};
 use crate::extraction::code::extractor::script_blocks::extract_script_blocks;
 use crate::extraction::code::extractor::walk::{code_entity_to_search_fragments, walk_code_node};
 use crate::extraction::text::extract_plain_text_fragments;
@@ -139,9 +139,34 @@ pub fn extract_for_indexing(
     let mut collected: Vec<CodeEntity<'_>> = Vec::new();
     walk_code_node(root, adapter, &[], &mut collected);
 
+    let out = emit_entity_fragments(
+        file,
+        adapter,
+        &collected,
+        max_chunk_chars,
+        chunk_overlap_chars,
+    );
+    if out.is_empty() {
+        return Ok(Some(fallback(
+            file,
+            text,
+            max_chunk_chars,
+            chunk_overlap_chars,
+        )));
+    }
+    Ok(Some(out))
+}
+
+fn emit_entity_fragments(
+    file: &FileInfo,
+    adapter: &dyn LanguageAdapter,
+    collected: &[CodeEntity<'_>],
+    max_chunk_chars: usize,
+    chunk_overlap_chars: usize,
+) -> Vec<ExtractedFragment> {
     let mut out = Vec::new();
     let mut entity_id_index = 0usize;
-    for entity in &collected {
+    for entity in collected {
         let raws =
             code_entity_to_search_fragments(adapter, entity, max_chunk_chars, chunk_overlap_chars);
         let major_id = if raws.first().is_some_and(|raw| raw.mark == GroupMark::Major) {
@@ -172,15 +197,7 @@ pub fn extract_for_indexing(
             });
         }
     }
-    if out.is_empty() {
-        return Ok(Some(fallback(
-            file,
-            text,
-            max_chunk_chars,
-            chunk_overlap_chars,
-        )));
-    }
-    Ok(Some(out))
+    out
 }
 
 fn resolve_code_chunk_options(options: &ChunkOptions) -> EngineResult<(usize, usize)> {
