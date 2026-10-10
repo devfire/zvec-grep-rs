@@ -66,11 +66,12 @@ impl From<ModelError> for EngineError {
             ModelError::BatchTooLarge { reference, size, max } => {
                 Some(format!("model={reference} batchSize={size} maxBatchSize={max}"))
             }
-            ModelError::EmptyText { reference, index } => Some(model_index(&reference, index)),
+            ModelError::EmptyText { reference, index } | ModelError::EmptyImage { reference, index } => {
+                Some(model_index(&reference, index))
+            }
             ModelError::UnsupportedImage { reference, index } => {
                 Some(unsupported_image_context(&reference, index))
             }
-            ModelError::EmptyImage { reference, index } => Some(model_index(&reference, index)),
             ModelError::ImageTooLarge { reference, index, bytes, max_bytes } => Some(format!(
                 "model={reference} index={index} imageBytes={bytes} maxImageBytes={max_bytes}"
             )),
