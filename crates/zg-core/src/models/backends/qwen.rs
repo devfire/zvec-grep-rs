@@ -70,6 +70,45 @@ fn remote_agent() -> ureq::Agent {
 /// policy (`crate::config::is_http_endpoint`); `https` -> `http`
 /// downgrades are refused, at most `MAX_REDIRECTS` hops are followed, and
 /// `Bearer` credentials are only forwarded to the endpoint's own origin.
+/// Sends one embedding HTTP exchange, forwarding `Bearer` auth only to the
+/// endpoint's own origin. Transport failures map to `request_failed`, mirroring
+/// the TypeScript throw site for request errors.
+#[allow(clippy::too_many_arguments)]
+fn send_embedding_request(
+    agent: &ureq::Agent,
+    display: &str,
+    reference: &str,
+    endpoint: &str,
+    current: &str,
+    use_get: bool,
+    api_key: &ApiKey,
+    body: &Value,
+    request_failed: EngineErrorCode,
+) -> EngineResult<ureq::http::Response<ureq::Body>> {
+    let authed = is_same_origin(endpoint, current);
+    let result = if use_get {
+        let request = agent.get(current);
+        let request = if authed {
+            request.header("Authorization", &format!("Bearer {}", api_key.as_str()))
+        } else {
+            request
+        };
+        request.call()
+    } else {
+        let request = agent.post(current);
+        let request = if authed {
+            request.header("Authorization", &format!("Bearer {}", api_key.as_str()))
+        } else {
+            request
+        };
+        request.send_json(body.clone())
+    };
+    result.map_err(|err| {
+        EngineError::new(request_failed, format!("{display} request failed")).with_context(format!(
+            "model={reference} endpoint={endpoint} timeoutMs={REMOTE_TIMEOUT_MS} detail={err}"
+        ))
+    })
+}
 #[allow(clippy::too_many_arguments)]
 fn post_embedding_json(
     agent: &ureq::Agent,
@@ -102,28 +141,17 @@ fn post_embedding_json(
                 "model={reference} endpoint={endpoint} timeoutMs={REMOTE_TIMEOUT_MS}"
             )));
         }
-        let mut response = if use_get {
-            let request = agent.get(&current);
-            let request = if is_same_origin(endpoint, &current) {
-                request.header("Authorization", &format!("Bearer {}", api_key.as_str()))
-            } else {
-                request
-            };
-            request.call()
-        } else {
-            let request = agent.post(&current);
-            let request = if is_same_origin(endpoint, &current) {
-                request.header("Authorization", &format!("Bearer {}", api_key.as_str()))
-            } else {
-                request
-            };
-            request.send_json(body.clone())
-        }
-        .map_err(|err| {
-            EngineError::new(request_failed, format!("{display} request failed")).with_context(
-                format!("model={reference} endpoint={endpoint} timeoutMs={REMOTE_TIMEOUT_MS} detail={err}"),
-            )
-        })?;
+        let mut response = send_embedding_request(
+            agent,
+            display,
+            reference,
+            endpoint,
+            &current,
+            use_get,
+            api_key,
+            &body,
+            request_failed,
+        )?;
         let status = response.status().as_u16();
         if matches!(status, 301 | 302 | 303 | 307 | 308) {
             hops += 1;
