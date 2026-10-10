@@ -155,7 +155,7 @@ pub(crate) fn read_gitignore_rules(
     current_path: &str,
 ) -> EngineResult<Vec<IgnoreRule>> {
     let ignore_path = Path::new(current_path).join(".gitignore");
-    let content = if let Ok(content) = std::fs::read_to_string(&ignore_path) { content } else {
+    let Ok(content) = std::fs::read_to_string(&ignore_path) else {
         if let Ok(mut cache) = gitignore_cache().lock() {
             cache.entries.remove(&to_display_path(&ignore_path));
         }
