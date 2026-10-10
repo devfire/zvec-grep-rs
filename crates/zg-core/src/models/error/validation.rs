@@ -87,10 +87,8 @@ impl From<ModelError> for EngineError {
             ModelError::InvalidTruncatedIndex { reference, index, input_count } => {
                 Some(format!("model={reference} index={index} inputCount={input_count}"))
             }
-            ModelError::Model2VecLoad { reference, repo, revision, detail } => {
-                Some(model_revision_detail(&reference, &repo, &revision, &detail))
-            }
-            ModelError::Model2VecDownload { reference, repo, revision, detail } => {
+            ModelError::Model2VecLoad { reference, repo, revision, detail }
+            | ModelError::Model2VecDownload { reference, repo, revision, detail } => {
                 Some(model_revision_detail(&reference, &repo, &revision, &detail))
             }
             ModelError::Model2VecEmbed { reference, repo, detail } => {
