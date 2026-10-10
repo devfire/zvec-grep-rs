@@ -38,6 +38,26 @@ pub struct SearchContext<'a> {
 
 const DEFAULT_LIMIT: usize = 7;
 
+fn select_visible(
+    fused: &mut Vec<Candidate>,
+    limit: usize,
+    track_entity_id: Option<&crate::ids::EntityId>,
+) -> Vec<Candidate> {
+    let mut visible: Vec<Candidate> = fused.drain(..limit.min(fused.len())).collect();
+    let tracked = track_entity_id.and_then(|id| {
+        fused
+            .iter()
+            .find(|candidate| candidate.id.as_str() == id.as_str())
+            .cloned()
+    });
+    if let Some(tracked) = tracked
+        && !visible.iter().any(|candidate| candidate.id == tracked.id)
+    {
+        visible.push(tracked);
+    }
+    visible
+}
+
 /// Executes a validated search plan (mirrors `searchWorkspaceIndex`).
 ///
 /// # Errors
@@ -118,18 +138,11 @@ pub fn search_workspace_index(
         fuse_candidates(&mut fused);
         Ok::<_, EngineError>(fused)
     })?;
-    let mut visible: Vec<Candidate> = fused.drain(..limit.min(fused.len())).collect();
-    let tracked = normalized.plan.track_entity_id.as_ref().and_then(|id| {
-        fused
-            .iter()
-            .find(|candidate| candidate.id.as_str() == id.as_str())
-            .cloned()
-    });
-    if let Some(tracked) = tracked
-        && !visible.iter().any(|candidate| candidate.id == tracked.id)
-    {
-        visible.push(tracked);
-    }
+    let visible: Vec<Candidate> = select_visible(
+        &mut fused,
+        limit,
+        normalized.plan.track_entity_id.as_ref(),
+    );
     let hits: Vec<SearchHit> = timings.time("materialize", || {
         Ok::<_, EngineError>(
             visible
