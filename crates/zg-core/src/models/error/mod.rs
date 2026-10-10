@@ -380,10 +380,10 @@ impl ModelError {
             }
             Self::Model2VecLoad { .. } => EngineErrorCode::ModelsModel2vecLoadFailed,
             Self::Model2VecDownload { .. } => EngineErrorCode::ModelsModel2vecDownloadFailed,
-            Self::Model2VecEmbed { .. } => EngineErrorCode::ModelsModel2vecEmbedFailed,
-            Self::Model2VecTokenize { .. } => EngineErrorCode::ModelsModel2vecEmbedFailed,
-            Self::TokenOutOfRange { .. } => EngineErrorCode::ModelsModel2vecEmbedFailed,
-            Self::WorkerFailed { .. } => EngineErrorCode::ModelsModel2vecEmbedFailed,
+            Self::Model2VecEmbed { .. }
+            | Self::Model2VecTokenize { .. }
+            | Self::TokenOutOfRange { .. }
+            | Self::WorkerFailed { .. } => EngineErrorCode::ModelsModel2vecEmbedFailed,
             Self::TransformersJsEmbed { .. } => EngineErrorCode::ModelsTransformersJsEmbedFailed,
             Self::TransformersJsTokenize { .. } => {
                 EngineErrorCode::ModelsTransformersJsTokenizationFailed
