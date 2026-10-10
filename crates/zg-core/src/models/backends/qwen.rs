@@ -333,7 +333,7 @@ fn parse_retry_after_ms(value: &str) -> Option<u64> {
     let date = chrono::NaiveDateTime::parse_from_str(trimmed, "%a, %d %b %Y %H:%M:%S GMT").ok()?;
     let target = date.and_utc().timestamp_millis();
     let now = chrono::Utc::now().timestamp_millis();
-    Some(target.saturating_sub(now).max(0) as u64)
+    Some(target.saturating_sub(now).max(0).cast_unsigned())
 }
 
 /// Reads one embedding vector, rejecting non-array payloads and non-numeric
