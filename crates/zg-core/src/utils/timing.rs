@@ -55,6 +55,9 @@ impl TimingCollector {
 
     /// Rounded aggregate entries; `count` emitted only when > 1.
     #[must_use]
+    // `total_ms` is rounded and non-negative by construction (`add` filters non-finite
+    // and clamps negatives); `as` saturates to `u64::MAX` on overflow, which is intended.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn entries(&self) -> Vec<TimingEntry> {
         self.entries
             .iter()
