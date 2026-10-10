@@ -153,6 +153,8 @@ pub fn create_scan_diagnostics() -> FileScanDiagnostics {
     }
 }
 
+// Both `usize as f64` casts below are bounded by `BINARY_SNIFF_BYTES` (small sniff buffer), so the conversion is lossless.
+#[allow(clippy::cast_precision_loss)]
 fn is_likely_binary_file(path: &str) -> bool {
     use std::io::Read as _;
     let Ok(mut handle) = std::fs::File::open(path) else {
