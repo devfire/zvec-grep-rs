@@ -59,7 +59,10 @@ impl From<ModelError> for EngineError {
             ModelError::MissingApiKey { context, .. } | ModelError::MissingEndpoint { context, .. } => {
                 Some(context)
             }
-            ModelError::EmptyInput { reference } => Some(model_only(&reference)),
+            ModelError::EmptyInput { reference }
+            | ModelError::WorkerFailed { reference }
+            | ModelError::TransformersJsDisposed { reference }
+            | ModelError::LlamaCppDisposed { reference } => Some(model_only(&reference)),
             ModelError::BatchTooLarge { reference, size, max } => {
                 Some(format!("model={reference} batchSize={size} maxBatchSize={max}"))
             }
@@ -96,7 +99,6 @@ impl From<ModelError> for EngineError {
             ModelError::TokenOutOfRange { reference, id, rows } => {
                 Some(format!("model={reference} id={id} rows={rows}"))
             }
-            ModelError::WorkerFailed { reference } => Some(model_only(&reference)),
             ModelError::TransformersJsEmbed { reference, repo, detail } => {
                 Some(model_repo_detail(&reference, &repo, &detail))
             }
@@ -106,9 +108,7 @@ impl From<ModelError> for EngineError {
             ModelError::TransformersJsInvalidTensor { reference, detail } => {
                 Some(model_detail(&reference, &detail))
             }
-            ModelError::TransformersJsDisposed { reference } => Some(model_only(&reference)),
             ModelError::LlamaCppEmbed { reference, detail } => Some(model_detail(&reference, &detail)),
-            ModelError::LlamaCppDisposed { reference } => Some(model_only(&reference)),
             ModelError::LlamaCppInvalidGguf { reference, path, detail } => {
                 Some(format!("model={reference} path={path} detail={detail}"))
             }
