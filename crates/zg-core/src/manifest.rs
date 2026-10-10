@@ -252,8 +252,7 @@ fn is_optional_string_array(value: Option<&Value>) -> bool {
 
 fn is_optional_boolean(value: Option<&Value>) -> bool {
     match value {
-        None | Some(Value::Null) => true,
-        Some(Value::Bool(_)) => true,
+        None | Some(Value::Null | Value::Bool(_)) => true,
         Some(_) => false,
     }
 }
