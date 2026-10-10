@@ -511,7 +511,7 @@ fn embed_unit(
             scheduler,
             abort,
             cancel,
-            thread_progress_sink(on_progress, scheduler, stats, progress_base, total),
+            thread_progress_sink(on_progress, scheduler, stats, progress_base, total).as_ref(),
         ) {
             Ok(result) => UnitOutcome::Embedded(vec![FileOutcome::Embedded(FileEmbed {
                 vectors: result.vectors,
@@ -567,7 +567,7 @@ fn embed_unit(
                     scheduler,
                     abort,
                     cancel,
-                    thread_progress_sink(on_progress, scheduler, stats, progress_base, total),
+                    thread_progress_sink(on_progress, scheduler, stats, progress_base, total).as_ref(),
                 ) {
                     Ok(result) => results.push(FileOutcome::Embedded(FileEmbed {
                         vectors: result.vectors,
@@ -660,7 +660,7 @@ fn embed_fragments(
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
     cancel: Option<&CancelFlag>,
-    on_model_progress: Option<ModelLoadSink>,
+    on_model_progress: Option<&ModelLoadSink>,
 ) -> EngineResult<EmbeddingResult> {
     let max_batch = model.max_batch_size().max(1);
     let mut vectors: Vec<Vec<f32>> = vec![Vec::new(); fragments.len()];
@@ -680,7 +680,7 @@ fn embed_fragments(
             scheduler,
             abort,
             cancel,
-            on_model_progress.clone(),
+            on_model_progress.cloned(),
             Some(abort),
         ) {
             Ok(result) => {
