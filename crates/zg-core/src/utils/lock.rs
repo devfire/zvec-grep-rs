@@ -71,10 +71,10 @@ impl Guard {
     /// Releases the lock; only removes the directory when the recorded token
     /// still matches ours (a reclaimed lock belongs to its new owner).
     pub fn release(self) {
-        let _ = self.release_result();
+        self.release_result();
     }
 
-    fn release_result(&self) -> EngineResult<()> {
+    fn release_result(&self) {
         let (dir, token) = match self {
             Self::Write { dir, token } | Self::Read { dir, token } => (dir, token),
         };
@@ -86,13 +86,12 @@ impl Guard {
         {
             let _ = fs::remove_dir_all(dir);
         }
-        Ok(())
     }
 }
 
 impl Drop for Guard {
     fn drop(&mut self) {
-        let _ = self.release_result();
+        self.release_result();
     }
 }
 
