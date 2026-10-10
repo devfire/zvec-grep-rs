@@ -64,6 +64,11 @@ impl ZvecWorkspaceIndexStorage {
     ///
     /// Returns an error when zvec initialization, the storage directory, lock, metadata store,
     /// foreign-index check, or collection open/create fails.
+    // `options` is a small value type kept by-value so call sites can pass
+    // temporaries (`StorageOptions::ReadWrite { .. }`) without binding them;
+    // taking `&StorageOptions` would churn the public `open` /
+    // `create_workspace_index_storage` API and every call site for no gain.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn open(options: StorageOptions<'_>) -> EngineResult<Box<dyn WorkspaceIndexStorage>> {
         let read_only = options.read_only();
         let storage_path = options.storage_path().to_path_buf();
