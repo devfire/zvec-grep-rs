@@ -288,12 +288,12 @@ fn read_lock_info(lock_dir: &Path) -> Option<FileLockInfo> {
 fn write_lock_file(dir: &Path, info: &FileLockInfo) -> std::io::Result<()> {
     let body = format!(
         "{}\n",
-        serde_json::to_string_pretty(info).map_err(io_other)?
+        serde_json::to_string_pretty(info).map_err(|error| io_other(&error))?
     );
     fs::write(dir.join(LOCK_FILE_NAME), body)
 }
 
-fn io_other(error: serde_json::Error) -> std::io::Error {
+fn io_other(error: &serde_json::Error) -> std::io::Error {
     std::io::Error::other(error.to_string())
 }
 
