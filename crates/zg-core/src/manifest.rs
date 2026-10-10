@@ -104,7 +104,8 @@ pub fn workspace_index_info_from_manifest(manifest: &WorkspaceManifest) -> Works
 fn invalid_manifest(path: &str, cause: Option<&str>) -> EngineError {
     let mut context = format!("path={path}");
     if let Some(cause) = cause {
-        context.push_str(&format!("\nerror={cause}"));
+        context.push_str("\nerror=");
+        context.push_str(cause);
     }
     EngineError::new(
         codes::manifest_invalid(),
