@@ -47,6 +47,10 @@ enum UnitOutcome {
     Failed(EngineError),
 }
 
+// `index_files` is a linear streaming orchestrator (prepare window -> serial
+// apply -> wave drain); splitting it further would scatter the ordering
+// invariants without reducing complexity, so keep the phases inline.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn index_files(
     files: Vec<FileInfo>,
     ctx: &mut IndexContext<'_>,
