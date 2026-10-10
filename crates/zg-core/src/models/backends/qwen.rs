@@ -544,7 +544,17 @@ impl QwenTextEmbeddingModel {
                     texts.len()
                 )));
             }
-            let index = index as usize;
+            let Ok(index) = usize::try_from(index) else {
+                return Err(EngineError::new(
+                    self.code(QwenTextFailure::IndexOutOfRange),
+                    format!("{} response index was out of range", self.display_name),
+                )
+                .with_context(format!(
+                    "model={} index={index} inputCount={}",
+                    self.info.reference,
+                    texts.len()
+                )));
+            };
             let vector = read_vector(
                 self.code(QwenTextFailure::InvalidVector),
                 self.display_name,
