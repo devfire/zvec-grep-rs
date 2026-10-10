@@ -767,7 +767,7 @@ impl Qwen3VlEmbeddingModel {
                 ))
             })?;
             let index = read_embedding_index(object, fallback_index);
-            if index < 0 || index as u64 >= inputs.len() as u64 {
+            if index < 0 || index.cast_unsigned() >= inputs.len() as u64 {
                 return Err(EngineError::new(
                     Self::code(QwenVlFailure::IndexOutOfRange),
                     "Qwen3 VL embedding response index was out of range",
