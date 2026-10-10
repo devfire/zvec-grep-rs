@@ -467,7 +467,9 @@ impl QwenTextEmbeddingModel {
         self.model_kind.code(failure)
     }
 
-    fn embed_core(&self, inputs: &[EmbeddingInput<'_>]) -> EngineResult<EmbeddingResult> {
+    /// Collects borrowed text inputs, rejecting images with
+    /// `UnsupportedImage` like the TypeScript text-only path.
+    fn collect_texts<'a>(&self, inputs: &[EmbeddingInput<'a>]) -> EngineResult<Vec<&'a str>> {
         let mut texts = Vec::with_capacity(inputs.len());
         for input in inputs {
             match input {
@@ -480,6 +482,11 @@ impl QwenTextEmbeddingModel {
                 }
             }
         }
+        Ok(texts)
+    }
+
+    fn embed_core(&self, inputs: &[EmbeddingInput<'_>]) -> EngineResult<EmbeddingResult> {
+        let texts = self.collect_texts(inputs)?;
         let request = serde_json::json!({
             "model": self.model,
             "input": texts,
