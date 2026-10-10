@@ -249,24 +249,21 @@ fn try_reclaim_stale(lock_dir: &Path, stale_ms: i64) -> Reclaim {
     if !lock_dir.exists() {
         return Reclaim::Absent;
     }
-    let info = match read_lock_info(lock_dir) {
-        Some(info) => info,
-        None => {
-            // Missing/invalid lock.json: judge staleness by directory mtime.
-            return match dir_age_ms(lock_dir) {
-                Some(age) if age > stale_ms => {
-                    let _ = fs::remove_dir_all(lock_dir);
-                    Reclaim::Reclaimed
-                }
-                _ => Reclaim::Held(FileLockInfo {
-                    token: String::new(),
-                    pid: 0,
-                    hostname: String::new(),
-                    started_at: UnixMillis::from_millis(dir_mtime_ms(lock_dir).unwrap_or_default()),
-                    operation: "unknown".to_owned(),
-                }),
-            };
-        }
+    let Some(info) = read_lock_info(lock_dir) else {
+        // Missing/invalid lock.json: judge staleness by directory mtime.
+        return match dir_age_ms(lock_dir) {
+            Some(age) if age > stale_ms => {
+                let _ = fs::remove_dir_all(lock_dir);
+                Reclaim::Reclaimed
+            }
+            _ => Reclaim::Held(FileLockInfo {
+                token: String::new(),
+                pid: 0,
+                hostname: String::new(),
+                started_at: UnixMillis::from_millis(dir_mtime_ms(lock_dir).unwrap_or_default()),
+                operation: "unknown".to_owned(),
+            }),
+        };
     };
     if is_stale(&info, stale_ms) {
         let _ = fs::remove_dir_all(lock_dir);
