@@ -91,16 +91,14 @@ impl From<ModelError> for EngineError {
             | ModelError::Model2VecDownload { reference, repo, revision, detail } => {
                 Some(model_revision_detail(&reference, &repo, &revision, &detail))
             }
-            ModelError::Model2VecEmbed { reference, repo, detail } => {
+            ModelError::Model2VecEmbed { reference, repo, detail }
+            | ModelError::TransformersJsEmbed { reference, repo, detail }
+            | ModelError::TransformersJsTokenize { reference, repo, detail } => {
                 Some(model_repo_detail(&reference, &repo, &detail))
             }
             ModelError::Model2VecTokenize { reference, detail } => Some(model_detail(&reference, &detail)),
             ModelError::TokenOutOfRange { reference, id, rows } => {
                 Some(format!("model={reference} id={id} rows={rows}"))
-            }
-            ModelError::TransformersJsEmbed { reference, repo, detail }
-            | ModelError::TransformersJsTokenize { reference, repo, detail } => {
-                Some(model_repo_detail(&reference, &repo, &detail))
             }
             ModelError::TransformersJsInvalidTensor { reference, detail } => {
                 Some(model_detail(&reference, &detail))
