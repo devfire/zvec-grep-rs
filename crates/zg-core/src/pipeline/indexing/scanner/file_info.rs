@@ -15,6 +15,9 @@ use crate::utils::hash::sha256_text;
 use super::types::{BINARY_CONTROL_CHAR_RATIO, BINARY_SNIFF_BYTES, MAX_SKIPPED_FILE_SAMPLES};
 use super::types::{display_relative, file_name_of};
 
+// `Result` is intentionally kept so callers can use `?` uniformly in the scan
+// pipeline and future fallible steps don't churn the signature.
+#[allow(clippy::unnecessary_wraps)]
 pub(crate) fn read_file_info(
     workspace_index_id: &str,
     root: &RootPath,
