@@ -134,7 +134,7 @@ pub fn normalize_absolute_path(path: &str) -> String {
 /// True when `path` equals one of `prefixes` or sits beneath one, walking
 /// parent segments exactly like the TypeScript implementation.
 #[must_use]
-pub fn path_has_prefix(path: &str, prefixes: &HashSet<String>) -> bool {
+pub fn path_has_prefix<S: std::hash::BuildHasher>(path: &str, prefixes: &HashSet<String, S>) -> bool {
     let mut current = path;
     loop {
         if prefixes.contains(current) {
