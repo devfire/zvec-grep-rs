@@ -126,12 +126,12 @@ pub(crate) fn report_download_progress(
             "downloading {}",
             progress.message.as_deref().unwrap_or("model")
         )),
-        embedding: Some(merge_progress(scheduler.snapshot(), progress)),
+        embedding: Some(merge_progress(&scheduler.snapshot(), progress)),
     });
 }
 
 pub(crate) fn merge_progress(
-    snapshot: IndexEmbeddingProgress,
+    snapshot: &IndexEmbeddingProgress,
     progress: &EmbeddingModelProgress,
 ) -> IndexEmbeddingProgress {
     IndexEmbeddingProgress {
@@ -193,7 +193,7 @@ pub(crate) fn thread_progress_sink(
                 "downloading {}",
                 progress.message.as_deref().unwrap_or("model")
             )),
-            embedding: Some(merge_progress(scheduler.snapshot(), &progress)),
+            embedding: Some(merge_progress(&scheduler.snapshot(), &progress)),
         });
     }) as ModelLoadSink)
 }
