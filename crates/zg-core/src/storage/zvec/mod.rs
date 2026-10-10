@@ -514,7 +514,7 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
             return Vec::new();
         };
         let files = self.meta.records();
-        let docs = if let Ok(docs) = collection.fetch_with_options(&selected, None, false) { docs } else {
+        let Ok(docs) = collection.fetch_with_options(&selected, None, false) else {
             // A poisoned batch (e.g. one bad key) must not drop the whole
             // listing: fall back to per-id fetches with per-entity omission.
             let mut entities = Vec::with_capacity(selected.len());
