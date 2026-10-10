@@ -440,6 +440,9 @@ fn pool_token_ids(
             *acc += *value;
         }
     }
+    // `ids` is capped at `max_input_tokens` (a small catalog constant), so the
+    // length is far below 2^24 and the `usize`-to-`f32` conversion is exact.
+    #[allow(clippy::cast_precision_loss)]
     let count = ids.len() as f32;
     let mut squared_norm = 0f32;
     for value in &mut vector {
