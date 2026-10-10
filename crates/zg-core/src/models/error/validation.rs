@@ -53,7 +53,9 @@ impl From<ModelError> for EngineError {
             ModelError::BackendUnavailable { reference, backend } => {
                 Some(format!("reference={reference} backend={}", backend.as_str()))
             }
-            ModelError::QwenText { context, .. } | ModelError::QwenVl { context, .. } => Some(context),
+            ModelError::QwenText { context, .. }
+            | ModelError::QwenVl { context, .. }
+            | ModelError::DownloadFailed { context } => Some(context),
             ModelError::MissingApiKey { context, .. } | ModelError::MissingEndpoint { context, .. } => {
                 Some(context)
             }
@@ -113,7 +115,6 @@ impl From<ModelError> for EngineError {
             ModelError::LlamaCppInvalidGgufHtml { reference, path } => {
                 Some(format!("model={reference} path={path}"))
             }
-            ModelError::DownloadFailed { context } => Some(context),
         };
         let mut engine = EngineError::new(code, message).with_source(source);
         if let Some(context) = context {
