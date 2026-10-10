@@ -308,7 +308,7 @@ fn dir_mtime_ms(dir: &Path) -> Option<i64> {
     Some(
         modified
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
+            .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
             .unwrap_or_default(),
     )
 }
