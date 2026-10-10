@@ -1,6 +1,6 @@
 //! File typing, skip diagnostics, binary sniffing, and file-id minting.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use crate::error::EngineResult;
@@ -148,7 +148,7 @@ fn record_skipped_file(
 pub fn create_scan_diagnostics() -> FileScanDiagnostics {
     FileScanDiagnostics {
         skipped_files: 0,
-        skipped_by_reason: Default::default(),
+        skipped_by_reason: BTreeMap::default(),
         skipped_samples: Vec::new(),
     }
 }
