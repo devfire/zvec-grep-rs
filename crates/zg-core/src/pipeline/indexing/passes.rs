@@ -394,7 +394,7 @@ fn run_path_index_pass(
     let mut existing = exact_existing;
     existing.extend(ctx.storage.list_files_by_path_prefixes(&prefix_paths));
     let existing = dedupe_by_id(existing);
-    run_diff_pass(ctx, scanned.0, &existing, timings, progress_base, scanned.1)
+    run_diff_pass(ctx, &scanned.0, &existing, timings, progress_base, scanned.1)
 }
 
 fn run_index_pass(
@@ -418,7 +418,7 @@ fn run_index_pass(
     throw_if_index_cancelled(ctx)?;
     run_diff_pass(
         ctx,
-        scan.files,
+        &scan.files,
         &existing,
         timings,
         progress_base,
@@ -428,14 +428,14 @@ fn run_index_pass(
 
 fn run_diff_pass(
     ctx: &mut IndexContext<'_>,
-    scanned_files: Vec<FileInfo>,
+    scanned_files: &[FileInfo],
     existing_files: &[FileInfo],
     timings: &mut TimingCollector,
     progress_base: Option<ProgressBase>,
     scan_diagnostics: FileScanDiagnostics,
 ) -> EngineResult<IndexPassResult> {
     let diff = timings.time("index_diff", || {
-        compute_diff_from_files(&scanned_files, existing_files)
+        compute_diff_from_files(scanned_files, existing_files)
     })?;
     throw_if_index_cancelled(ctx)?;
     let mut pending =
