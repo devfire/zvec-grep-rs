@@ -83,6 +83,8 @@ fn merged_matched_by(matches: &[QueryGroupRef]) -> SearchMatchedBy {
 
 /// RRF score over an item's group matches: `Σ 1/(60+rank)`.
 #[must_use]
+// Ranks are small result indexes, well below 2^53, so `as f64` is exact.
+#[allow(clippy::cast_precision_loss)]
 fn rrf_score(matches: &[QueryGroupRef]) -> f64 {
     matches
         .iter()
