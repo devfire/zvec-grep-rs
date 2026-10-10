@@ -535,7 +535,13 @@ fn retry_after_ms_from_text(text: &str) -> Option<u64> {
     }
     find_key_value(text, "retryAfter=")
         .and_then(|value| value.parse::<f64>().ok())
-        .map(|seconds| (seconds * 1000.0).round() as u64)
+        .map(|seconds| {
+            // `round` removed the fraction; saturating `as` maps NaN/negative to 0
+            // and huge values to `u64::MAX`, both safe retry delays.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let ms = (seconds * 1000.0).round() as u64;
+            ms
+        })
 }
 #[cfg(test)]
 mod tests {
