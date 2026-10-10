@@ -496,7 +496,7 @@ fn run_diff_pass(
         pending.len(),
         None,
     );
-    let stats = index_files(pending, ctx, timings, progress_base)?;
+    let stats = index_files(&pending, ctx, timings, progress_base)?;
     throw_if_index_cancelled(ctx)?;
     Ok(IndexPassResult {
         files_scanned: scanned_len,

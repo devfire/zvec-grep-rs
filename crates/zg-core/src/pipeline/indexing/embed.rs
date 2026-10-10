@@ -52,7 +52,7 @@ enum UnitOutcome {
 // invariants without reducing complexity, so keep the phases inline.
 #[allow(clippy::too_many_lines)]
 pub(crate) fn index_files(
-    files: Vec<FileInfo>,
+    files: &[FileInfo],
     ctx: &mut IndexContext<'_>,
     timings: &mut TimingCollector,
     progress_base: Option<ProgressBase>,
