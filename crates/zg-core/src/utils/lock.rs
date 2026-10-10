@@ -153,7 +153,6 @@ fn acquire_write_lock(lock_path: &Path, options: &LockOptions<'_>) -> EngineResu
                     });
                 }
                 let _ = fs::remove_dir_all(&write_dir);
-                continue;
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 match try_reclaim_stale(&write_dir, stale_ms) {
