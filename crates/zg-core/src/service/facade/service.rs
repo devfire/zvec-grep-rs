@@ -178,8 +178,11 @@ impl std::fmt::Debug for ZvecGrepService {
         f.debug_struct("ZvecGrepService")
             .field("root", &self.root)
             .field("embedding", &self.embedding)
+            .field("embedding_model", &self.embedding_model.is_some())
+            .field("api_key", &self.api_key.as_deref().map(|_| "[REDACTED]"))
+            .field("endpoint", &self.endpoint)
+            .field("model_cache_dir", &self.model_cache_dir)
             .field("index_location", &self.index_location)
-            .field("has_embedding_model", &self.embedding_model.is_some())
             .finish()
     }
 }
