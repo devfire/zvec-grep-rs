@@ -98,10 +98,8 @@ impl From<ModelError> for EngineError {
             ModelError::TokenOutOfRange { reference, id, rows } => {
                 Some(format!("model={reference} id={id} rows={rows}"))
             }
-            ModelError::TransformersJsEmbed { reference, repo, detail } => {
-                Some(model_repo_detail(&reference, &repo, &detail))
-            }
-            ModelError::TransformersJsTokenize { reference, repo, detail } => {
+            ModelError::TransformersJsEmbed { reference, repo, detail }
+            | ModelError::TransformersJsTokenize { reference, repo, detail } => {
                 Some(model_repo_detail(&reference, &repo, &detail))
             }
             ModelError::TransformersJsInvalidTensor { reference, detail } => {
