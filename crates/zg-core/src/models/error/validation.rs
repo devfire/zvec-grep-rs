@@ -96,14 +96,12 @@ impl From<ModelError> for EngineError {
             | ModelError::TransformersJsTokenize { reference, repo, detail } => {
                 Some(model_repo_detail(&reference, &repo, &detail))
             }
-            ModelError::Model2VecTokenize { reference, detail } => Some(model_detail(&reference, &detail)),
             ModelError::TokenOutOfRange { reference, id, rows } => {
                 Some(format!("model={reference} id={id} rows={rows}"))
             }
-            ModelError::TransformersJsInvalidTensor { reference, detail } => {
-                Some(model_detail(&reference, &detail))
-            }
-            ModelError::LlamaCppEmbed { reference, detail } => Some(model_detail(&reference, &detail)),
+            ModelError::Model2VecTokenize { reference, detail }
+            | ModelError::TransformersJsInvalidTensor { reference, detail }
+            | ModelError::LlamaCppEmbed { reference, detail } => Some(model_detail(&reference, &detail)),
             ModelError::LlamaCppInvalidGguf { reference, path, detail } => {
                 Some(format!("model={reference} path={path} detail={detail}"))
             }
