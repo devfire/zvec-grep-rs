@@ -778,6 +778,8 @@ impl Qwen3VlEmbeddingModel {
                     inputs.len()
                 )));
             }
+            // Range-checked above: 0 <= index < inputs.len(), so the i64 fits in usize.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let index = index as usize;
             let vector = read_vector(
                 Self::code(QwenVlFailure::InvalidVector),
