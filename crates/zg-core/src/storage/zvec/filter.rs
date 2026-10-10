@@ -38,7 +38,7 @@ pub fn build_filter(filter: Option<&StorageSearchFilter>) -> Option<String> {
     push_in_clause(
         &mut clauses,
         "symbol_type",
-        filter.symbol_types.iter().map(symbol_type_filter_value),
+        filter.symbol_types.iter().copied().map(symbol_type_filter_value),
     );
     if clauses.is_empty() {
         return None;
@@ -84,7 +84,7 @@ pub fn quote_filter_string(value: &str) -> String {
     quoted
 }
 
-fn symbol_type_filter_value(symbol_type: &crate::types::CodeSymbolType) -> &'static str {
+fn symbol_type_filter_value(symbol_type: crate::types::CodeSymbolType) -> &'static str {
     match symbol_type {
         crate::types::CodeSymbolType::Module => "module",
         crate::types::CodeSymbolType::Class => "class",
