@@ -452,7 +452,7 @@ mod tests {
         assert!(result.items[0].excerpt_range.is_some());
         match &result.items[0].content {
             crate::types::Content::Text { text } => assert_eq!(text, "two\nthree\nfour"),
-            _ => panic!("expected text content"),
+            crate::types::Content::Image { .. } => panic!("expected text content"),
         }
     }
 }
