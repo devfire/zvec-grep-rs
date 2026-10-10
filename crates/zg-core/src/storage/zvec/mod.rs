@@ -350,9 +350,8 @@ impl ZvecWorkspaceIndexStorage {
     ) -> Vec<StorageSearchHit> {
         let mut hits = Vec::with_capacity(docs.len());
         for doc in docs {
-            let stored = match doc_to_stored_fragment(doc, files) {
-                Ok(stored) => stored,
-                Err(_) => continue,
+            let Ok(stored) = doc_to_stored_fragment(doc, files) else {
+                continue;
             };
             if let Some(StoredFragment { fragment, file }) = stored {
                 hits.push(StorageSearchHit {
