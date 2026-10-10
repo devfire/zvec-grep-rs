@@ -680,7 +680,7 @@ fn embed_fragments(
             scheduler,
             abort,
             cancel,
-            on_model_progress.cloned(),
+            on_model_progress,
             Some(abort),
         ) {
             Ok(result) => {
@@ -729,7 +729,7 @@ fn embed_fragment_batch(
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
     cancel: Option<&CancelFlag>,
-    on_model_progress: Option<ModelLoadSink>,
+    on_model_progress: Option<&ModelLoadSink>,
     on_terminal_failure: Option<&AtomicBool>,
 ) -> EngineResult<EmbeddingResult> {
     // Borrowed views over the already-prepared fragments: no per-item
@@ -745,7 +745,7 @@ fn embed_fragment_batch(
         scheduler,
         abort,
         cancel,
-        on_model_progress.clone(),
+        on_model_progress.cloned(),
         on_terminal_failure,
     ) {
         Ok(result) => Ok(result),
@@ -777,7 +777,7 @@ fn embed_fragment_batch_one_by_one(
     scheduler: &EmbeddingScheduler,
     abort: &AtomicBool,
     cancel: Option<&CancelFlag>,
-    on_model_progress: Option<ModelLoadSink>,
+    on_model_progress: Option<&ModelLoadSink>,
     on_terminal_failure: Option<&AtomicBool>,
 ) -> EngineResult<EmbeddingResult> {
     let mut vectors = Vec::with_capacity(fragments.len());
@@ -791,7 +791,7 @@ fn embed_fragment_batch_one_by_one(
             scheduler,
             abort,
             cancel,
-            on_model_progress.clone(),
+            on_model_progress.cloned(),
             on_terminal_failure,
         ) {
             Ok(result) => {
