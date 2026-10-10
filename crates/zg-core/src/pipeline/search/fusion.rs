@@ -103,6 +103,8 @@ impl Candidate {
 const RRF_K: f64 = 60.0;
 
 /// Scores, orders, and ranks candidates (mirrors `fuseCandidates`).
+// Ranks are small search positions well below 2^53, so this `usize as f64` cast is exact.
+#[allow(clippy::cast_precision_loss)]
 pub fn fuse_candidates(candidates: &mut [Candidate]) {
     for candidate in candidates.iter_mut() {
         candidate.score = 0.0;
