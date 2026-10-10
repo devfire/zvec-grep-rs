@@ -62,7 +62,7 @@ impl ZvecGrepService {
         };
         let existing = if options.rebuild { None } else { existing };
 
-        let root_paths = self.resolve_root_paths(&location, options, existing.as_ref())?;
+        let root_paths = Self::resolve_root_paths(&location, options, existing.as_ref())?;
         let now = UnixMillis::now();
         let manifest = WorkspaceManifest {
             info: WorkspaceIndexInfo {
@@ -167,7 +167,6 @@ impl ZvecGrepService {
     }
 
     fn resolve_root_paths(
-        &self,
         location: &WorkspaceIndexLocation,
         options: &ZvecGrepIndexOptions<'_>,
         existing: Option<&WorkspaceManifest>,
@@ -175,7 +174,7 @@ impl ZvecGrepService {
         if !options.root_paths.is_empty() {
             let mut roots = Vec::with_capacity(options.root_paths.len());
             for spec in &options.root_paths {
-                roots.push(self.convert_root_spec(location, options, spec)?);
+                roots.push(Self::convert_root_spec(location, options, spec)?);
             }
             return crate::pipeline::indexing::root_paths::validate_root_paths(&roots);
         }
@@ -205,7 +204,6 @@ impl ZvecGrepService {
     }
 
     fn convert_root_spec(
-        &self,
         location: &WorkspaceIndexLocation,
         options: &ZvecGrepIndexOptions<'_>,
         spec: &RootPathSpec<'_>,
