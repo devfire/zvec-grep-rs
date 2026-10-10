@@ -85,22 +85,8 @@ impl ZvecGrepService {
     }
 }
 
-/// Executes one [`SearchPlan`] per query group and merges the results,
-/// mirroring TS `contextFromOpenWorkspaceIndex`: `fuse` collapses every
-/// group into a single `Q1` plan, otherwise each group searches with its own
-/// per-group limit and the items merge through [`select_and_rank`].
-///
-/// # Errors
-///
-/// Returns an error when any per-group search fails.
-pub(in crate::service::facade) fn run_context_search(
-    index: &WorkspaceIndex,
-    root: &str,
-    info: &WorkspaceIndexInfo,
-    request: &NormalizedContextRequest,
-    options: &ZvecGrepContextOptions<'_>,
-) -> EngineResult<ZvecGrepContextResult> {
-    let groups: Vec<ContextGroup> = if options.fuse {
+fn resolve_groups(request: &NormalizedContextRequest, fuse: bool) -> Vec<ContextGroup> {
+    if fuse {
         vec![ContextGroup {
             id: "Q1".to_owned(),
             query: request.display_query.clone(),
@@ -121,7 +107,25 @@ pub(in crate::service::facade) fn run_context_search(
         }]
     } else {
         request.groups.clone()
-    };
+    }
+}
+
+/// Executes one [`SearchPlan`] per query group and merges the results,
+/// mirroring TS `contextFromOpenWorkspaceIndex`: `fuse` collapses every
+/// group into a single `Q1` plan, otherwise each group searches with its own
+/// per-group limit and the items merge through [`select_and_rank`].
+///
+/// # Errors
+///
+/// Returns an error when any per-group search fails.
+pub(in crate::service::facade) fn run_context_search(
+    index: &WorkspaceIndex,
+    root: &str,
+    info: &WorkspaceIndexInfo,
+    request: &NormalizedContextRequest,
+    options: &ZvecGrepContextOptions<'_>,
+) -> EngineResult<ZvecGrepContextResult> {
+    let groups = resolve_groups(request, options.fuse);
     let limit = context_group_limit(options.limit, groups.len());
     let mut searches = Vec::with_capacity(groups.len());
     for group in &groups {
