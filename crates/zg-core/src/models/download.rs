@@ -322,8 +322,11 @@ fn create_temp_file(destination: &Path, url: &str) -> EngineResult<(PathBuf, fs:
             .open(&candidate)
         {
             Ok(file) => return Ok((candidate, file)),
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(err) => return Err(failed(format!("create temp file: {err}"))),
+            Err(err) => {
+                if err.kind() != std::io::ErrorKind::AlreadyExists {
+                    return Err(failed(format!("create temp file: {err}")));
+                }
+            }
         }
     }
     Err(failed("create temp file: too many collisions".to_owned()))
