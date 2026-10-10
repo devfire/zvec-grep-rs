@@ -382,6 +382,25 @@ struct WalkFrame {
 /// shared down the stack by [`Arc`] clone; a directory without its own
 /// `.gitignore` reuses its parent's set with an O(1) clone instead of
 /// copying the accumulated rules.
+/// Ignore rules visible inside one walked directory.
+///
+/// Returns the parent set unchanged when ignores are disabled or the
+/// directory adds no fresh rules; otherwise appends the fresh rules to a
+/// merged copy shared down the stack by [`Arc`].
+fn resolve_frame_ignore_rules(root: &RootPath, frame: &WalkFrame) -> EngineResult<Arc<[IgnoreRule]>> {
+    if root.no_ignore.unwrap_or(false) {
+        return Ok(Arc::clone(&frame.ignore_rules));
+    }
+    let fresh = read_gitignore_rules(root, &frame.current_path)?;
+    if fresh.is_empty() {
+        return Ok(Arc::clone(&frame.ignore_rules));
+    }
+    let mut merged = Vec::with_capacity(frame.ignore_rules.len() + fresh.len());
+    merged.extend(frame.ignore_rules.iter().cloned());
+    merged.extend(fresh);
+    Ok(Arc::from(merged))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn walk(
     workspace_index_id: &str,
@@ -404,19 +423,7 @@ fn walk(
     }];
     while let Some(frame) = stack.pop() {
         throw_if_cancelled(cancel)?;
-        let ignore_rules: Arc<[IgnoreRule]> = if root.no_ignore.unwrap_or(false) {
-            Arc::clone(&frame.ignore_rules)
-        } else {
-            let fresh = read_gitignore_rules(root, &frame.current_path)?;
-            if fresh.is_empty() {
-                Arc::clone(&frame.ignore_rules)
-            } else {
-                let mut merged = Vec::with_capacity(frame.ignore_rules.len() + fresh.len());
-                merged.extend(frame.ignore_rules.iter().cloned());
-                merged.extend(fresh);
-                Arc::from(merged)
-            }
-        };
+        let ignore_rules = resolve_frame_ignore_rules(root, &frame)?;
         let Ok(entries) = std::fs::read_dir(&frame.current_path) else {
             continue;
         };
