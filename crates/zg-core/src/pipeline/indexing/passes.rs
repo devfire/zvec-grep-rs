@@ -224,7 +224,7 @@ fn index_workspace_inner(ctx: &mut IndexContext<'_>) -> EngineResult<IndexResult
     let result = build_index_result(
         ctx,
         &passes,
-        start.elapsed().as_millis() as u64,
+        u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
         &mut timings,
     );
     if result.files_failed > 0 {
