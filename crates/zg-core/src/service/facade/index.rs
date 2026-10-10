@@ -174,7 +174,7 @@ impl ZvecGrepService {
         if !options.root_paths.is_empty() {
             let mut roots = Vec::with_capacity(options.root_paths.len());
             for spec in &options.root_paths {
-                roots.push(Self::convert_root_spec(location, options, spec)?);
+                roots.push(Self::convert_root_spec(location, options, spec));
             }
             return crate::pipeline::indexing::root_paths::validate_root_paths(&roots);
         }
@@ -207,16 +207,16 @@ impl ZvecGrepService {
         location: &WorkspaceIndexLocation,
         options: &ZvecGrepIndexOptions<'_>,
         spec: &RootPathSpec<'_>,
-    ) -> EngineResult<RootPath> {
+    ) -> RootPath {
         match spec {
-            RootPathSpec::Full(root) => Ok(root.as_ref().clone()),
+            RootPathSpec::Full(root) => root.as_ref().clone(),
             RootPathSpec::Path(path) => {
                 let absolute = if Path::new(path).is_absolute() {
                     path.to_string()
                 } else {
                     to_display_path(&Path::new(&location.root).join(path))
                 };
-                Ok(RootPath {
+                RootPath {
                     absolute_path: absolute,
                     recursive: true,
                     include: options.include_paths.clone(),
@@ -232,7 +232,7 @@ impl ZvecGrepService {
                     max_file_size_bytes: options.max_file_size_bytes,
                     follow: options.follow,
                     include_nested_git: options.include_nested_git,
-                })
+                }
             }
         }
     }
