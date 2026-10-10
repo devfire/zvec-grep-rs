@@ -162,7 +162,7 @@ thread_local! {
 
 pub(crate) fn record_file(path: &Path) {
     CURRENT_SEARCH_PATH.with(|slot| {
-        *slot.borrow_mut() = path.to_owned();
+        path.clone_into(&mut slot.borrow_mut());
     });
 }
 
