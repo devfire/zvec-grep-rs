@@ -83,7 +83,7 @@ fn clamp_topk(limit: usize) -> i32 {
     if limit == 0 {
         return 0;
     }
-    limit.min(ZVEC_MAX_QUERY_TOPK) as i32
+    i32::try_from(limit.min(ZVEC_MAX_QUERY_TOPK)).unwrap_or(i32::MAX)
 }
 
 /// Recall failure with the typed zvec cause attached (see `doc_field_error`
