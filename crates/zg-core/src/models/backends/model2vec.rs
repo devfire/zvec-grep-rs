@@ -372,9 +372,9 @@ fn resolve_unknown_token_id(
     let parsed: serde_json::Value = serde_json::from_str(&text).ok()?;
     let model = parsed.get("model")?;
     if let Some(id) = model.get("unk_id").and_then(serde_json::Value::as_u64)
-        && u32::try_from(id).is_ok()
+        && let Ok(id) = u32::try_from(id)
     {
-        return Some(id as u32);
+        return Some(id);
     }
     let token = model.get("unk_token")?.as_str()?;
     tokenizer.token_to_id(token)
