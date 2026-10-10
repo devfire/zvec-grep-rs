@@ -279,7 +279,7 @@ fn encode_metadata(doc: &mut Doc, pk: &str, metadata: Option<&EntityMetadata>) -
             add_optional_string(&mut *doc, pk, "symbol_signature", code.signature.as_deref())?;
             add_optional_string(&mut *doc, pk, "symbol_doc", code.doc.as_deref())?;
             if !code.modifiers.is_empty() {
-                let joined: Vec<&str> = code.modifiers.iter().map(modifier_value).collect();
+                let joined: Vec<&str> = code.modifiers.iter().copied().map(modifier_value).collect();
                 add_string(&mut *doc, pk, "symbol_modifiers", &joined.join(" "))?;
             }
             add_optional_string(&mut *doc, pk, "node_type", code.node_type.as_deref())?;
@@ -425,7 +425,7 @@ fn parse_symbol_type(value: &str) -> Option<CodeSymbolType> {
     }
 }
 
-fn modifier_value(modifier: &CodeEntityModifier) -> &'static str {
+fn modifier_value(modifier: CodeEntityModifier) -> &'static str {
     match modifier {
         CodeEntityModifier::Exported => "exported",
         CodeEntityModifier::Async => "async",
