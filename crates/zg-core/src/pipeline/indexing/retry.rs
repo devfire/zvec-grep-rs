@@ -18,6 +18,10 @@ use super::context::{
 };
 use super::scanner::CancelFlag;
 #[allow(clippy::too_many_arguments)]
+// `on_model_progress` is currently ignored by the retry layer but kept owned so
+// callers can pass `sink.cloned()`; taking a reference would churn call sites
+// for no benefit.
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn embed_inputs_with_retry(
     inputs: &[EmbeddingInput<'_>],
     model: &dyn EmbeddingModel,
