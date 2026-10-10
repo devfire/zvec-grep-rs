@@ -117,7 +117,7 @@ pub fn fragment_to_doc(
 /// content kinds, image formats, metadata kinds, or code modifiers.
 pub fn doc_to_stored_fragment(
     doc: &Doc,
-    files_by_id: &HashMap<String, FileRecord>,
+    files_by_id: &HashMap<String, FileRecord, impl std::hash::BuildHasher>,
 ) -> EngineResult<Option<StoredFragment>> {
     let pk = doc.get_pk().unwrap_or_default().to_owned();
     if pk.is_empty() {
