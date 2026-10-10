@@ -593,18 +593,18 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
         &mut self,
         batch: &[(FileInfo, Vec<IndexedFragment>, Option<FileIndexDiagnostics>)],
     ) -> EngineResult<()> {
-        self.assert_writable("replaceFiles")?;
-        if batch.is_empty() {
-            return Ok(());
-        }
-        // Prevalidate and encode every entry before destructive work, keeping
-        // per-file fragment indices (each file restarts at zero, as before).
         struct Encoded {
             file_id: FileId,
             pending: FileRecord,
             indexed: FileRecord,
             docs: Vec<Doc>,
         }
+        self.assert_writable("replaceFiles")?;
+        if batch.is_empty() {
+            return Ok(());
+        }
+        // Prevalidate and encode every entry before destructive work, keeping
+        // per-file fragment indices (each file restarts at zero, as before).
         let mut encoded: Vec<Encoded> = Vec::with_capacity(batch.len());
         for (file, entries, diagnostics) in batch {
             validate_fragment_groups(&file.id, entries.iter().map(|entry| &entry.fragment))?;
