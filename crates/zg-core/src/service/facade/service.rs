@@ -162,6 +162,8 @@ impl ZvecGrepService {
         find_nearest_workspace_index(&start).ok_or_else(|| workspace_index_not_found(&start))
     }
 
+    // Kept as a method for facade symmetry; manifest lookup needs no instance state yet.
+    #[allow(clippy::unused_self)]
     pub(super) fn require_manifest(
         &self,
         location: &WorkspaceIndexLocation,
