@@ -344,7 +344,6 @@ impl ZvecWorkspaceIndexStorage {
     }
 
     fn docs_to_hits(
-        &self,
         docs: &[Doc],
         files: &HashMap<String, FileRecord>,
         path: StorageSearchPath,
@@ -569,7 +568,7 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
     ) -> EngineResult<Vec<StorageSearchHit>> {
         let collection = self.require_collection("searchFts")?;
         let docs = run_fts(collection, query, limit, filter)?;
-        Ok(self.docs_to_hits(&docs, self.meta.records(), StorageSearchPath::Fts))
+        Ok(Self::docs_to_hits(&docs, self.meta.records(), StorageSearchPath::Fts))
     }
 
     fn search_vector(
@@ -580,7 +579,7 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
     ) -> EngineResult<Vec<StorageSearchHit>> {
         let collection = self.require_collection("searchVector")?;
         let docs = run_vector(collection, vector, limit, filter)?;
-        Ok(self.docs_to_hits(&docs, self.meta.records(), StorageSearchPath::Vector))
+        Ok(Self::docs_to_hits(&docs, self.meta.records(), StorageSearchPath::Vector))
     }
 
     fn replace_file(
