@@ -125,12 +125,8 @@ mod tests {
         "local/test-model".to_owned()
     }
 
-    /// Frozen wire codes for the validation / shape-check / backend-artifact
-    /// / download groups (split out of the golden table so each module guards
-    /// its own codes; union covers all variants).
-    #[test]
-    fn validation_wire_codes_are_frozen() {
-        let cases: Vec<(ModelError, &str, &str)> = vec![
+    fn embedding_input_cases() -> Vec<(ModelError, &'static str, &'static str)> {
+        vec![
             (
                 ModelError::EmptyInput {
                     reference: reference(),
@@ -181,6 +177,11 @@ mod tests {
                 "ZVEC_GREP.ENGINE.MODELS.EMBEDDING_IMAGE_TOO_LARGE",
                 "embedding image content exceeds model limit",
             ),
+        ]
+    }
+
+    fn embedding_shape_cases() -> Vec<(ModelError, &'static str, &'static str)> {
+        vec![
             (
                 ModelError::VectorCountMismatch {
                     reference: reference(),
@@ -218,6 +219,11 @@ mod tests {
                 "ZVEC_GREP.ENGINE.MODELS.EMBEDDING_INVALID_TRUNCATED_INPUT_INDEX",
                 "backend returned invalid truncated index",
             ),
+        ]
+    }
+
+    fn model2vec_cases() -> Vec<(ModelError, &'static str, &'static str)> {
+        vec![
             (
                 ModelError::Model2VecLoad {
                     reference: reference(),
@@ -271,6 +277,11 @@ mod tests {
                 "ZVEC_GREP.ENGINE.MODELS.MODEL2VEC_EMBED_FAILED",
                 "Model2Vec worker thread failed",
             ),
+        ]
+    }
+
+    fn transformers_cases() -> Vec<(ModelError, &'static str, &'static str)> {
+        vec![
             (
                 ModelError::TransformersJsEmbed {
                     reference: reference(),
@@ -304,6 +315,11 @@ mod tests {
                 "ZVEC_GREP.ENGINE.MODELS.TRANSFORMERS_JS_DISPOSED",
                 "Transformers.js embedding model is disposed",
             ),
+        ]
+    }
+
+    fn llama_download_cases() -> Vec<(ModelError, &'static str, &'static str)> {
+        vec![
             (
                 ModelError::LlamaCppEmbed {
                     reference: reference(),
@@ -343,7 +359,19 @@ mod tests {
                 "ZVEC_GREP.ENGINE.MODELS.MODEL_DOWNLOAD_FAILED",
                 "model download failed",
             ),
-        ];
+        ]
+    }
+
+    /// Frozen wire codes for the validation / shape-check / backend-artifact
+    /// / download groups (split out of the golden table so each module guards
+    /// its own codes; union covers all variants).
+    #[test]
+    fn validation_wire_codes_are_frozen() {
+        let mut cases = embedding_input_cases();
+        cases.extend(embedding_shape_cases());
+        cases.extend(model2vec_cases());
+        cases.extend(transformers_cases());
+        cases.extend(llama_download_cases());
         for (error, code, message) in cases {
             let engine = EngineError::from(error);
             assert_eq!(engine.code().to_string(), code);
