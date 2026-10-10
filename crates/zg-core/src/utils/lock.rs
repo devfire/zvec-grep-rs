@@ -155,11 +155,8 @@ fn acquire_write_lock(lock_path: &Path, options: &LockOptions<'_>) -> EngineResu
                 let _ = fs::remove_dir_all(&write_dir);
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                match try_reclaim_stale(&write_dir, stale_ms) {
-                    Reclaim::Reclaimed | Reclaim::Absent => continue,
-                    Reclaim::Held(info) => {
-                        return Err(busy_error(&write_dir, options.operation, &info));
-                    }
+                if let Reclaim::Held(info) = try_reclaim_stale(&write_dir, stale_ms) {
+                    return Err(busy_error(&write_dir, options.operation, &info));
                 }
             }
             Err(error) => {
