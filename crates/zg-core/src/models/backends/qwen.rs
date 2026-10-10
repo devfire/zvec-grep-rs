@@ -867,7 +867,7 @@ fn read_embedding_index(item: &serde_json::Map<String, Value>, fallback: usize) 
             return index;
         }
     }
-    fallback as i64
+    i64::try_from(fallback).unwrap_or(i64::MAX)
 }
 
 impl EmbeddingModel for Qwen3VlEmbeddingModel {
