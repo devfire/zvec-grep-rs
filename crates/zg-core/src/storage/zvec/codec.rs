@@ -595,7 +595,7 @@ pub fn base64_decode(text: &str) -> Result<Vec<u8>, String> {
         let triple =
             (u32::from(q0) << 18) | (u32::from(q1) << 12) | (u32::from(q2) << 6) | u32::from(q3);
         out.push(u8::try_from(triple >> 16).map_err(|error| error.to_string())?);
-        out.push((triple >> 8) as u8);
+        out.push(u8::try_from((triple >> 8) & 0xFF).map_err(|error| error.to_string())?);
         out.push(triple as u8);
     }
     for _ in 0..padding {
