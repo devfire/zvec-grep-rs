@@ -305,7 +305,10 @@ fn push_prepared(
 /// materializes; vectors and fragments move into storage payloads without
 /// re-cloning. Embedding wall-clock accumulates into `embed_elapsed_ms`; the
 /// caller records `index_embedding` once (count 1).
-#[allow(clippy::too_many_arguments)]
+// `embed_and_commit_wave` keeps parallel embed plus serial in-order commit in
+// one wave so unit ordering and fail-fast invariants stay local; splitting it
+// would scatter the commit ordering without reducing complexity.
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 fn embed_and_commit_wave(
     wave: Vec<Vec<PreparedFile>>,
     ctx: &mut IndexContext<'_>,
