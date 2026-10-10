@@ -147,6 +147,10 @@ pub struct EmbeddingInfo {
 /// ([`ReadSession::context`](crate::service::facade::ReadSession::context))
 /// never refresh: the flag is ignored there (forced off) and the search runs
 /// on the open handle.
+// Four independent toggles (`fuse`, `trace`, `prefer_symbol`, `auto_update`)
+// is intentional: callers set them piecemeal and grouping would churn every
+// construction site, so keep the flat shape.
+#[allow(clippy::struct_excessive_bools)]
 pub struct ZvecGrepContextOptions<'a> {
     /// Workspace root override; `None` (default) uses the bound root.
     pub root: Option<&'a std::path::Path>,
