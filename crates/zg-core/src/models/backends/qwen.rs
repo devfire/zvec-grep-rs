@@ -364,6 +364,8 @@ fn read_vector(
             )
             .with_context(format!("model={reference} index={index}"))
         })?;
+        // Provider embeddings are `f64`; `f32` storage is the model contract, so precision narrowing here is intended.
+        #[allow(clippy::cast_possible_truncation)]
         vector.push(component as f32);
     }
     Ok(vector)
