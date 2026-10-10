@@ -533,7 +533,7 @@ impl QwenTextEmbeddingModel {
                 )
                 .with_context(format!("model={} index={raw}", self.info.reference))
             })?;
-            if index < 0 || index as u64 >= texts.len() as u64 {
+            if index < 0 || index.cast_unsigned() >= texts.len() as u64 {
                 return Err(EngineError::new(
                     self.code(QwenTextFailure::IndexOutOfRange),
                     format!("{} response index was out of range", self.display_name),
