@@ -27,17 +27,16 @@ pub(crate) const MAX_IGNORE_RULES_PER_DIRECTORY: usize = 50_000;
 pub(crate) struct IgnoreRule {
     pub(crate) base_path: String,
     pub(crate) pattern: String,
-    pub(crate) negated: bool,
-    pub(crate) directory_only: bool,
-    pub(crate) anchored: bool,
+    flags: IgnoreRuleFlags,
     pub(crate) has_slash: bool,
     /// Precompiled `pattern`: per-file matching never builds a regex (#35).
     matcher: CompiledPathPattern,
 }
 
-/// Semantic flags for [`IgnoreRule::new`]: a struct (not three bare
+/// Semantic flags stored on [`IgnoreRule`]: a struct (not three bare
 /// `bool`s) so call sites cannot mis-order `negated`/`directory_only`/
-/// `anchored`, and adding a flag later does not reshuffle the signature.
+/// `anchored`, adding a flag later does not reshuffle the signature,
+/// and the rule struct holds at most three direct `bool` fields.
 #[derive(Debug, Clone, Copy)]
 struct IgnoreRuleFlags {
     negated: bool,
@@ -47,19 +46,12 @@ struct IgnoreRuleFlags {
 
 impl IgnoreRule {
     fn new(base_path: String, pattern: String, flags: IgnoreRuleFlags) -> Self {
-        let IgnoreRuleFlags {
-            negated,
-            directory_only,
-            anchored,
-        } = flags;
         let has_slash = pattern.contains('/');
         let matcher = CompiledPathPattern::new(&pattern);
         Self {
             base_path,
             pattern,
-            negated,
-            directory_only,
-            anchored,
+            flags,
             has_slash,
             matcher,
         }
@@ -284,7 +276,7 @@ pub(crate) fn match_ignore_rules<'a>(
         if !ignore_rule_matches(rule, relative_path, is_directory) {
             continue;
         }
-        ignored = !rule.negated;
+        ignored = !rule.flags.negated;
         matched_rule = Some(rule);
     }
     IgnoreMatch {
@@ -341,13 +333,13 @@ fn ignore_rule_matches(rule: &IgnoreRule, relative_path: &str, is_directory: boo
         Some(path) if !path.is_empty() => path,
         _ => return false,
     };
-    if rule.directory_only {
-        if rule.anchored || rule.has_slash {
+    if rule.flags.directory_only {
+        if rule.flags.anchored || rule.has_slash {
             return rule.matcher.matches(&path);
         }
         return path_contains_matching_segment(&path, rule);
     }
-    if rule.anchored || rule.has_slash {
+    if rule.flags.anchored || rule.has_slash {
         return rule.matcher.matches(&path);
     }
     if is_directory && path_contains_matching_segment(&path, rule) {
