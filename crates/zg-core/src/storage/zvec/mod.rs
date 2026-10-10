@@ -510,9 +510,8 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
         if selected.is_empty() {
             return Vec::new();
         }
-        let collection = match self.require_collection("listEntitiesByFile") {
-            Ok(collection) => collection,
-            Err(_) => return Vec::new(),
+        let Ok(collection) = self.require_collection("listEntitiesByFile") else {
+            return Vec::new();
         };
         let files = self.meta.records();
         let docs = if let Ok(docs) = collection.fetch_with_options(&selected, None, false) { docs } else {
