@@ -324,6 +324,10 @@ fn parse_retry_after_ms(value: &str) -> Option<u64> {
         && seconds.is_finite()
         && seconds >= 0.0
     {
+        // `seconds` is finite and non-negative (checked above), so this
+        // saturating cast only ceilings absurd `retry-after` values at
+        // `u64::MAX` — the desired upper bound, not a silent truncation.
+        #[allow(clippy::cast_possible_truncation)]
         return Some((seconds * 1000.0).round() as u64);
     }
     let date = chrono::NaiveDateTime::parse_from_str(trimmed, "%a, %d %b %Y %H:%M:%S GMT").ok()?;
