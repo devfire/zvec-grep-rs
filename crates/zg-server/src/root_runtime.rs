@@ -108,6 +108,10 @@ pub struct RootRuntimeSnapshot {
 /// known changes are unindexed; `reconciled_epoch < full_epoch` means a
 /// full reconciliation is owed. `mark_reconciled` advances both.
 #[derive(Debug)]
+// Four independent lifecycle flags (`watcher_active`, `watcher_pending`,
+// `writer_pending`, `closed`); no invalid combination to forbid, so grouping
+// would add indirection without benefit.
+#[allow(clippy::struct_excessive_bools)]
 pub struct RootRuntime {
     key: RootKey,
     dirty_revision: Generation,
