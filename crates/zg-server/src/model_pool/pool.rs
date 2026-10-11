@@ -101,8 +101,7 @@ impl EmbeddingModelPool {
     #[must_use]
     pub fn new(options: EmbeddingModelPoolOptions) -> Self {
         let parallelism = std::thread::available_parallelism()
-            .map(|parallelism| parallelism.get())
-            .unwrap_or(4)
+            .map_or(4, std::num::NonZero::get)
             .max(1);
         Self {
             shared: Arc::new(Shared {
