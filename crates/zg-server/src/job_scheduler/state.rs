@@ -167,5 +167,5 @@ pub(crate) fn snapshot_missing(id: &JobId) -> IndexJobSnapshot {
 }
 
 pub(crate) fn job_attempt(state: &Inner, id: &JobId) -> u32 {
-    state.jobs.get(id).map(|job| job.attempt).unwrap_or(1)
+    state.jobs.get(id).map_or(1, |job| job.attempt)
 }
