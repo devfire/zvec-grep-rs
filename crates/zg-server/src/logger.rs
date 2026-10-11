@@ -49,7 +49,7 @@ impl From<i64> for LogField {
 
 impl From<u64> for LogField {
     fn from(value: u64) -> Self {
-        Self::Int(value as i64)
+        Self::Int(value.cast_signed())
     }
 }
 
