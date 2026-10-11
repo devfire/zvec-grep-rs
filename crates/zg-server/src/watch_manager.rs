@@ -728,7 +728,7 @@ fn fold_classified(shared: &Arc<Shared>, entries: &[ClassifiedEntry]) {
         let mut changes = shared
             .changes
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let was_empty = changes.is_empty();
         for entry in entries {
             // Paths are verified absolute by `classify_batch`; budget
