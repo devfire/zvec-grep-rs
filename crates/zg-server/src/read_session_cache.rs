@@ -284,7 +284,7 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
     /// The state lock is released across `open().await`; `Ok(None)` means
     /// the world changed while queueing for the open turn (re-observe).
     async fn open_checked_out(&self) -> Result<Option<T>, SessionError> {
-        let _permit = self.shared.open_serial.lock().await;
+        let permit = self.shared.open_serial.lock().await;
         {
             let state = self.shared.state.lock().await;
             if state.closed {
@@ -303,7 +303,7 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
             // `close` won the race while we opened: discard-and-close the
             // stale handle instead of publishing it.
             drop(state);
-            drop(_permit);
+            drop(permit);
             fresh.close().await;
             return Err(SessionError::Closed);
         }
