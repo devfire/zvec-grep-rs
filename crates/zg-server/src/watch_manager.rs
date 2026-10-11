@@ -665,7 +665,7 @@ fn classify_batch(
             continue;
         }
         let metadata = std::fs::symlink_metadata(path).ok();
-        let is_directory = metadata.as_ref().is_some_and(|metadata| metadata.is_dir());
+        let is_directory = metadata.as_ref().is_some_and(std::fs::Metadata::is_dir);
         let kind = kind_hint.unwrap_or_else(|| {
             if metadata.is_some() {
                 ChangeKind::Changed
