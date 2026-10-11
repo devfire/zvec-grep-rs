@@ -56,10 +56,10 @@ pub fn format_agent_context_result(result: &ZvecGrepContextResult, trace: bool) 
         if index > 0 {
             lines.push(String::new());
         }
-        let role = group
-            .role
-            .map(|role| format!("{role:?}").to_lowercase())
-            .unwrap_or_else(|| "primary".to_owned());
+        let role = group.role.map_or_else(
+            || "primary".to_owned(),
+            |role| format!("{role:?}").to_lowercase(),
+        );
         lines.push(format!("{} [{role}]: {}", group.id, one_line(&group.query)));
         let grouped: Vec<&ContextItem> = result
             .items
