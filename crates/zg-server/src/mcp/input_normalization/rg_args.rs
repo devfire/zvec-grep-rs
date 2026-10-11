@@ -59,6 +59,10 @@ pub fn rg_query_from_input(input: &RgInput) -> Result<(RootKey, RgQuery), McpErr
 }
 
 /// Parsed `rg` argv before root scoping.
+// Each bool maps to a distinct `rg` flag with no invalid combination;
+// grouping them would add indirection without making an illegal state
+// unrepresentable, so keep the flat flags.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Default)]
 struct ParsedRgCommand {
     patterns: Vec<String>,
