@@ -63,8 +63,8 @@ impl JobScheduler {
                 );
                 id
             };
-            let slf = self.clone();
-            tokio::spawn(async move { slf.run_job(next).await });
+            let scheduler = self.clone();
+            tokio::spawn(async move { scheduler.run_job(next).await });
         }
     }
 
