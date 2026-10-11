@@ -25,7 +25,7 @@ pub const MAX_STDIO_FRAME_BYTES: usize = 1024 * 1024;
 
 /// `AsyncRead` adapter failing the stream once a newline-delimited frame
 /// passes [`MAX_STDIO_FRAME_BYTES`]. Counts raw bytes before rmcp parses.
-/// Legit inputs sit far below (≤32 groups of 4_000 chars); only hostile or
+/// Legit inputs sit far below (≤32 groups of `4_000` chars); only hostile or
 /// buggy peers trip it.
 struct CappedStdin<R> {
     inner: R,
