@@ -50,8 +50,7 @@ impl CoverageMode {
     fn from_env() -> Self {
         match std::env::var("ZVEC_REQUIRE_MODELS") {
             Ok(value) if value == "1" || value.eq_ignore_ascii_case("true") => Self::Require,
-            Ok(_) => Self::Skip,
-            Err(_) => Self::Skip,
+            _ => Self::Skip,
         }
     }
 }
