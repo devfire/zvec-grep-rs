@@ -96,7 +96,7 @@ pub fn is_loopback_host(host: &str) -> bool {
 /// range, or [`DaemonError::LoopbackRequired`] when the host is not loopback.
 pub fn parse_listen_address(value: Option<&str>) -> Result<ServerListenAddress, DaemonError> {
     let listen = value
-        .unwrap_or(&format!("{}:{}", DEFAULT_SERVER_HOST, DEFAULT_SERVER_PORT))
+        .unwrap_or(&format!("{DEFAULT_SERVER_HOST}:{DEFAULT_SERVER_PORT}"))
         .to_owned();
     let separator = listen.rfind(':').unwrap_or(0);
     if separator == 0 || separator == listen.len() - 1 {
