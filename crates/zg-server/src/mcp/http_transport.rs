@@ -166,7 +166,7 @@ impl McpHttpEndpoint {
         body: &[u8],
     ) -> axum::response::Response {
         let mut builder = axum::http::Request::builder().method(method).uri("/mcp");
-        for (name, value) in headers.iter() {
+        for (name, value) in headers {
             builder = builder.header(name, value);
         }
         let request = match builder.body(Full::new(Bytes::copy_from_slice(body))) {
