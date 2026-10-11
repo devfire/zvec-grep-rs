@@ -160,8 +160,7 @@ impl RootActor {
             let indexed = tokio::task::spawn_blocking(move || service.workspace_info(None))
                 .await
                 .map_err(join_backend_error)?
-                .map(|info| info.indexed)
-                .unwrap_or(false);
+                .is_ok_and(|info| info.indexed);
             ChangeSetSnapshot {
                 force_full_reconcile: !indexed,
                 ..ChangeSetSnapshot::default()
