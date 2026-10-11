@@ -37,13 +37,12 @@ impl JobScheduler {
         let (queued_without_retry, followup_id) = state
             .jobs
             .get(active_id)
-            .map(|job| {
+            .map_or((false, None), |job| {
                 (
                     job.state == zg_core::index_status::IndexJobState::Queued && !job.retry_pending,
                     job.followup.clone(),
                 )
-            })
-            .unwrap_or((false, None));
+            });
         if queued_without_retry {
             // A queued job absorbs watch/followup runs and priority
             // upgrades in place (mirrors TS `submit`). A manual resubmit
