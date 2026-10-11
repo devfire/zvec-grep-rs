@@ -347,10 +347,10 @@ fn is_digits(token: &str) -> bool {
 
 /// `-l`/`--files-with-matches` becomes `--max-count 1`, mirroring
 /// `normalizeManagedRgCompatibilityTokens`.
-pub(crate) fn apply_rg_compat(argv: Vec<String>) -> Vec<String> {
+pub(crate) fn apply_rg_compat(argv: &[String]) -> Vec<String> {
     let mut tokens = Vec::with_capacity(argv.len());
     let mut files_with_matches = false;
-    for token in &argv {
+    for token in argv {
         if token == "-l" || token == "--files-with-matches" {
             files_with_matches = true;
             continue;
