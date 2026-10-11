@@ -439,7 +439,7 @@ fn is_workspace_signal(absolute: &str) -> bool {
         Path::new(absolute)
             .file_name()
             .and_then(|name| name.to_str()),
-        Some(".gitignore") | Some("manifest.json")
+        Some(".gitignore" | "manifest.json")
     )
 }
 
@@ -693,7 +693,7 @@ fn classify_batch(
 fn is_workspace_signal_lossy(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(|name| name.to_str()),
-        Some(".gitignore") | Some("manifest.json")
+        Some(".gitignore" | "manifest.json")
     )
 }
 
