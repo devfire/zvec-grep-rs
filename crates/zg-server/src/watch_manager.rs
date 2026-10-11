@@ -497,7 +497,6 @@ fn merge_kind(first: Option<ChangeKind>, second: Option<ChangeKind>) -> Option<C
         (None, _) | (_, None) => None,
         (a, b) if a == b => a,
         (Some(ChangeKind::Created), Some(ChangeKind::Deleted)) => Some(ChangeKind::Deleted),
-        (Some(ChangeKind::Deleted), Some(ChangeKind::Created)) => Some(ChangeKind::Changed),
         (Some(ChangeKind::Created), Some(ChangeKind::Changed)) => Some(ChangeKind::Created),
         _ => Some(ChangeKind::Changed),
     }
