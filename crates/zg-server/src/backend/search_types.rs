@@ -64,6 +64,10 @@ impl SearchRouteMode {
 /// `max_file_size_bytes`, `follow`, `embedding_concurrency`) are accepted
 /// at the MCP boundary but refreshes reuse the index-time file scope
 /// (see `docs/ts-divergence.md`).
+// SearchQuery carries four independent MCP request flags (`fuse`, `trace`,
+// `prefer_symbol`, `auto_update`); grouping them would churn the MCP/backend
+// boundary for no behavior gain.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Default)]
 pub struct SearchQuery {
     /// Primary natural-language query.
