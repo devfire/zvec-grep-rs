@@ -169,11 +169,8 @@ impl McpHttpEndpoint {
         for (name, value) in headers {
             builder = builder.header(name, value);
         }
-        let request = match builder.body(Full::new(Bytes::copy_from_slice(body))) {
-            Ok(request) => request,
-            Err(_) => {
-                return mcp_error(StatusCode::BAD_REQUEST, "Invalid MCP request.");
-            }
+        let Ok(request) = builder.body(Full::new(Bytes::copy_from_slice(body))) else {
+            return mcp_error(StatusCode::BAD_REQUEST, "Invalid MCP request.");
         };
         let response = self.service.handle(request).await;
         // Preserve the rmcp status and headers (notably the
