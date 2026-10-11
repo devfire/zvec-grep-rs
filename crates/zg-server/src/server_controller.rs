@@ -378,7 +378,7 @@ async fn read_record(path: &Path) -> Option<DaemonInstanceRecord> {
     let body = tokio::fs::read_to_string(path).await.ok()?;
     let value: serde_json::Value = serde_json::from_str(&body).ok()?;
     Some(DaemonInstanceRecord {
-        pid: value.get("pid")?.as_u64()? as u32,
+        pid: u32::try_from(value.get("pid")?.as_u64()?).ok()?,
         hostname: value.get("hostname")?.as_str()?.to_owned(),
         instance_token: value.get("instanceToken")?.as_str()?.to_owned(),
         server_url: value.get("serverUrl")?.as_str()?.to_owned(),
