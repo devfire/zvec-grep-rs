@@ -185,7 +185,7 @@ fn header_range(item: &ContextItem) -> &Range {
 
 fn format_score(score: f64) -> String {
     if score.fract() == 0.0 && score.is_finite() {
-        format!("{}", score as i64)
+        format!("{score:.0}")
     } else {
         format!("{score:.4}")
     }
