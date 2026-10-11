@@ -596,7 +596,7 @@ async fn classify_loop(shared: Arc<Shared>, mut events: Receiver<RawEvent>) {
         }
         // Blocking FS + roots work leaves the async loop entirely.
         let worker = Arc::clone(&shared);
-        let classified = tokio::task::spawn_blocking(move || classify_batch(&worker, batch)).await;
+        let classified = tokio::task::spawn_blocking(move || classify_batch(&worker, &batch)).await;
         if shared.is_closed() {
             return;
         }
@@ -632,7 +632,7 @@ struct ClassifiedEntry {
 /// against the snapshot. Returns only survivors for the async fold step.
 fn classify_batch(
     shared: &Arc<Shared>,
-    batch: HashMap<PathBuf, Option<ChangeKind>>,
+    batch: &HashMap<PathBuf, Option<ChangeKind>>,
 ) -> Vec<ClassifiedEntry> {
     // Refresh only on signals that survive filtering: the roots source is a
     // blocking manifest read (storage open), and internal writes
@@ -656,7 +656,7 @@ fn classify_batch(
         .clone();
     let has_source = shared.get_root_paths.is_some();
     let mut out = Vec::new();
-    for (path, kind_hint) in &batch {
+    for (path, kind_hint) in batch {
         let absolute = path.to_string_lossy().into_owned();
         if !path.is_absolute() {
             continue;
@@ -910,12 +910,12 @@ mod tests {
             PathBuf::from("/repo/.zvec-grep/LOCK.readers/x/lock.json"),
             Some(ChangeKind::Created),
         );
-        assert!(classify_batch(&manager.shared, batch).is_empty());
+        assert!(classify_batch(&manager.shared, &batch).is_empty());
         assert_eq!(calls.load(Ordering::SeqCst), baseline);
         // An external workspace signal still refreshes.
         let mut batch = HashMap::new();
         batch.insert(PathBuf::from("/repo/.gitignore"), Some(ChangeKind::Changed));
-        assert_eq!(classify_batch(&manager.shared, batch).len(), 1);
+        assert_eq!(classify_batch(&manager.shared, &batch).len(), 1);
         assert_eq!(calls.load(Ordering::SeqCst), baseline + 1);
     }
 
