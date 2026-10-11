@@ -453,7 +453,7 @@ impl ZvecGrepMcpServer {
                 .job
                 .as_ref()
                 .is_some_and(|live| live.id == terminal.id)
-                && status.job.as_ref().is_some_and(|live| live.is_terminal())
+                && status.job.as_ref().is_some_and(IndexJobSnapshot::is_terminal)
                 && (!debug || status.scan_diagnostics.is_some());
             if settled {
                 break;
