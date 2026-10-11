@@ -401,7 +401,7 @@ fn record_raw(
         let mut changes = shared
             .changes
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let was_empty = changes.is_empty();
         changes.add(&absolute, kind, is_directory)?;
         was_empty && !changes.is_empty()
