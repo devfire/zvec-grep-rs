@@ -109,8 +109,7 @@ impl JobScheduler {
                             let job = state
                                 .jobs
                                 .get(&id)
-                                .map(|job| job.attempt)
-                                .unwrap_or(u32::MAX);
+                                .map_or(u32::MAX, |job| job.attempt);
                             job < self.shared.max_attempts
                         };
                         if retryable && attempts_left && !state.closed {
