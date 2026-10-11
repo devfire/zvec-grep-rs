@@ -132,11 +132,10 @@ impl RootActor {
         }
         match job.state {
             IndexJobState::Failed | IndexJobState::Cancelled => {
-                let message = job
-                    .error
-                    .as_ref()
-                    .map(|error| error.message.clone())
-                    .unwrap_or_else(|| "index job did not complete".to_owned());
+                let message = job.error.as_ref().map_or_else(
+                    || "index job did not complete".to_owned(),
+                    |error| error.message.clone(),
+                );
                 Err(DaemonError::IndexFailed { message }.into())
             }
             IndexJobState::Queued | IndexJobState::Running | IndexJobState::Succeeded => Ok(()),
