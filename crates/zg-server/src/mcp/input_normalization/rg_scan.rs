@@ -109,6 +109,69 @@ pub(crate) fn is_rg_engine_option(flag: &str) -> bool {
     )
 }
 
+/// Scans one character inside a double-quoted section.
+fn scan_double_quoted(
+    chars: &[char],
+    index: &mut usize,
+    token: &mut String,
+    quote: &mut Option<char>,
+) -> Result<(), McpError> {
+    let Some(&char) = chars.get(*index) else {
+        return Err(McpError::invalid_params(
+            "rg command ends with an incomplete escape.",
+        ));
+    };
+    if char == '"' {
+        *quote = None;
+    } else if char == '\\' {
+        let next = chars.get(*index + 1).copied();
+        match next {
+            None => {
+                return Err(McpError::invalid_params(
+                    "rg command ends with an incomplete escape.",
+                ));
+            }
+            Some(next) if matches!(next, '"' | '\\' | '$' | '`') => {
+                token.push(next);
+                *index += 1;
+            }
+            _ => token.push(char),
+        }
+    } else if char == '`' || starts_expansion(chars, *index) {
+        return Err(McpError::invalid_params(
+            "rg command does not support shell expansion.",
+        ));
+    } else {
+        token.push(char);
+    }
+    *index += 1;
+    Ok(())
+}
+
+/// Validates the trailing lexer state and returns the finished tokens.
+fn finish_tokens(
+    mut tokens: Vec<String>,
+    token: String,
+    started: bool,
+    quote: Option<char>,
+    escaping: bool,
+) -> Result<Vec<String>, McpError> {
+    if escaping {
+        return Err(McpError::invalid_params(
+            "rg command ends with an incomplete escape.",
+        ));
+    }
+    if let Some(open) = quote {
+        return Err(McpError::invalid_params(format!(
+            "rg command has an unclosed {open} quote."
+        )));
+    }
+    if started {
+        tokens.push(token);
+    }
+    Ok(tokens)
+}
+
 /// Shell-ish tokenizer mirroring `scanManagedRgCommand`: single/double
 /// quotes, backslash escapes (non-Windows behavior), `|`/`>` splitting,
 /// and rejection of NUL, newlines, shell operators, and expansions.
@@ -152,31 +215,8 @@ pub(crate) fn scan_rg_command(command: &str) -> Result<Vec<String>, McpError> {
             continue;
         }
         if quote == Some('"') {
-            if char == '"' {
-                quote = None;
-            } else if char == '\\' {
-                let next = chars.get(index + 1).copied();
-                match next {
-                    None => {
-                        return Err(McpError::invalid_params(
-                            "rg command ends with an incomplete escape.",
-                        ));
-                    }
-                    Some(next) if matches!(next, '"' | '\\' | '$' | '`') => {
-                        token.push(next);
-                        index += 1;
-                    }
-                    _ => token.push(char),
-                }
-            } else if char == '`' || starts_expansion(&chars, index) {
-                return Err(McpError::invalid_params(
-                    "rg command does not support shell expansion.",
-                ));
-            } else {
-                token.push(char);
-            }
+            scan_double_quoted(&chars, &mut index, &mut token, &mut quote)?;
             started = true;
-            index += 1;
             continue;
         }
         if char.is_whitespace() {
@@ -228,20 +268,7 @@ pub(crate) fn scan_rg_command(command: &str) -> Result<Vec<String>, McpError> {
         started = true;
         index += 1;
     }
-    if escaping {
-        return Err(McpError::invalid_params(
-            "rg command ends with an incomplete escape.",
-        ));
-    }
-    if let Some(open) = quote {
-        return Err(McpError::invalid_params(format!(
-            "rg command has an unclosed {open} quote."
-        )));
-    }
-    if started {
-        tokens.push(token);
-    }
-    Ok(tokens)
+    finish_tokens(tokens, token, started, quote, escaping)
 }
 
 fn starts_expansion(chars: &[char], index: usize) -> bool {
