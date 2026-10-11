@@ -301,7 +301,8 @@ impl RequestStateCodec {
             return Err(invalid());
         };
         let now_ms = u64::try_from(now.as_millis()).map_err(|_| invalid())?;
-        if now_ms.saturating_sub(envelope.issued_at_ms) > self.ttl.as_millis() as u64 {
+        let ttl_ms = u64::try_from(self.ttl.as_millis()).map_err(|_| invalid())?;
+        if now_ms.saturating_sub(envelope.issued_at_ms) > ttl_ms {
             return Err(invalid());
         }
         if !envelope.state.matches(expected) {
