@@ -609,7 +609,7 @@ async fn classify_loop(shared: Arc<Shared>, mut events: Receiver<RawEvent>) {
                 shared
                     .changes
                     .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .require_full_reconcile();
                 shared
                     .reconcile_requested
