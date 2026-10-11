@@ -421,9 +421,8 @@ impl ZvecGrepMcpServer {
             .wait(
                 &job.id,
                 Some(Arc::new(move |progress: zg_core::types::IndexProgress| {
-                    if let (Some(token), Some(message)) =
-                        (token.as_ref(), progress_message(&progress))
-                    {
+                    if let Some(token) = token.as_ref() {
+                        let message = progress_message(&progress);
                         let peer = peer.clone();
                         let token = token.clone();
                         tokio::spawn(async move {
@@ -753,9 +752,7 @@ fn rg_context_result(
 }
 
 /// `(progress, total, message)` for index progress reports.
-fn progress_message(
-    progress: &zg_core::types::IndexProgress,
-) -> Option<(f64, Option<f64>, String)> {
+fn progress_message(progress: &zg_core::types::IndexProgress) -> (f64, Option<f64>, String) {
     let completed = progress.files_indexed.unwrap_or(0) as f64;
     let total = progress.files_total.map(|total| total as f64);
     let message = match (progress.files_indexed, progress.files_total) {
@@ -764,5 +761,5 @@ fn progress_message(
         (None, Some(total)) => format!("Indexing workspace: 0/{total} files"),
         (None, None) => "Indexing workspace".to_owned(),
     };
-    Some((completed, total, message))
+    (completed, total, message)
 }
