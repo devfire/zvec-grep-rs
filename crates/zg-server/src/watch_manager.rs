@@ -544,7 +544,7 @@ async fn classify_loop(shared: Arc<Shared>, mut events: Receiver<RawEvent>) {
         let mut batch: HashMap<PathBuf, Option<ChangeKind>> = shared
             .overflow
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .drain()
             .collect();
         let mut drained = 0;
