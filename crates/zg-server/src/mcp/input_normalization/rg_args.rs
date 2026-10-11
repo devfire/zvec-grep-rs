@@ -92,7 +92,7 @@ fn parse_managed_rg_command(command: &str) -> Result<ParsedRgCommand, McpError> 
     let tokens = scan_rg_command(command)?;
     let (argv, limit) = split_head_suffix(&tokens)?;
     let argv = apply_rg_compat(argv);
-    if !argv.first().is_some_and(|first| first == "rg") {
+    if argv.first().is_none_or(|first| first != "rg") {
         return Err(McpError::invalid_params(
             "rg command must start with \"rg\".",
         ));
