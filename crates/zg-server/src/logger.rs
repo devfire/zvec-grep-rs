@@ -83,12 +83,12 @@ impl DaemonLogger {
     /// Logs to `<daemon_home>/logs/server.log`.
     #[must_use]
     pub fn new() -> Self {
-        Self::with_home(daemon_home())
+        Self::with_home(&daemon_home())
     }
 
     /// Logs under an explicit daemon home (tests).
     #[must_use]
-    pub fn with_home(home: PathBuf) -> Self {
+    pub fn with_home(home: &std::path::Path) -> Self {
         Self {
             path: home.join("logs").join("server.log"),
         }
@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn events_append_jsonl_and_sanitize() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let logger = DaemonLogger::with_home(dir.path().to_path_buf());
+        let logger = DaemonLogger::with_home(dir.path());
         logger.event("index_complete", fields());
         let text = std::fs::read_to_string(logger.path()).expect("log");
         let record: serde_json::Value = serde_json::from_str(text.trim()).expect("json");
@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn events_carry_ambient_trace_id() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let logger = DaemonLogger::with_home(dir.path().to_path_buf());
+        let logger = DaemonLogger::with_home(dir.path());
         let context = crate::trace::trace_context_from_mcp_meta(&serde_json::json!({
             "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
         }))
