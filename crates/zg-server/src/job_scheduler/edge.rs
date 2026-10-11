@@ -124,8 +124,8 @@ pub(crate) fn safe_report(sink: Option<&IndexProgressSink>, progress: &IndexProg
     }
 }
 
-pub(crate) fn on_progress_clone(sink: &Option<IndexProgressSink>) -> IndexProgressSink {
-    sink.clone().unwrap_or_else(|| Arc::new(|_| {}))
+pub(crate) fn on_progress_clone(sink: Option<&IndexProgressSink>) -> IndexProgressSink {
+    sink.cloned().unwrap_or_else(|| Arc::new(|_| {}))
 }
 
 pub(crate) fn fields<const N: usize>(entries: [(&str, LogField); N]) -> BTreeMap<String, LogField> {

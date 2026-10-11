@@ -181,7 +181,7 @@ impl JobScheduler {
             // when the waiter was dropped (MCP disconnect), leaking one listener
             // — and one progress task per tick — per disconnect.
             let guard = on_progress.as_ref().map(|_| {
-                let listener = on_progress_clone(&on_progress);
+                let listener = on_progress_clone(on_progress.as_ref());
                 job.listeners.push(listener.clone());
                 WaitListenerGuard {
                     scheduler: self.clone(),
