@@ -116,7 +116,7 @@ impl From<&zg_core::types::FileScanDiagnostics> for ScanDiagnosticsOutput {
     }
 }
 
-/// Snake_case reason name matching the TS `reason` enum.
+/// `Snake_case` reason name matching the TS `reason` enum.
 const fn skipped_reason_name(reason: zg_core::types::SkippedFileReason) -> &'static str {
     match reason {
         zg_core::types::SkippedFileReason::Empty => "empty",
