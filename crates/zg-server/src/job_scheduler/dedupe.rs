@@ -20,7 +20,6 @@ impl JobScheduler {
     // `unneeded_field_pattern`.
     #[allow(clippy::unneeded_field_pattern)]
     pub(crate) fn absorb_or_chain(
-        &self,
         state: &mut Inner,
         active_id: &JobId,
         input: SubmitIndexJob,

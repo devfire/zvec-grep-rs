@@ -91,7 +91,7 @@ impl JobScheduler {
             return Err(DaemonError::ShuttingDown);
         }
         if let Some(active_id) = state.active_by_root.get(&input.canonical_root).cloned() {
-            let reused = self.absorb_or_chain(&mut state, &active_id, input);
+            let reused = Self::absorb_or_chain(&mut state, &active_id, input);
             let snapshot = state.jobs.get(&reused).map_or_else(
                 || snapshot_missing(&reused),
                 super::state::JobRecord::snapshot,
