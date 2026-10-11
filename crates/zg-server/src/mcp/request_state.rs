@@ -190,8 +190,7 @@ impl InMemoryRequestStateReplayGuard {
             // so a replay still hits the table (or the fail-closed-when-full
             // rule) instead of slipping through an emptied guard.
             now.duration_since(*consumed_at)
-                .map(|age| age < REQUEST_STATE_TTL)
-                .unwrap_or(true)
+                .map_or(true, |age| age < REQUEST_STATE_TTL)
         });
         if consumed.contains_key(&state.nonce) || consumed.len() >= MAX_IN_MEMORY_CONSUMED_STATES {
             return false;
