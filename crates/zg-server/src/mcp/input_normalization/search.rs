@@ -15,6 +15,8 @@ use crate::root_runtime::RootKey;
 /// Fully validated search input: the MCP boundary shape of
 /// `NormalizedSearchInput`.
 #[derive(Debug, Clone)]
+// Seven independent MCP flags; grouping them would leak into `SearchQuery` mapping.
+#[allow(clippy::struct_excessive_bools)]
 pub struct NormalizedSearchInput {
     /// Validated absolute root.
     pub root: RootKey,
