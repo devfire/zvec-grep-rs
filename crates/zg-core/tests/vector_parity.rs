@@ -128,7 +128,7 @@ fn local_vectors_match_ts_goldens() {
             }
         };
         let reference = golden["reference"].as_str().unwrap_or("?").to_owned();
-        let dimension = golden["dimension"].as_u64().unwrap_or(0) as usize;
+        let dimension = usize::try_from(golden["dimension"].as_u64().unwrap_or(0)).unwrap_or(0);
         let model = match create_embedding_model(
             &ModelReference::new(reference.clone()),
             &CreateEmbeddingModelOptions::default(),
