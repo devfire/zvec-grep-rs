@@ -112,7 +112,7 @@ pub(crate) struct FinishedIndex {
 #[derive(Debug)]
 pub(crate) enum IndexOutcome {
     /// Run completed; carries the fresh status and scan diagnostics.
-    /// Boxed: FinishedOk is ~350 bytes, the other variants are tiny.
+    /// Boxed: `FinishedOk` is ~350 bytes, the other variants are tiny.
     Completed(Box<FinishedOk>),
     /// Empty take: nothing was pending, the stamped revision is fresh.
     Noop,
