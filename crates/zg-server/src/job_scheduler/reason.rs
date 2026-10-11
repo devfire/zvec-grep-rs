@@ -2,7 +2,7 @@
 
 /// Why an index job was submitted. Priority order mirrors TS `priority`:
 /// manual (4) > fresh-query (3) > watch (2) > reconcile/background (1).
-/// Serialized snake_case (`fresh_query`), matching the TS wire strings.
+/// Serialized `snake_case` (`fresh_query`), matching the TS wire strings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JobReason {
