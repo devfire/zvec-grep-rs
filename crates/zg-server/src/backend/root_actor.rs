@@ -305,7 +305,7 @@ impl RootActor {
                 } else {
                     self.runtime.mark_indexed(finished.revision);
                 }
-                self.scan = ok.index_result.scan_diagnostics.clone();
+                self.scan.clone_from(&ok.index_result.scan_diagnostics);
                 self.status = Some(ok.status);
             }
             IndexOutcome::Noop => {
