@@ -386,7 +386,7 @@ fn record_raw(
     }
     let metadata = std::fs::symlink_metadata(&absolute).ok();
     let is_directory =
-        is_dir_hint.unwrap_or_else(|| metadata.as_ref().is_some_and(|metadata| metadata.is_dir()));
+        is_dir_hint.unwrap_or_else(|| metadata.as_ref().is_some_and(std::fs::Metadata::is_dir));
     let kind = kind.unwrap_or_else(|| {
         if metadata.is_some() {
             ChangeKind::Changed
