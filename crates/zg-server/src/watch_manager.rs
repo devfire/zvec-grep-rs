@@ -482,7 +482,7 @@ fn refresh_roots_blocking(shared: &Shared) {
         *shared
             .roots_cache
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = roots;
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = roots;
     }
     shared
         .roots_stale
