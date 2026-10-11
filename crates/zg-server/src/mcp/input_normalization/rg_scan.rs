@@ -246,7 +246,7 @@ pub(crate) fn scan_rg_command(command: &str) -> Result<Vec<String>, McpError> {
 
 fn starts_expansion(chars: &[char], index: usize) -> bool {
     chars.get(index).copied() == Some('$')
-        && matches!(chars.get(index + 1).copied(), Some('(') | Some('{'))
+        && matches!(chars.get(index + 1).copied(), Some('(' | '{'))
 }
 
 /// Splits the trailing `| head` bound and the `2> /dev/null` red herring,
