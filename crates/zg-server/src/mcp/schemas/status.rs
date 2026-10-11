@@ -39,7 +39,7 @@ pub enum IndexSourceOutput {
     Unindexed,
 }
 
-/// One root-path entry (mirrors the TS snake_case `root_paths` items).
+/// One root-path entry (mirrors the TS `snake_case` `root_paths` items).
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct RootPathOutput {
     /// Absolute path.
