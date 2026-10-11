@@ -89,13 +89,13 @@ pub fn run_with_trace_context<T>(
     context: Option<TraceContext>,
     operation: impl FnOnce() -> T,
 ) -> T {
-    let previous = CURRENT_TRACE.with(|cell| std::mem::replace(&mut *cell.borrow_mut(), context));
     struct Restore(Option<TraceContext>);
     impl Drop for Restore {
         fn drop(&mut self) {
             CURRENT_TRACE.with(|cell| *cell.borrow_mut() = self.0.take());
         }
     }
+    let previous = CURRENT_TRACE.with(|cell| std::mem::replace(&mut *cell.borrow_mut(), context));
     let _restore = Restore(previous);
     operation()
 }
