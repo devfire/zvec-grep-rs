@@ -102,7 +102,7 @@ impl DaemonHttpServer {
             options.backend.clone(),
             options.version.clone(),
             options.mcp_toolset,
-            options.mcp_endpoint,
+            &options.mcp_endpoint,
         )
         .map_err(|error| DaemonError::IndexFailed {
             message: format!("invalid MCP endpoint options: {error}"),

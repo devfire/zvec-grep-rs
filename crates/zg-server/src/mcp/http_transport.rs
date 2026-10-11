@@ -74,7 +74,7 @@ impl McpHttpEndpoint {
         backend: DaemonBackend,
         version: String,
         toolset: McpToolset,
-        options: McpHttpEndpointOptions,
+        options: &McpHttpEndpointOptions,
     ) -> Result<Self, McpError> {
         if options.max_legacy_sessions == 0 || options.legacy_session_idle_ttl.is_zero() {
             return Err(McpError::invalid_params(
