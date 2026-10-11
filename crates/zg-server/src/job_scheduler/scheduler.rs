@@ -102,7 +102,7 @@ impl JobScheduler {
                 reused: true,
             });
         }
-        let id = self.enqueue(&mut state, input);
+        let id = Self::enqueue(&mut state, input);
         let snapshot = state
             .jobs
             .get(&id)

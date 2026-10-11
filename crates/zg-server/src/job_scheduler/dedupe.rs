@@ -99,7 +99,7 @@ impl JobScheduler {
         active_id.clone()
     }
 
-    pub(crate) fn enqueue(&self, state: &mut Inner, input: SubmitIndexJob) -> JobId {
+    pub(crate) fn enqueue(state: &mut Inner, input: SubmitIndexJob) -> JobId {
         let id = create_job(state, input);
         activate(state, &id);
         id
