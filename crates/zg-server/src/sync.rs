@@ -18,6 +18,6 @@ pub(crate) trait MutexExt<T> {
 
 impl<T> MutexExt<T> for Mutex<T> {
     fn lock_ignore_poison(&self) -> MutexGuard<'_, T> {
-        self.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
