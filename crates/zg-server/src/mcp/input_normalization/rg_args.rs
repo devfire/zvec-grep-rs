@@ -189,6 +189,9 @@ fn parse_rg_argv(argv: &[String]) -> Result<RawRgParse, McpError> {
 
 /// Long flags mappable onto the in-process engine; anything else errors
 /// with the TS messages.
+// Flat dispatch over the accepted long flags; each arm is a few lines, so
+// splitting would add indirection without a safety gain.
+#[allow(clippy::too_many_lines)]
 fn parse_long_flag(
     argv: &[String],
     index: usize,
