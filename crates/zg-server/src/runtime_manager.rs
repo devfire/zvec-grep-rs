@@ -88,7 +88,7 @@ impl RuntimeManager {
             }
             .into());
         }
-        self.get_or_spawn(canonical)
+        self.get_or_spawn(&canonical)
     }
 
     /// Activates the actor for indexing: the root must resolve and be
@@ -103,7 +103,7 @@ impl RuntimeManager {
             return Err(DaemonError::ShuttingDown.into());
         }
         let canonical = resolve_requested_root(requested_root, true)?;
-        self.get_or_spawn(canonical)
+        self.get_or_spawn(&canonical)
     }
 
     /// Handle for a live actor, if any.
@@ -187,7 +187,7 @@ impl RuntimeManager {
         self.shared.pool.close().await;
     }
 
-    fn get_or_spawn(&self, canonical: RootKey) -> Result<RootHandle, BackendError> {
+    fn get_or_spawn(&self, canonical: &RootKey) -> Result<RootHandle, BackendError> {
         {
             let inner = self.inner.lock_ignore_poison();
             if self.closed.load(Ordering::SeqCst) {
@@ -328,7 +328,7 @@ mod tests {
             let barrier = barrier.clone();
             tasks.push(tokio::spawn(async move {
                 barrier.wait().await;
-                manager.get_or_spawn(key).unwrap()
+                manager.get_or_spawn(&key).unwrap()
             }));
         }
         let mut handles = Vec::new();
@@ -348,7 +348,7 @@ mod tests {
         let manager = test_manager();
         let (_dir, key) = test_key();
         manager.close().await;
-        let result = manager.get_or_spawn(key);
+        let result = manager.get_or_spawn(&key);
         assert!(matches!(
             result,
             Err(BackendError::Daemon(DaemonError::ShuttingDown))
@@ -361,7 +361,7 @@ mod tests {
     async fn concurrent_close_is_safe() {
         let manager = test_manager();
         let (_dir, key) = test_key();
-        let _handle = manager.get_or_spawn(key).unwrap();
+        let _handle = manager.get_or_spawn(&key).unwrap();
         assert_eq!(manager.actor_count(), 1);
         let first = manager.clone();
         let second = manager.clone();
@@ -373,11 +373,11 @@ mod tests {
     async fn stale_unregister_keeps_live_replacement() {
         let manager = test_manager();
         let (_dir, key) = test_key();
-        let first = manager.get_or_spawn(key.clone()).unwrap();
+        let first = manager.get_or_spawn(&key).unwrap();
         // The live actor exits; its replacement spawns with a fresh
         // generation. Replaying the stale teardown must be a no-op (#33).
         manager.evict(&key).await;
-        let second = manager.get_or_spawn(key.clone()).unwrap();
+        let second = manager.get_or_spawn(&key).unwrap();
         assert_ne!(first.generation, second.generation);
         assert!(manager.unregister(&key, first.generation).is_none());
         assert!(manager.get(&key).is_some());
