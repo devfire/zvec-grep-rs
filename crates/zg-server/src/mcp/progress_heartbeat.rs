@@ -44,6 +44,9 @@ impl ProgressHeartbeat {
             loop {
                 interval.tick().await;
                 progress = progress.saturating_add(1);
+                // Precision loss beyond 2^53 is acceptable: progress is a
+                // monotonic display hint, not an exact counter.
+                #[allow(clippy::cast_precision_loss)]
                 let notification = ProgressNotificationParam {
                     progress_token: token.clone(),
                     progress: progress as f64,
