@@ -75,7 +75,7 @@ fn canonical_through_ancestors(path: &str) -> PathBuf {
         let Some(parent) = current.parent().map(Path::to_path_buf) else {
             return PathBuf::from(path);
         };
-        let Some(name) = current.file_name().map(|name| name.to_owned()) else {
+        let Some(name) = current.file_name().map(ToOwned::to_owned) else {
             return PathBuf::from(path);
         };
         if parent == current {
