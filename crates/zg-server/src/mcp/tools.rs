@@ -155,8 +155,8 @@ fn envelope(context: &ToolCallContext<'_, ZvecGrepMcpServer>) -> CallEnvelope {
     }
 }
 
-fn parse_arguments<T: DeserializeOwned>(arguments: &Option<JsonObject>) -> Result<T, McpError> {
-    let value = serde_json::Value::Object(arguments.clone().unwrap_or_default());
+fn parse_arguments<T: DeserializeOwned>(arguments: Option<&JsonObject>) -> Result<T, McpError> {
+    let value = serde_json::Value::Object(arguments.cloned().unwrap_or_default());
     serde_json::from_value(value)
         .map_err(|error| McpError::invalid_params(format!("Invalid tool arguments: {error}")))
 }
@@ -303,7 +303,7 @@ impl ZvecGrepMcpServer {
     }
 
     async fn search_inner(&self, envelope: &CallEnvelope) -> Result<CallToolResult, McpError> {
-        let input: SearchInput = parse_arguments(&envelope.arguments)?;
+        let input: SearchInput = parse_arguments(envelope.arguments.as_ref())?;
         let normalized = normalize_search_input(&input)?;
         let trace = normalized.trace;
         let root = normalized.root.as_str().to_owned();
@@ -321,7 +321,7 @@ impl ZvecGrepMcpServer {
     }
 
     async fn index_inner(&self, envelope: CallEnvelope) -> Result<CallToolResult, McpError> {
-        let input: WireIndexInput = parse_arguments(&envelope.arguments)?;
+        let input: WireIndexInput = parse_arguments(envelope.arguments.as_ref())?;
         reject_index_overrides(&input)?;
         let root = parse_root(&input.root)?;
         if input.drop.unwrap_or(false) {
@@ -479,7 +479,7 @@ impl ZvecGrepMcpServer {
 
     async fn handle_index_drop(&self, envelope: CallEnvelope) -> Result<CallToolResult, ErrorData> {
         let input: IndexDropInput =
-            parse_arguments(&envelope.arguments).map_err(McpError::into_error_data)?;
+            parse_arguments(envelope.arguments.as_ref()).map_err(McpError::into_error_data)?;
         let root = parse_root(&input.root).map_err(McpError::into_error_data)?;
         let removed = self
             .backend
@@ -508,7 +508,7 @@ impl ZvecGrepMcpServer {
     }
 
     async fn rg_inner(&self, envelope: &CallEnvelope) -> Result<CallToolResult, McpError> {
-        let input: RgInput = parse_arguments(&envelope.arguments)?;
+        let input: RgInput = parse_arguments(envelope.arguments.as_ref())?;
         let (root, query) = rg_query_from_input(&input)?;
         let searched = self.backend.rg_search(root.as_str(), query).await?;
         let mut text = format_agent_context_result(&rg_context_result(&searched), false);
@@ -523,7 +523,7 @@ impl ZvecGrepMcpServer {
         envelope: CallEnvelope,
     ) -> Result<CallToolResult, ErrorData> {
         let input: IndexStatusInput =
-            parse_arguments(&envelope.arguments).map_err(McpError::into_error_data)?;
+            parse_arguments(envelope.arguments.as_ref()).map_err(McpError::into_error_data)?;
         let root = parse_root(&input.root).map_err(McpError::into_error_data)?;
         let status = self
             .backend
@@ -543,7 +543,7 @@ impl ZvecGrepMcpServer {
         envelope: CallEnvelope,
     ) -> Result<CallToolResult, ErrorData> {
         let _input: ServerStatusInput =
-            parse_arguments(&envelope.arguments).map_err(McpError::into_error_data)?;
+            parse_arguments(envelope.arguments.as_ref()).map_err(McpError::into_error_data)?;
         let status = self.backend.server_status();
         let output = ServerStatusOutput {
             version: self.version.clone(),
