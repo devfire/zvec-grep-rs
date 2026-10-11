@@ -180,8 +180,7 @@ fn item_header(item: &ContextItem, trace: bool) -> String {
 fn header_range(item: &ContextItem) -> &Range {
     item.container
         .as_ref()
-        .map(|container| &container.range)
-        .unwrap_or(&item.range)
+        .map_or(&item.range, |container| &container.range)
 }
 
 fn format_score(score: f64) -> String {
