@@ -114,7 +114,7 @@ impl RootActor {
                 return false;
             }
             RootCommand::WatchBatch { changes, reason } => {
-                self.handle_watch_batch(changes, reason);
+                self.handle_watch_batch(&changes, reason);
             }
             RootCommand::IndexFinished { finished } => {
                 self.apply_finished(*finished);
@@ -193,7 +193,7 @@ impl RootActor {
         }
     }
 
-    fn handle_watch_batch(&mut self, changes: ChangeSetSnapshot, reason: WatchReason) {
+    fn handle_watch_batch(&mut self, changes: &ChangeSetSnapshot, reason: WatchReason) {
         self.runtime.set_watcher_pending(false);
         let coordinator_reason = match reason {
             WatchReason::Watch => CoordinatorReason::Watch,
@@ -203,7 +203,7 @@ impl RootActor {
         let key = self.key.clone();
         let shared = self.shared.clone();
         let result = self.coordinator.enqueue(
-            &changes,
+            changes,
             coordinator_reason,
             &mut self.runtime,
             &self.shared.scheduler,
