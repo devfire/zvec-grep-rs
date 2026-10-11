@@ -372,7 +372,7 @@ fn lock_path(home: Option<&Path>) -> PathBuf {
     daemon_dir(home).join("instance.lock")
 }
 
-/// Lenient lock read: required pid/hostname/server_url, everything else
+/// Lenient lock read: required `pid/hostname/server_url`, everything else
 /// defaulted, unknown fields ignored (TS-written locks stay readable).
 async fn read_record(path: &Path) -> Option<DaemonInstanceRecord> {
     let body = tokio::fs::read_to_string(path).await.ok()?;
