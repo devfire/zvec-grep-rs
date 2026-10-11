@@ -104,7 +104,7 @@ pub(crate) fn progress_reporter(scheduler: &JobScheduler, id: &JobId) -> IndexPr
             job.publish();
             for listener in job.listeners.clone() {
                 drop(state);
-                safe_report(&Some(listener), &progress);
+                safe_report(Some(&listener), &progress);
                 state = slf.shared.state.lock_ignore_poison();
                 if !state.jobs.contains_key(&job_id) {
                     return;
@@ -116,7 +116,7 @@ pub(crate) fn progress_reporter(scheduler: &JobScheduler, id: &JobId) -> IndexPr
 
 /// Progress observers never affect the outcome: panics inside `on_progress`
 /// are contained per call.
-pub(crate) fn safe_report(sink: &Option<IndexProgressSink>, progress: &IndexProgress) {
+pub(crate) fn safe_report(sink: Option<&IndexProgressSink>, progress: &IndexProgress) {
     if let Some(sink) = sink {
         let result =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sink(progress.clone())));

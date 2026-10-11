@@ -192,7 +192,7 @@ impl JobScheduler {
             (job.completed.subscribe(), job.progress.clone(), guard)
         };
         if let Some(progress) = replay {
-            safe_report(&on_progress, &progress);
+            safe_report(on_progress.as_ref(), &progress);
         }
         self.await_terminal(receiver).await
     }
