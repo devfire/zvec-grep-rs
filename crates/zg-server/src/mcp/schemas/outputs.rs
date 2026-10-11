@@ -84,7 +84,7 @@ pub struct ScanDiagnosticsOutput {
     /// Files skipped during the scan.
     #[serde(rename = "skippedFiles")]
     pub skipped_files: usize,
-    /// Skip counts by snake_case reason.
+    /// Skip counts by `snake_case` reason.
     #[serde(rename = "skippedByReason")]
     pub skipped_by_reason: BTreeMap<String, usize>,
     /// Bounded skip samples.
