@@ -11,7 +11,7 @@ use super::error::BackendError;
 use crate::errors::DaemonError;
 use crate::logger::{DaemonLogger, LogField};
 
-pub(crate) fn log_event(logger: &Option<DaemonLogger>, name: &str, fields: [(&str, LogField); 2]) {
+pub(crate) fn log_event(logger: Option<&DaemonLogger>, name: &str, fields: [(&str, LogField); 2]) {
     if let Some(logger) = logger {
         logger.event(
             name,

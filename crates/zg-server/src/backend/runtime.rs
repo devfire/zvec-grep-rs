@@ -94,7 +94,7 @@ pub(crate) async fn spawn_root_actor(
     });
     if let Err(error) = watcher.start() {
         log_event(
-            &shared.logger,
+            shared.logger.as_ref(),
             "watch.start_failed",
             [
                 ("root_id", LogField::from(key.to_string())),
