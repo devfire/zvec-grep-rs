@@ -197,45 +197,42 @@ impl WatchManager {
         let shared = Arc::clone(&self.shared);
         let mut watcher =
             recommended_watcher(move |result: Result<notify::Event, notify::Error>| {
-                match result {
-                    Ok(event) => {
-                        let kind = match event.kind {
-                            EventKind::Create(_) => Some(ChangeKind::Created),
-                            EventKind::Modify(_) => Some(ChangeKind::Changed),
-                            EventKind::Remove(_) => Some(ChangeKind::Deleted),
-                            EventKind::Any | EventKind::Access(_) | EventKind::Other => None,
-                        };
-                        for path in event.paths {
-                            if shared.is_closed() {
-                                return;
+                if let Ok(event) = result {
+                    let kind = match event.kind {
+                        EventKind::Create(_) => Some(ChangeKind::Created),
+                        EventKind::Modify(_) => Some(ChangeKind::Changed),
+                        EventKind::Remove(_) => Some(ChangeKind::Deleted),
+                        EventKind::Any | EventKind::Access(_) | EventKind::Other => None,
+                    };
+                    for path in event.paths {
+                        if shared.is_closed() {
+                            return;
+                        }
+                        // Bounded queue: a full queue conflates into the
+                        // overflow map (same-path events merge) instead
+                        // of growing memory without bound.
+                        match sender.try_send(RawEvent { path, kind }) {
+                            Ok(()) => {}
+                            Err(tokio::sync::mpsc::error::TrySendError::Full(event)) => {
+                                coalesce_overflow(&shared, event);
                             }
-                            // Bounded queue: a full queue conflates into the
-                            // overflow map (same-path events merge) instead
-                            // of growing memory without bound.
-                            match sender.try_send(RawEvent { path, kind }) {
-                                Ok(()) => {}
-                                Err(tokio::sync::mpsc::error::TrySendError::Full(event)) => {
-                                    coalesce_overflow(&shared, event);
-                                }
-                                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                                    return;
-                                }
+                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                return;
                             }
                         }
                     }
-                    Err(_) => {
-                        // A dead watcher cannot be trusted: reconcile everything.
-                        shared
-                            .changes
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner())
-                            .require_full_reconcile();
-                        shared
-                            .reconcile_requested
-                            .store(true, std::sync::atomic::Ordering::SeqCst);
-                        set_pending(&shared, true);
-                        shared.poke();
-                    }
+                } else {
+                    // A dead watcher cannot be trusted: reconcile everything.
+                    shared
+                        .changes
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .require_full_reconcile();
+                    shared
+                        .reconcile_requested
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    set_pending(&shared, true);
+                    shared.poke();
                 }
             })
             .map_err(|error| DaemonError::IndexFailed {
