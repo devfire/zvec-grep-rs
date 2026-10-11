@@ -136,13 +136,13 @@ impl JobScheduler {
                                         ("retry_after_ms", LogField::from(delay)),
                                     ]),
                                 );
-                                let slf = self.clone();
+                                let scheduler = self.clone();
                                 let retry_id = id.clone();
                                 tokio::spawn(async move {
                                     tokio::time::sleep(std::time::Duration::from_millis(delay))
                                         .await;
                                     let requeue = {
-                                        let mut state = slf.shared.state.lock_ignore_poison();
+                                        let mut state = scheduler.shared.state.lock_ignore_poison();
                                         if let Some(job) = state.jobs.get_mut(&retry_id) {
                                             if job.retry_pending
                                                 && job.state == IndexJobState::Queued
@@ -160,7 +160,7 @@ impl JobScheduler {
                                         }
                                     };
                                     if requeue {
-                                        slf.pump();
+                                        scheduler.pump();
                                     }
                                 });
                             }
