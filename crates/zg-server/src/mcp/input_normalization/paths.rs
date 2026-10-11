@@ -65,27 +65,23 @@ fn canonical_through_ancestors(path: &str) -> PathBuf {
     let mut current = PathBuf::from(path);
     let mut missing = Vec::new();
     loop {
-        match current.canonicalize() {
-            Ok(canonical) => {
-                let mut full = canonical;
-                for segment in missing {
-                    full.push(segment);
-                }
-                return full;
+        if let Ok(canonical) = current.canonicalize() {
+            let mut full = canonical;
+            for segment in missing {
+                full.push(segment);
             }
-            Err(_) => {
-                let Some(parent) = current.parent().map(Path::to_path_buf) else {
-                    return PathBuf::from(path);
-                };
-                let Some(name) = current.file_name().map(|name| name.to_owned()) else {
-                    return PathBuf::from(path);
-                };
-                if parent == current {
-                    return PathBuf::from(path);
-                }
-                missing.insert(0, name);
-                current = parent;
-            }
+            return full;
         }
+        let Some(parent) = current.parent().map(Path::to_path_buf) else {
+            return PathBuf::from(path);
+        };
+        let Some(name) = current.file_name().map(|name| name.to_owned()) else {
+            return PathBuf::from(path);
+        };
+        if parent == current {
+            return PathBuf::from(path);
+        }
+        missing.insert(0, name);
+        current = parent;
     }
 }
