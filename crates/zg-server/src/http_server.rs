@@ -8,7 +8,7 @@
 //! (401 otherwise); MCP routes additionally demand a loopback Origin
 //! (403) and answer 401 with `WWW-Authenticate: Bearer`.
 //!
-//! `/mcp` and `/mcp/admin` serve the rmcp StreamableHTTP endpoint (plus
+//! `/mcp` and `/mcp/admin` serve the rmcp `StreamableHTTP` endpoint (plus
 //! the TS legacy-session guards) behind the same loopback/auth guards.
 
 use std::net::SocketAddr;
