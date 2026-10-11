@@ -423,7 +423,7 @@ fn is_internal_path(root: &str, absolute: &str) -> bool {
         && relative.components().any(|component| {
             matches!(
                 component.as_os_str().to_str(),
-                Some(".git") | Some(".zvec-grep")
+                Some(".git" | ".zvec-grep")
             )
         })
     {
