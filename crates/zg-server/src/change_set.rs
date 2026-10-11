@@ -307,7 +307,7 @@ fn parent_dir(path: &str) -> String {
 /// Drops every path that has an ancestor already in the set.
 fn collapse_set(paths: &mut BTreeSet<String>) {
     let mut sorted: Vec<String> = paths.iter().cloned().collect();
-    sorted.sort_by_key(|path| path.len());
+    sorted.sort_by_key(String::len);
     for path in sorted {
         if has_ancestor(paths, &path) {
             paths.remove(&path);
