@@ -458,7 +458,7 @@ fn should_track_cached(shared: &Shared, absolute: &str, is_directory: bool) -> b
     let roots = shared
         .roots_cache
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let kind = if is_directory {
         PathKind::Dir
     } else {
