@@ -506,8 +506,7 @@ fn truncate(text: &str, max: usize) -> String {
         .char_indices()
         .take(max)
         .last()
-        .map(|(index, char)| index + char.len_utf8())
-        .unwrap_or(0);
+        .map_or(0, |(index, char)| index + char.len_utf8());
     text[..end].to_owned()
 }
 
