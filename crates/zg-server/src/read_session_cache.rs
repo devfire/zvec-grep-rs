@@ -235,16 +235,16 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
     /// via [`Self::release_checkout`] when the handle is lost).
     async fn checkout(&self) -> Result<T, SessionError> {
         loop {
-            // Registered before observing so a restore/`close` that lands
-            // between the observe and the park still wakes us (no lost
-            // wakeup); the future does nothing until first polled.
-            let mut parked = Box::pin(self.shared.restored.notified());
-            let _ = parked.as_mut().enable();
             enum Next<T> {
                 Ready(T),
                 Open,
                 Wait,
             }
+            // Registered before observing so a restore/`close` that lands
+            // between the observe and the park still wakes us (no lost
+            // wakeup); the future does nothing until first polled.
+            let mut parked = Box::pin(self.shared.restored.notified());
+            let _ = parked.as_mut().enable();
             let next = {
                 let mut state = self.shared.state.lock().await;
                 if state.closed {
