@@ -292,15 +292,12 @@ async fn mcp_post(
         )
             .into_response();
     }
-    let bytes = match to_bytes(body, MAX_REQUEST_BYTES + 1).await {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            return rpc_error(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                -32700,
-                "Request body too large.",
-            );
-        }
+    let Ok(bytes) = to_bytes(body, MAX_REQUEST_BYTES + 1).await else {
+        return rpc_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            -32700,
+            "Request body too large.",
+        );
     };
     if bytes.len() > MAX_REQUEST_BYTES {
         return rpc_error(
