@@ -582,7 +582,7 @@ async fn classify_loop(shared: Arc<Shared>, mut events: Receiver<RawEvent>) {
             for (path, kind) in shared
                 .overflow
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .drain()
             {
                 batch
