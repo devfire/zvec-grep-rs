@@ -24,6 +24,8 @@ fn reference() -> String {
     "local/test-model".to_owned()
 }
 
+// Golden registry enumerates every variant by design; splitting it would weaken review.
+#[allow(clippy::too_many_lines)]
 fn all_codes() -> Vec<String> {
     let mut out = Vec::new();
     let mut push = |code: zg_core::error::EngineErrorCode| out.push(code.qualified());
