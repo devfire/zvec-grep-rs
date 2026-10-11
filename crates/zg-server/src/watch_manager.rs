@@ -153,7 +153,7 @@ impl WatchManager {
         // in (`initial_roots`) to skip the blocking read here (#44).
         let roots_cache = options
             .initial_roots
-            .unwrap_or_else(|| load_roots(&options.get_root_paths).unwrap_or_default());
+            .unwrap_or_else(|| load_roots(options.get_root_paths.as_ref()).unwrap_or_default());
         let shared = Arc::new(Shared {
             root: options.root.clone(),
             changes: Mutex::new(ChangeSet::new(ChangeSetOptions {
@@ -469,8 +469,8 @@ fn should_track_cached(shared: &Shared, absolute: &str, is_directory: bool) -> b
 
 /// Calls the roots source fail-open: a panicking source keeps the previous
 /// snapshot (`None` = keep, not clear) rather than risk a missed change.
-fn load_roots(source: &Option<RootPathsSource>) -> Option<Vec<RootPath>> {
-    let source = source.as_ref()?;
+fn load_roots(source: Option<&RootPathsSource>) -> Option<Vec<RootPath>> {
+    let source = source?;
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| source())).ok()
 }
 
@@ -478,7 +478,7 @@ fn load_roots(source: &Option<RootPathsSource>) -> Option<Vec<RootPath>> {
 /// (reads the manifest): runs on a `spawn_blocking` thread, at construction,
 /// or via [`WatchManager::refresh_roots`] — never inline on the async loop.
 fn refresh_roots_blocking(shared: &Shared) {
-    if let Some(roots) = load_roots(&shared.get_root_paths) {
+    if let Some(roots) = load_roots(shared.get_root_paths.as_ref()) {
         *shared
             .roots_cache
             .lock()
