@@ -652,7 +652,7 @@ fn classify_batch(
     let roots = shared
         .roots_cache
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
     let has_source = shared.get_root_paths.is_some();
     let mut out = Vec::new();
