@@ -6,7 +6,7 @@
 //! loosely and convert into validated newtypes ([`QueryText`],
 //! [`PathFilter`], [`SearchLimit`]) at the boundary, so a handler cannot
 //! receive an out-of-range value. Output structs use the TS
-//! snake_case/camelCase wire shapes verbatim (a wire fact per M3).
+//! `snake_case/camelCase` wire shapes verbatim (a wire fact per M3).
 //!
 //! Layout: shared bounds live in `bounds`; wire inputs in `inputs`;
 //! job/index outputs in `outputs`; status outputs and
