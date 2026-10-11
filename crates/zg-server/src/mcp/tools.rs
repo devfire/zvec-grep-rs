@@ -752,6 +752,8 @@ fn rg_context_result(
 }
 
 /// `(progress, total, message)` for index progress reports.
+// File counts are display-only progress values, always far below 2^53.
+#[allow(clippy::cast_precision_loss)]
 fn progress_message(progress: &zg_core::types::IndexProgress) -> (f64, Option<f64>, String) {
     let completed = progress.files_indexed.unwrap_or(0) as f64;
     let total = progress.files_total.map(|total| total as f64);
