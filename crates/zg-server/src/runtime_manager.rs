@@ -217,12 +217,12 @@ impl RuntimeManager {
             tx: tx.clone(),
             generation,
         };
-        let slf = self.clone();
+        let manager = self.clone();
         let key = canonical.clone();
         let join = tokio::spawn(async move {
             spawn_root_actor(
-                slf.shared.clone(),
-                slf.clone(),
+                manager.shared.clone(),
+                manager.clone(),
                 key,
                 generation,
                 tx.clone(),
