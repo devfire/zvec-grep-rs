@@ -1,4 +1,4 @@
-//! MCP HTTP endpoint: a stateful rmcp StreamableHTTP service with the
+//! MCP HTTP endpoint: a stateful rmcp `StreamableHTTP` service with the
 //! TS legacy-session guards in front.
 //!
 //! Mirrors `../zvec-grep/src/mcp/http-transport.ts` (`McpHttpEndpoint`:
