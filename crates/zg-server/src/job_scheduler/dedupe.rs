@@ -143,8 +143,7 @@ fn combine_runs(first: JobRun, second: JobRun) -> JobRun {
                 let second_result = second(report, cancel).await;
                 match (first_result, second_result) {
                     (Ok(()), Ok(())) => Ok(()),
-                    (Err(failure), _) => Err(failure),
-                    (Ok(()), Err(failure)) => Err(failure),
+                    (Err(failure), _) | (Ok(()), Err(failure)) => Err(failure),
                 }
             }) as BoxFuture<'static, JobOutcome>
         },
