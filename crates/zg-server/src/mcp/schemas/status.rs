@@ -263,10 +263,10 @@ pub struct StatusProgressOutput {
 impl From<&zg_core::types::IndexProgress> for StatusProgressOutput {
     fn from(progress: &zg_core::types::IndexProgress) -> Self {
         Self {
-            phase: progress
-                .phase
-                .map(|phase| format!("{phase:?}").to_lowercase())
-                .unwrap_or_else(|| "indexing".to_owned()),
+            phase: progress.phase.map_or_else(
+                || "indexing".to_owned(),
+                |phase| format!("{phase:?}").to_lowercase(),
+            ),
             files_total: progress.files_total,
             files_indexed: progress.files_indexed,
             files_failed: progress.files_failed,
