@@ -13,10 +13,9 @@ use crate::errors::DaemonError;
 /// an engine error carrying `ZVEC_GREP.ENGINE.LOCK.BUSY`.
 pub(crate) fn is_retryable(failure: &JobFailure) -> bool {
     match failure {
-        JobFailure::Cancelled => false,
+        JobFailure::Cancelled | JobFailure::Failed(_) => false,
         JobFailure::Daemon(error) => error.retryable(),
         JobFailure::Engine(error) => error.code().to_string() == "ZVEC_GREP.ENGINE.LOCK.BUSY",
-        JobFailure::Failed(_) => false,
     }
 }
 
