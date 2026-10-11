@@ -105,7 +105,9 @@ fn cosine_similarity(expected: &[serde_json::Value], actual: &[f32]) -> f64 {
 // The skip summary is CI signal: without it a fully-skipped run is
 // indistinguishable from a full pass, so the `print_stdout` lint is
 // allowed for this test only.
-#[allow(clippy::print_stdout)]
+// The driver spans 101/100 lines iterating four models x two purposes inline;
+// splitting it would hurt readability, so `too_many_lines` is allowed here only.
+#[allow(clippy::print_stdout, clippy::too_many_lines)]
 #[test]
 fn local_vectors_match_ts_goldens() {
     let dir = format!("{}/tests/golden/vectors", env!("CARGO_MANIFEST_DIR"));
