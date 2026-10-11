@@ -55,7 +55,7 @@ impl From<u64> for LogField {
 
 impl From<usize> for LogField {
     fn from(value: usize) -> Self {
-        Self::Int(value as i64)
+        Self::Int(i64::try_from(value).unwrap_or(i64::MAX))
     }
 }
 
