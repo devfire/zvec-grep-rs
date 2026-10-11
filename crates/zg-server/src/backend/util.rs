@@ -26,7 +26,7 @@ pub(crate) fn log_event(logger: Option<&DaemonLogger>, name: &str, fields: [(&st
 /// Maps a `spawn_blocking` join failure: cancellation races the daemon
 /// shutdown path, anything else is a failed index-side task. No new wire
 /// code is invented — both variants already exist in the registries.
-pub(crate) fn join_backend_error(error: tokio::task::JoinError) -> BackendError {
+pub(crate) fn join_backend_error(error: &tokio::task::JoinError) -> BackendError {
     if error.is_cancelled() {
         BackendError::Daemon(DaemonError::ShuttingDown)
     } else {

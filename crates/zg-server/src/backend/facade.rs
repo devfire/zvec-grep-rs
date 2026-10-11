@@ -124,7 +124,7 @@ impl DaemonBackend {
         let root_buf = PathBuf::from(key.as_str());
         tokio::task::spawn_blocking(move || service.drop_index(Some(root_buf.as_path())))
             .await
-            .map_err(join_backend_error)?
+            .map_err(|error| join_backend_error(&error))?
             .map_err(BackendError::Engine)
     }
 

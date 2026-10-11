@@ -159,7 +159,7 @@ impl RootActor {
             let service = self.temp_service();
             let indexed = tokio::task::spawn_blocking(move || service.workspace_info(None))
                 .await
-                .map_err(join_backend_error)?
+                .map_err(|error| join_backend_error(&error))?
                 .is_ok_and(|info| info.indexed);
             ChangeSetSnapshot {
                 force_full_reconcile: !indexed,
@@ -223,7 +223,7 @@ impl RootActor {
             let service = self.temp_service();
             let fresh = tokio::task::spawn_blocking(move || service.index_status(None))
                 .await
-                .map_err(join_backend_error)?
+                .map_err(|error| join_backend_error(&error))?
                 .map_err(BackendError::Engine)?;
             self.status = Some(fresh.clone());
             fresh
@@ -238,7 +238,7 @@ impl RootActor {
         let service = self.temp_service();
         let info = tokio::task::spawn_blocking(move || service.workspace_info(None).ok())
             .await
-            .map_err(join_backend_error)?;
+            .map_err(|error| join_backend_error(&error))?;
         Ok(DaemonIndexStatus {
             status,
             job,
@@ -279,7 +279,7 @@ impl RootActor {
         };
         tokio::task::spawn_blocking(move || run_lexical_search(&options))
             .await
-            .map_err(join_backend_error)?
+            .map_err(|error| join_backend_error(&error))?
             .map_err(BackendError::Engine)
     }
 
@@ -291,7 +291,7 @@ impl RootActor {
         let root = PathBuf::from(self.key.as_str());
         tokio::task::spawn_blocking(move || service.drop_index(Some(root.as_path())))
             .await
-            .map_err(join_backend_error)?
+            .map_err(|error| join_backend_error(&error))?
             .map_err(BackendError::Engine)
     }
 
