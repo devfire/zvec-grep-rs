@@ -16,6 +16,9 @@ use crate::job_scheduler::IndexJobSnapshot;
 use crate::root_runtime::Generation;
 
 /// Owned lexical request (no borrows: crosses the actor boundary).
+// Fields mirror ripgrep CLI flags one-to-one; grouping would churn the
+// actor-boundary API for no readability gain (all fields are named).
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Default)]
 pub struct RgQuery {
     /// Regex (or literal) alternatives.
