@@ -136,33 +136,7 @@ impl JobScheduler {
                                         ("retry_after_ms", LogField::from(delay)),
                                     ]),
                                 );
-                                let scheduler = self.clone();
-                                let retry_id = id.clone();
-                                tokio::spawn(async move {
-                                    tokio::time::sleep(std::time::Duration::from_millis(delay))
-                                        .await;
-                                    let requeue = {
-                                        let mut state = scheduler.shared.state.lock_ignore_poison();
-                                        if let Some(job) = state.jobs.get_mut(&retry_id) {
-                                            if job.retry_pending
-                                                && job.state == IndexJobState::Queued
-                                            {
-                                                job.retry_pending = false;
-                                                job.publish();
-                                                state.queue.push(retry_id.clone());
-                                                Self::sort_queue(&mut state);
-                                                true
-                                            } else {
-                                                false
-                                            }
-                                        } else {
-                                            false
-                                        }
-                                    };
-                                    if requeue {
-                                        scheduler.pump();
-                                    }
-                                });
+                                self.spawn_delayed_retry(id.clone(), delay);
                             }
                         } else {
                             let closed = state.closed;
@@ -170,14 +144,7 @@ impl JobScheduler {
                                 job.error = Some(error_info(&failure));
                             }
                             drop(state);
-                            self.finish(
-                                &id,
-                                if closed {
-                                    IndexJobState::Cancelled
-                                } else {
-                                    IndexJobState::Failed
-                                },
-                            );
+                            self.finish_terminal(&id, closed);
                         }
                     }
                 }
@@ -188,6 +155,43 @@ impl JobScheduler {
             state.running = state.running.saturating_sub(1);
         }
         self.pump();
+    }
+
+    fn spawn_delayed_retry(&self, retry_id: JobId, delay_ms: u64) {
+        let scheduler = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            let requeue = {
+                let mut state = scheduler.shared.state.lock_ignore_poison();
+                if let Some(job) = state.jobs.get_mut(&retry_id) {
+                    if job.retry_pending && job.state == IndexJobState::Queued {
+                        job.retry_pending = false;
+                        job.publish();
+                        state.queue.push(retry_id.clone());
+                        Self::sort_queue(&mut state);
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+            if requeue {
+                scheduler.pump();
+            }
+        });
+    }
+
+    fn finish_terminal(&self, id: &JobId, closed: bool) {
+        self.finish(
+            id,
+            if closed {
+                IndexJobState::Cancelled
+            } else {
+                IndexJobState::Failed
+            },
+        );
     }
 
     fn finish(&self, id: &JobId, state: IndexJobState) {
