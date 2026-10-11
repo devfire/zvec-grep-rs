@@ -107,7 +107,7 @@ pub fn parse_listen_address(value: Option<&str>) -> Result<ServerListenAddress, 
         .strip_prefix('[')
         .and_then(|host| host.strip_suffix(']'))
         .unwrap_or(raw_host);
-    let port: u32 = listen[separator + 1..].parse().unwrap_or(0);
+    let port: u16 = listen[separator + 1..].parse().unwrap_or(0);
     if !is_loopback_host(host) {
         return Err(DaemonError::LoopbackRequired {
             host: host.to_owned(),
@@ -118,7 +118,7 @@ pub fn parse_listen_address(value: Option<&str>) -> Result<ServerListenAddress, 
     }
     Ok(ServerListenAddress {
         host: host.to_owned(),
-        port: port as u16,
+        port,
     })
 }
 
