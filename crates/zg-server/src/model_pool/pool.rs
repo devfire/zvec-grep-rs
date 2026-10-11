@@ -414,14 +414,14 @@ impl EmbeddingModelPool {
             self.evict(key);
             return;
         }
-        let slf = self.clone();
+        let pool = self.clone();
         let owned_key = key.to_owned();
         let identity = pool_identity(&self.shared);
         let task_key = owned_key.clone();
         let handle = tokio::spawn(async move {
             tokio::time::sleep(ttl).await;
             let stale = {
-                let state = slf.shared.state.lock_ignore_poison();
+                let state = pool.shared.state.lock_ignore_poison();
                 state.entries.get(&task_key).is_some_and(|entry| {
                     entry.leases == 0 && entry.last_used_ms == used && entry.idle_seq == seq
                 })
@@ -429,9 +429,9 @@ impl EmbeddingModelPool {
             // Forget our registry entry only if no newer release superseded
             // us; a replacement sleeps under a bumped `(idle_seq,
             // last_used_ms)`.
-            forget_ttl_sleeper_if_current(&slf.shared, &task_key, seq, used);
+            forget_ttl_sleeper_if_current(&pool.shared, &task_key, seq, used);
             if stale {
-                slf.evict(&task_key);
+                pool.evict(&task_key);
             }
         });
         // No `.await` runs between `spawn` and this insert, so the sleeper
