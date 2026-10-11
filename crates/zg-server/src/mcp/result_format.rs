@@ -415,8 +415,7 @@ fn short_window<'a>(item: &ContextItem, text: &'a str) -> Vec<WindowLine<'a>> {
         .excerpt_range
         .as_ref()
         .and_then(text_span)
-        .map(|(start, end)| end - start + 1)
-        .unwrap_or(1);
+        .map_or(1, |(start, end)| end - start + 1);
     let before = if excerpt_lines >= SHORT_SOURCE_MAX_LINES {
         0
     } else {
