@@ -600,9 +600,9 @@ async fn classify_loop(shared: Arc<Shared>, mut events: Receiver<RawEvent>) {
         if shared.is_closed() {
             return;
         }
-        match classified {
-            Ok(entries) => fold_classified(&shared, &entries),
-            Err(_) => {
+        if let Ok(entries) = classified {
+            fold_classified(&shared, &entries);
+        } else {
                 // A panicking classifier cannot be trusted: reconcile
                 // everything (mirrors the watcher-error path, no new error
                 // taxonomy needed).
@@ -616,7 +616,6 @@ async fn classify_loop(shared: Arc<Shared>, mut events: Receiver<RawEvent>) {
                     .store(true, std::sync::atomic::Ordering::SeqCst);
                 set_pending(&shared, true);
                 shared.poke();
-            }
         }
     }
 }
