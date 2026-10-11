@@ -116,7 +116,7 @@ fn local_vectors_match_ts_goldens() {
     let mode = CoverageMode::from_env();
     for file in GOLDEN_FILES {
         let path = format!("{dir}/{file}");
-        let bytes = if let Ok(bytes) = std::fs::read(&path) { bytes } else {
+        let Ok(bytes) = std::fs::read(&path) else {
             skipped.push(format!("{file}: missing golden file"));
             continue;
         };
