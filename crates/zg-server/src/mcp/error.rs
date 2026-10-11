@@ -46,8 +46,9 @@ impl McpError {
     #[must_use]
     pub fn into_error_data(self) -> ErrorData {
         match self {
-            Self::InvalidParams { message } => ErrorData::invalid_params(message, None),
-            Self::AuthorizationRequired { message } => ErrorData::invalid_params(message, None),
+            Self::InvalidParams { message } | Self::AuthorizationRequired { message } => {
+                ErrorData::invalid_params(message, None)
+            }
             Self::Backend(error) => ErrorData::internal_error(error.to_string(), None),
             Self::Transport { message } => ErrorData::internal_error(message, None),
         }
