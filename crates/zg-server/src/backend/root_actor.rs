@@ -217,17 +217,16 @@ impl RootActor {
     async fn handle_status(&mut self) -> Result<DaemonIndexStatus, BackendError> {
         // Both engine reads below are blocking storage IO: each runs on a
         // blocking thread, never on this async worker (#44).
-        let status = match self.status.clone() {
-            Some(cached) => cached,
-            None => {
-                let service = self.temp_service();
-                let fresh = tokio::task::spawn_blocking(move || service.index_status(None))
-                    .await
-                    .map_err(join_backend_error)?
-                    .map_err(BackendError::Engine)?;
-                self.status = Some(fresh.clone());
-                fresh
-            }
+        let status = if let Some(cached) = self.status.clone() {
+            cached
+        } else {
+            let service = self.temp_service();
+            let fresh = tokio::task::spawn_blocking(move || service.index_status(None))
+                .await
+                .map_err(join_backend_error)?
+                .map_err(BackendError::Engine)?;
+            self.status = Some(fresh.clone());
+            fresh
         };
         let job = self.shared.scheduler.get_by_root(self.key.as_str());
         let completion = index_completion_for_job(
