@@ -509,7 +509,7 @@ fn coalesce_overflow(shared: &Arc<Shared>, event: RawEvent) {
     let mut overflow = shared
         .overflow
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if overflow.len() >= OVERFLOW_CONFLATED_CAPACITY && !overflow.contains_key(&event.path) {
         overflow.clear();
         drop(overflow);
