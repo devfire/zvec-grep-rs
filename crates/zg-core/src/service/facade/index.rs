@@ -52,7 +52,13 @@ impl ZvecGrepService {
         // reader/writer or concurrent rebuild fails BUSY here instead of
         // racing us. Dropped before `open`, which acquires the same lock for
         // creation + the indexing run.
-        let maintenance = if options.rebuild || !is_indexed(existing.as_ref()) {
+        //
+        // `fresh_build` doubles as the #50 version gate below: only a first
+        // build or rebuild withholds the stamp pre-run (#39 torn-build
+        // guard). Incremental runs keep the existing stamp so a failed or
+        // cancelled run stays searchable instead of bricking the index.
+        let fresh_build = options.rebuild || !is_indexed(existing.as_ref());
+        let maintenance = if fresh_build {
             let guard = acquire_index_maintenance_guard(&home, "index.rebuild")?;
             delete_workspace_manifest(&home)?;
             delete_workspace_index_storage(&home)?;
@@ -61,6 +67,16 @@ impl ZvecGrepService {
             None
         };
         let existing = if options.rebuild { None } else { existing };
+        // #50: incremental runs carry the existing stamp through the
+        // pre-run write; only fresh builds run versionless. No `unwrap`:
+        // a missing stamp degrades to the fresh-build shape, never a panic.
+        let pre_run_version = if fresh_build {
+            None
+        } else {
+            existing
+                .as_ref()
+                .and_then(|manifest| manifest.info.index_version)
+        };
 
         let root_paths = Self::resolve_root_paths(&location, options, existing.as_ref())?;
         let now = UnixMillis::now();
@@ -80,10 +96,13 @@ impl ZvecGrepService {
                 root_paths,
                 index_policy: Some(crate::types::WorkspaceIndexPolicy::Enabled),
                 embedding: Some(Some(embedding_schema(model.as_ref()))),
-                // Withheld until the run below commits: a kill between this
-                // write and completion leaves a manifest that reads as
-                // incomplete (never Fresh/complete), never a torn complete.
-                index_version: None,
+                // Fresh builds withhold the stamp until the run below
+                // commits (#39): a kill between this write and completion
+                // leaves a manifest that reads as incomplete, never a torn
+                // complete. Incremental runs (#50) keep the existing stamp
+                // so a failed or cancelled run stays searchable and the
+                // next run resumes incrementally instead of wiping storage.
+                index_version: pre_run_version,
                 created_time: existing
                     .as_ref()
                     .map_or(now, |manifest| manifest.info.created_time),
@@ -101,9 +120,10 @@ impl ZvecGrepService {
         drop(maintenance);
         let cancel = CancelFlag::new();
         let watcher = spawn_signal_watch(options.signal.clone(), &cancel);
-        // The persisted manifest stays versionless (incomplete) while the run
-        // is in flight; only this in-memory copy claims the current version
-        // so `open` + validation succeed for the run itself.
+        // Fresh builds persist versionless (incomplete) while the run is in
+        // flight; only this in-memory copy claims the current version so
+        // `open` + validation succeed for the run itself. Incremental runs
+        // already persist the carried stamp above.
         let open_info = WorkspaceIndexInfo {
             index_version: Some(CURRENT_INDEX_VERSION),
             ..manifest.info.clone()
@@ -136,8 +156,9 @@ impl ZvecGrepService {
         finish_signal_watch(watcher);
 
         let result = result?;
-        // Commit: only a successful run earns the version stamp, flipping the
-        // pre-run versionless manifest back to complete.
+        // Commit: a successful run stamps the current version, flipping a
+        // fresh pre-run versionless manifest back to complete and refreshing
+        // an incremental run's carried stamp.
         let manifest = WorkspaceManifest {
             info: WorkspaceIndexInfo {
                 updated_time: UnixMillis::now(),

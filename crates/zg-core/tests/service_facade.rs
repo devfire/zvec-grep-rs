@@ -559,3 +559,70 @@ fn out_of_tree_index_location_round_trip() {
     assert!(service.drop_index(None).expect("drop"));
     assert!(!external.path().join("manifest.json").exists());
 }
+
+/// Issue #50: a failed or cancelled incremental run must not brick the index.
+/// A pre-cancelled `signal` fails the run deterministically before any
+/// storage writes; the manifest must keep its stamp (same id), searches must
+/// still work, and the next run must resume incrementally (no wipe).
+#[test]
+fn cancelled_incremental_run_keeps_index_searchable() {
+    use zg_core::manifest::read_workspace_manifest;
+    use zg_core::types::CURRENT_INDEX_VERSION;
+
+    let dir = fixture_workspace();
+    let service = stub_service(&dir);
+    service.ensure_index(&index_options(&dir)).expect("index");
+    let before = read_workspace_manifest(&manifest_home(&dir))
+        .expect("read")
+        .expect("manifest exists");
+    assert_eq!(before.info.index_version, Some(CURRENT_INDEX_VERSION));
+
+    let error = service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(dir.path()),
+            signal: Some(Arc::new(|| true)),
+            ..ZvecGrepIndexOptions::default()
+        })
+        .expect_err("cancelled run errors");
+    // Pre-cancelled signal surfaces through the scan wrapper as
+    // `WORKSPACE_FAILED`; a mid-run cancel reports `CANCELLED`. Either way
+    // the run failed without committing, which is the #50 brick path.
+    assert!(
+        matches!(
+            *error.code(),
+            zg_core::error::EngineErrorCode::IndexingCancelled
+                | zg_core::error::EngineErrorCode::IndexingWorkspaceFailed
+        ),
+        "unexpected code: {}",
+        error.code()
+    );
+
+    // Still stamped with the same identity: no brick, no wipe queued.
+    let after = read_workspace_manifest(&manifest_home(&dir))
+        .expect("read")
+        .expect("manifest exists");
+    assert_eq!(after.info.index_version, Some(CURRENT_INDEX_VERSION));
+    assert_eq!(after.info.id, before.info.id);
+    assert_eq!(after.info.created_time, before.info.created_time);
+
+    // Searches still serve from the intact index.
+    let found = fts_search(&service, &dir, "hello");
+    assert!(
+        found
+            .items
+            .iter()
+            .any(|item| item.file.relative_path.ends_with("a.txt")),
+        "{}",
+        serde_json::to_string_pretty(&found.items).expect("json")
+    );
+    service.open_read_session(None).expect("session").close();
+
+    // The next run resumes incrementally: same manifest identity, no
+    // delete-and-rebuild (which would mint a fresh id).
+    service.ensure_index(&index_options(&dir)).expect("retry");
+    let retried = read_workspace_manifest(&manifest_home(&dir))
+        .expect("read")
+        .expect("manifest exists");
+    assert_eq!(retried.info.index_version, Some(CURRENT_INDEX_VERSION));
+    assert_eq!(retried.info.id, before.info.id);
+}
