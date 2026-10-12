@@ -118,7 +118,7 @@ pub(crate) async fn spawn_root_actor(
                 CoordinatorReason::Reconcile,
                 &mut runtime,
                 &shared.scheduler,
-                |take| build_index_run(seed_tx, seed_key, seed_shared, take),
+                |take| build_index_run(seed_tx, seed_key, seed_shared, sessions.clone(), take),
             )
             .is_ok()
         {

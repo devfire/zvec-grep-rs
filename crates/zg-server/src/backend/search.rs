@@ -165,7 +165,7 @@ impl RootActor {
                     CoordinatorReason::BackgroundReconcile,
                     &mut self.runtime,
                     &self.shared.scheduler,
-                    |take| build_index_run(tx, key, shared, take),
+                    |take| build_index_run(tx, key, shared, self.sessions.clone(), take),
                 ) {
                     self.runtime.set_writer_pending(true);
                     return Some(submitted.job);

@@ -26,13 +26,16 @@ use zg_core::models::{EmbeddingModel, EmbeddingModelInfo};
 use zg_core::service::facade::ZvecGrepService;
 use zg_core::service::types::{ZvecGrepIndexOptions, ZvecGrepInfoResult};
 
-use super::actor::{FinishedIndex, FinishedOk, IndexOutcome, IndexRunFailure, RootCommand};
+use super::actor::{
+    CachedSession, FinishedIndex, FinishedOk, IndexOutcome, IndexRunFailure, RootCommand,
+};
 use super::config::BackendShared;
 use super::runtime::load_request_for;
 use crate::change_set::ChangeSetSnapshot;
 use crate::index_coordinator::TakePending;
 use crate::job_scheduler::{JobFailure, JobOutcome, JobRun};
 use crate::model_pool::{AcquireError, ModelLease};
+use crate::read_session_cache::WorkspaceReadSessionCache;
 use crate::root_runtime::RootKey;
 
 /// Builds the scheduler run for one submitted job: takes the pending
@@ -42,12 +45,14 @@ pub(crate) fn build_index_run(
     tx: UnboundedSender<RootCommand>,
     key: RootKey,
     shared: BackendShared,
+    sessions: WorkspaceReadSessionCache<CachedSession>,
     take: TakePending,
 ) -> JobRun {
     Arc::new(move |reporter, token| {
         let tx = tx.clone();
         let key = key.clone();
         let shared = shared.clone();
+        let sessions = sessions.clone();
         // Cloned per invocation: retries replay the same take handle, and
         // `Fn` cannot move the captured original into the future.
         let take = take.clone();
@@ -89,6 +94,15 @@ pub(crate) fn build_index_run(
             // the lease.
             let model = resolved.model.clone();
             let _resolved = resolved;
+            // Retire the cached read session before the write lock: it
+            // holds a storage read lock renewed for 60 s per search,
+            // which otherwise fails the run with `LOCK.BUSY` while
+            // searches keep arriving (#53). Non-destructive (unlike
+            // `close`): the next search reopens cold, and a search
+            // in flight drops its handle on restore instead of
+            // republishing it. Runs per attempt, so every retry frees
+            // the lock again.
+            sessions.retire().await;
             let outcome = run_blocking_index(
                 &shared, &key, model, &snapshot, force_full, reporter, &token,
             )

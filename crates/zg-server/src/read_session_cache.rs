@@ -103,6 +103,14 @@ struct State<T> {
     active_readers: usize,
     last_read_ms: u64,
     idle_seq: u64,
+    /// Bumped by every [`WorkspaceReadSessionCache::retire`]: a restore
+    /// whose checkout predates the bump drops its handle instead of
+    /// republishing it, so an index run that retires mid-search still
+    /// frees the read lock once the search drains (#53).
+    retire_epoch: u64,
+    /// Epoch observed at checkout (`None` while no search owns the
+    /// handle); compared against `retire_epoch` on restore.
+    active_epoch: Option<u64>,
     closed: bool,
     /// The single pending idle-TTL sleeper, if any. Aborted and replaced
     /// on new read activity so sleepers never accumulate per read.
@@ -150,6 +158,8 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
                     // fallback is inert.
                     last_read_ms: UnixMillis::now_ms_or(0),
                     idle_seq: 0,
+                    retire_epoch: 0,
+                    active_epoch: None,
                     closed: false,
                     idle_task: None,
                 }),
@@ -253,6 +263,7 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
                 if let Some(handle) = state.handle.take() {
                     state.active_readers += 1;
                     state.idle_seq += 1;
+                    state.active_epoch = Some(state.retire_epoch);
                     if let Some(task) = state.idle_task.take() {
                         task.abort();
                     }
@@ -309,6 +320,7 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
         }
         state.active_readers += 1;
         state.idle_seq += 1;
+        state.active_epoch = Some(state.retire_epoch);
         if let Some(task) = state.idle_task.take() {
             task.abort();
         }
@@ -330,9 +342,11 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
         Ok(output)
     }
 
-    /// Restores (or drops, when closed) a checked-out handle: publishes it
-    /// for the next checkout, wakes one parked rival, and re-arms the idle
-    /// sleeper once readers drain.
+    /// Restores (or drops, when closed or retired) a checked-out handle:
+    /// publishes it for the next checkout, wakes one parked rival, and
+    /// re-arms the idle sleeper once readers drain. A handle checked out
+    /// before a [`Self::retire`] is dropped instead of republished so the
+    /// retiring index run frees the read lock once the search drains (#53).
     async fn restore(&self, handle: T) {
         let mut state = self.shared.state.lock().await;
         state.active_readers -= 1;
@@ -340,11 +354,20 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
         state.last_read_ms = UnixMillis::now_ms_or(0);
         let drained = state.active_readers == 0;
         let seq = state.idle_seq;
+        let checkout_epoch = state.active_epoch.take();
         if state.closed {
             // The cache died mid-search; `close()` already returned without
             // waiting for us. Drop the handle instead of restoring it.
             drop(state);
             handle.close().await;
+            return;
+        }
+        if checkout_epoch.is_some_and(|epoch| epoch != state.retire_epoch) {
+            // Retired mid-search: drop instead of republishing so the
+            // writer sees no reader on its next attempt.
+            drop(state);
+            handle.close().await;
+            self.shared.restored.notify_one();
             return;
         }
         // Restore for the next checkout and wake one parked rival. A
@@ -367,6 +390,7 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
     async fn release_checkout(&self) {
         let mut state = self.shared.state.lock().await;
         state.active_readers -= 1;
+        state.active_epoch = None;
         // Same direction as construction: diagnostic only, seq-guarded.
         state.last_read_ms = UnixMillis::now_ms_or(0);
         drop(state);
@@ -379,6 +403,32 @@ impl<T: ClosableHandle + 'static> WorkspaceReadSessionCache<T> {
         SessionCacheSnapshot {
             open: state.handle.is_some(),
             active_readers: state.active_readers,
+        }
+    }
+
+    /// Retires the resident read session without closing the cache: evicts
+    /// the idle handle (if home) and marks any checked-out handle for
+    /// drop-on-restore, so the next checkout reopens cold. Index runs call
+    /// this before taking the storage write lock: the cached session holds
+    /// a read lock renewed for 60 s per search, which otherwise fails every
+    /// write attempt with `LOCK.BUSY` while searches keep arriving (#53).
+    /// Never parks behind a running search or a slow open; the cache stays
+    /// usable afterwards (unlike [`Self::close`]).
+    pub async fn retire(&self) {
+        let taken = {
+            let mut state = self.shared.state.lock().await;
+            if state.closed {
+                return;
+            }
+            state.retire_epoch += 1;
+            state.idle_seq += 1;
+            if let Some(task) = state.idle_task.take() {
+                task.abort();
+            }
+            state.handle.take()
+        };
+        if let Some(handle) = taken {
+            handle.close().await;
         }
     }
 
@@ -699,6 +749,62 @@ mod tests {
             }
         );
         cache.with_read_blocking(|handle| handle.id).await.unwrap();
+        assert_eq!(opens.load(Ordering::SeqCst), 2);
+        cache.close().await;
+    }
+
+    #[tokio::test]
+    async fn retire_evicts_idle_session_and_stays_usable() {
+        let closes = Arc::new(AtomicUsize::new(0));
+        let opens = Arc::new(AtomicUsize::new(0));
+        let cache = cache(Duration::from_secs(3600), &closes, &opens);
+        let first = cache.with_read(|handle| handle.id).await.unwrap();
+        assert_eq!(first, 0);
+        // Retire evicts the idle handle without closing the cache (#53).
+        cache.retire().await;
+        assert_eq!(closes.load(Ordering::SeqCst), 1);
+        assert!(!cache.snapshot().await.open);
+        // The next search reopens cold instead of failing as closed.
+        let second = cache.with_read(|handle| handle.id).await.unwrap();
+        assert_eq!(second, 1);
+        assert_eq!(opens.load(Ordering::SeqCst), 2);
+        cache.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn retire_during_search_drops_handle_on_restore() {
+        use std::sync::atomic::AtomicBool;
+        let closes = Arc::new(AtomicUsize::new(0));
+        let opens = Arc::new(AtomicUsize::new(0));
+        let cache = cache(Duration::from_secs(3600), &closes, &opens);
+        let entered = Arc::new(Notify::new());
+        let entered_clone = entered.clone();
+        let proceed = Arc::new(AtomicBool::new(false));
+        let proceed_clone = proceed.clone();
+        let cache_clone = cache.clone();
+        let reader = tokio::spawn(async move {
+            cache_clone
+                .with_read(|_| {
+                    entered_clone.notify_one();
+                    while !proceed_clone.load(Ordering::SeqCst) {
+                        std::hint::spin_loop();
+                    }
+                    7
+                })
+                .await
+                .unwrap()
+        });
+        entered.notified().await;
+        // No idle handle is home; retire only marks the checkout so the
+        // search drops (rather than republishes) its handle on restore.
+        cache.retire().await;
+        assert_eq!(closes.load(Ordering::SeqCst), 0);
+        proceed.store(true, Ordering::SeqCst);
+        assert_eq!(reader.await.unwrap(), 7);
+        assert_eq!(closes.load(Ordering::SeqCst), 1);
+        assert!(!cache.snapshot().await.open);
+        // Cache stays usable: the next search reopens cold.
+        cache.with_read(|_| {}).await.unwrap();
         assert_eq!(opens.load(Ordering::SeqCst), 2);
         cache.close().await;
     }

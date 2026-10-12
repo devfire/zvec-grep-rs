@@ -183,7 +183,7 @@ impl RootActor {
             CoordinatorReason::Reconcile,
             &mut self.runtime,
             &self.shared.scheduler,
-            |take| build_index_run(tx, key, shared, take),
+            |take| build_index_run(tx, key, shared, self.sessions.clone(), take),
         ) {
             Ok(submitted) => Ok(submitted),
             Err(error) => {
@@ -207,7 +207,7 @@ impl RootActor {
             coordinator_reason,
             &mut self.runtime,
             &self.shared.scheduler,
-            |take| build_index_run(tx, key, shared, take),
+            |take| build_index_run(tx, key, shared, self.sessions.clone(), take),
         );
         if result.is_ok() {
             self.runtime.set_writer_pending(true);
