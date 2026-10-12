@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::*;
+use crate::job_scheduler::IndexJobSnapshot;
 use zg_core::index_status::IndexJobState;
 
 fn stub_service_config(dimension: usize) -> ServiceConfig {
@@ -129,6 +130,81 @@ async fn late_waiter_observes_terminal_state() {
     .unwrap()
     .unwrap();
     assert_eq!(terminal.state, IndexJobState::Succeeded);
+    backend.close().await;
+}
+
+#[tokio::test]
+async fn wait_for_fresh_applies_completion_without_resubmit() {
+    // Regression (#54): `wait_for_fresh` awaited `scheduler.wait` inside
+    // the actor, so the run's `IndexFinished` sat unprocessed in the same
+    // mailbox. The runtime still read dirty after the wait and the next
+    // loop round submitted a duplicate job. The wait must drain queued
+    // completions before re-checking, so one search settles fresh with
+    // the same job id.
+    let backend = backend();
+    let dir = fixture();
+    let root = root(&dir);
+    let submitted = backend
+        .index(
+            &root,
+            IndexInput {
+                rebuild: true,
+                ..IndexInput::default()
+            },
+        )
+        .await
+        .unwrap();
+    backend
+        .scheduler()
+        .wait(&submitted.job.id, None)
+        .await
+        .unwrap();
+    // Settle the actor-side apply (scheduler terminal precedes it).
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let status = backend.index_status(&root).await.unwrap();
+            let settled = status.dirty_revision == status.indexed_revision
+                && status
+                    .job
+                    .as_ref()
+                    .is_some_and(IndexJobSnapshot::is_terminal);
+            if settled {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    std::fs::write(dir.path().join("c.rs"), "fn gamma() {}\n").unwrap();
+    let changed = dir.path().join("c.rs");
+    let incremental = backend
+        .index(
+            &root,
+            IndexInput {
+                changed_paths: vec![changed],
+                ..IndexInput::default()
+            },
+        )
+        .await
+        .unwrap();
+    // Search while the incremental job is still in flight: the fresh-wait
+    // must settle that same job, not submit another.
+    let searched = backend
+        .search(
+            &root,
+            SearchQuery {
+                query: Some("gamma function".to_owned()),
+                limit: Some(5),
+                freshness: SearchFreshness::WaitForFresh,
+                ..SearchQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(searched.freshness, ResultFreshness::Fresh);
+    let live = backend.scheduler().get_by_root(&root).unwrap();
+    assert_eq!(live.id, incremental.job.id);
     backend.close().await;
 }
 

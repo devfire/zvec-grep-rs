@@ -295,6 +295,29 @@ impl RootActor {
             .map_err(BackendError::Engine)
     }
 
+    /// Applies queued index completions without yielding the actor.
+    ///
+    /// `wait_for_fresh` blocks the actor on `scheduler.wait`; the run's
+    /// `IndexFinished` message then sits in this same mailbox, so the
+    /// runtime still reads dirty after the wait and the next loop round
+    /// would submit a duplicate job (#54). Drain those completions before
+    /// re-checking: other commands are stashed and re-queued in order.
+    pub(crate) fn drain_finished(&mut self) {
+        let mut deferred = Vec::new();
+        loop {
+            match self.rx.try_recv() {
+                Ok(RootCommand::IndexFinished { finished }) => {
+                    self.apply_finished(*finished);
+                }
+                Ok(cmd) => deferred.push(cmd),
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+            }
+        }
+        for cmd in deferred {
+            let _ = self.tx.send(cmd);
+        }
+    }
+
     fn apply_finished(&mut self, finished: FinishedIndex) {
         self.runtime.set_writer_pending(false);
         match finished.outcome {

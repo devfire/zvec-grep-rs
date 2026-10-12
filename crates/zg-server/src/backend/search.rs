@@ -118,9 +118,19 @@ impl RootActor {
                 return Ok(());
             };
             if job.is_terminal() {
+                // The scheduler marks the job terminal before the actor
+                // applies its `IndexFinished` payload: drain first so a
+                // just-completed run reads fresh instead of resubmitting (#54).
+                self.drain_finished();
                 return Self::check_terminal_job(&job, self.runtime.needs_reconciliation());
             }
             let snapshot = self.shared.scheduler.wait(&job.id, None).await?;
+            // Same race as above: the run sends `IndexFinished` before the
+            // scheduler publishes terminal, so it is queued by now — apply
+            // it before re-checking, or the next round sees no active job
+            // and submits a duplicate (up to 3 rounds). Other commands
+            // queued during the wait are re-queued in order.
+            self.drain_finished();
             Self::check_terminal_job(&snapshot, self.runtime.needs_reconciliation())?;
         }
         Ok(())
