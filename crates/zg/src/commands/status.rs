@@ -58,7 +58,7 @@ fn run_status_direct(args: &StatusArgs, absolute: &Path) -> Result<String, CliEr
 async fn run_status_server(client: &DaemonClient, absolute: &Path) -> Result<String, CliError> {
     let display = absolute.to_string_lossy().into_owned();
     let result = client
-        .call_tool("zvec_grep_index_status", json!({"root": display}))
+        .call_admin_tool("zvec_grep_index_status", json!({"root": display}))
         .await?;
     if !result.text.trim().is_empty() {
         println!("{}", result.text);

@@ -202,7 +202,12 @@ pub struct ToolResult {
     pub structured: Value,
 }
 
-/// Raw JSON-RPC daemon client over the `/mcp` endpoint.
+/// Agent endpoint path: search only (`options.mcp_toolset`, default `agent`).
+const MCP_PATH: &str = "/mcp";
+/// Admin endpoint path: always the `full` toolset for CLI lifecycle commands.
+const MCP_ADMIN_PATH: &str = "/mcp/admin";
+
+/// Raw JSON-RPC daemon client over `/mcp` (search) and `/mcp/admin` (lifecycle).
 #[derive(Debug, Clone)]
 pub struct DaemonClient {
     base_url: String,
@@ -237,7 +242,7 @@ impl DaemonClient {
             .is_ok_and(|response| response.status().is_success())
     }
 
-    /// Calls one MCP tool: initialize → notify → `tools/call` → close.
+    /// Calls one agent tool over `/mcp`: initialize → notify → `tools/call` → close.
     ///
     /// The session is always closed before returning — on success, tool
     /// failure, and transport failure — so repeated CLI calls never
@@ -245,15 +250,39 @@ impl DaemonClient {
     /// close failure is logged to stderr and never masks the primary
     /// result.
     pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<ToolResult, CliError> {
-        let session = self.initialize().await?;
-        let outcome = self.call_tool_with_session(name, arguments, &session).await;
-        self.close_session(&session).await;
+        self.call_tool_on(MCP_PATH, name, arguments).await
+    }
+
+    /// Calls one lifecycle tool over `/mcp/admin`: initialize → notify →
+    /// `tools/call` → close. The admin endpoint always serves the `full`
+    /// toolset, so `zg index`, `zg status`, and index drops work against a
+    /// default (`agent`) daemon.
+    pub async fn call_admin_tool(
+        &self,
+        name: &str,
+        arguments: Value,
+    ) -> Result<ToolResult, CliError> {
+        self.call_tool_on(MCP_ADMIN_PATH, name, arguments).await
+    }
+
+    async fn call_tool_on(
+        &self,
+        endpoint: &str,
+        name: &str,
+        arguments: Value,
+    ) -> Result<ToolResult, CliError> {
+        let session = self.initialize_on(endpoint).await?;
+        let outcome = self
+            .call_tool_with_session_on(endpoint, name, arguments, &session)
+            .await;
+        self.close_session_on(endpoint, &session).await;
         outcome
     }
 
     /// Runs `tools/call` on an open session; the caller owns closing it.
-    async fn call_tool_with_session(
+    async fn call_tool_with_session_on(
         &self,
+        endpoint: &str,
         name: &str,
         arguments: Value,
         session: &str,
@@ -264,7 +293,7 @@ impl DaemonClient {
             "method": "tools/call",
             "params": {"name": name, "arguments": arguments},
         });
-        let message = self.post(&body, Some(session)).await?;
+        let message = self.post_on(endpoint, &body, Some(session)).await?;
         if let Some(error) = message.get("error") {
             return Err(tool_error(name, error));
         }
@@ -278,15 +307,15 @@ impl DaemonClient {
         })
     }
 
-    /// Best-effort session close: `DELETE /mcp` with the session id.
+    /// Best-effort session close: `DELETE` the endpoint with the session id.
     ///
     /// Never fails: transport errors and unexpected statuses are logged
     /// to stderr so a close failure cannot mask the primary call result.
     /// A 404 means the session is already gone and counts as closed.
-    async fn close_session(&self, session: &str) {
+    async fn close_session_on(&self, endpoint: &str, session: &str) {
         let mut request = self
             .http
-            .delete(format!("{}/mcp", self.base_url))
+            .delete(format!("{}{endpoint}", self.base_url))
             .header("origin", self.base_url.clone())
             .timeout(Duration::from_secs(5));
         if let Some(token) = &self.token {
@@ -306,9 +335,9 @@ impl DaemonClient {
         }
     }
 
-    /// Opens a session: `initialize` returns the session id, then the
-    /// client sends `notifications/initialized`.
-    async fn initialize(&self) -> Result<String, CliError> {
+    /// Opens a session on `endpoint`: `initialize` returns the session id,
+    /// then the client sends `notifications/initialized`.
+    async fn initialize_on(&self, endpoint: &str) -> Result<String, CliError> {
         let body = json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -319,7 +348,7 @@ impl DaemonClient {
                 "clientInfo": {"name": "zvec-grep-cli", "version": env!("CARGO_PKG_VERSION")},
             },
         });
-        let response = self.post_raw(&body, None).await?;
+        let response = self.post_raw_on(endpoint, &body, None).await?;
         let session = response
             .headers()
             .get("mcp-session-id")
@@ -332,18 +361,18 @@ impl DaemonClient {
                 ))
             })?;
         let notified = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
-        let ack = match self.post_raw(&notified, Some(&session)).await {
+        let ack = match self.post_raw_on(endpoint, &notified, Some(&session)).await {
             Ok(ack) => ack,
             Err(error) => {
                 // The server created the session before the handshake send
                 // failed; close it so the partial open never leaks.
-                self.close_session(&session).await;
+                self.close_session_on(endpoint, &session).await;
                 return Err(error);
             }
         };
         if !ack.status().is_success() {
             let status = ack.status();
-            self.close_session(&session).await;
+            self.close_session_on(endpoint, &session).await;
             return Err(CliError::daemon_unavailable(format!(
                 "zvec-grep server at {} rejected the MCP handshake (HTTP {status})",
                 self.base_url,
@@ -352,8 +381,13 @@ impl DaemonClient {
         Ok(session)
     }
 
-    async fn post(&self, body: &Value, session: Option<&str>) -> Result<Value, CliError> {
-        let response = self.post_raw(body, session).await?;
+    async fn post_on(
+        &self,
+        endpoint: &str,
+        body: &Value,
+        session: Option<&str>,
+    ) -> Result<Value, CliError> {
+        let response = self.post_raw_on(endpoint, body, session).await?;
         let status = response.status();
         let text = response.text().await.map_err(|error| {
             CliError::daemon_unavailable(format!("failed to read the daemon response: {error}"))
@@ -364,14 +398,15 @@ impl DaemonClient {
         Ok(parse_message(&text))
     }
 
-    async fn post_raw(
+    async fn post_raw_on(
         &self,
+        endpoint: &str,
         body: &Value,
         session: Option<&str>,
     ) -> Result<reqwest::Response, CliError> {
         let mut request = self
             .http
-            .post(format!("{}/mcp", self.base_url))
+            .post(format!("{}{endpoint}", self.base_url))
             .header("content-type", "application/json")
             .header("accept", "application/json, text/event-stream")
             .header("origin", self.base_url.clone())

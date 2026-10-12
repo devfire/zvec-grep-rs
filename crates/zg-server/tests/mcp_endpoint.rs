@@ -68,9 +68,14 @@ fn client() -> reqwest::Client {
     reqwest::Client::new()
 }
 
-async fn post(base: &str, body: &Value, session: Option<&str>) -> reqwest::Response {
+async fn post_path(
+    base: &str,
+    path: &str,
+    body: &Value,
+    session: Option<&str>,
+) -> reqwest::Response {
     let mut request = client()
-        .post(format!("{base}/mcp"))
+        .post(format!("{base}{path}"))
         .header("content-type", JSON)
         .header("accept", ACCEPT)
         .json(body);
@@ -78,6 +83,10 @@ async fn post(base: &str, body: &Value, session: Option<&str>) -> reqwest::Respo
         request = request.header("mcp-session-id", id);
     }
     request.send().await.unwrap()
+}
+
+async fn post(base: &str, body: &Value, session: Option<&str>) -> reqwest::Response {
+    post_path(base, "/mcp", body, session).await
 }
 
 /// Single JSON-RPC message from a POST body (plain JSON; SSE `data:`
@@ -135,9 +144,9 @@ fn list_body(id: u64) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "method": "tools/list", "params": {}})
 }
 
-/// Initialize → notify → returns the session id.
-async fn initialize(base: &str) -> String {
-    let response = post(base, &initialize_body(1), None).await;
+/// Initialize → notify on `path` → returns the session id.
+async fn initialize_on(base: &str, path: &str) -> String {
+    let response = post_path(base, path, &initialize_body(1), None).await;
     assert_eq!(response.status(), reqwest::StatusCode::OK);
     let session = response
         .headers()
@@ -146,13 +155,18 @@ async fn initialize(base: &str) -> String {
         .to_str()
         .unwrap()
         .to_owned();
-    let notified = post(base, &initialized_notification(), Some(&session)).await;
+    let notified = post_path(base, path, &initialized_notification(), Some(&session)).await;
     assert!(
         notified.status().is_success(),
         "initialized: {}",
         notified.status()
     );
     session
+}
+
+/// Initialize → notify → returns the session id on `/mcp`.
+async fn initialize(base: &str) -> String {
+    initialize_on(base, "/mcp").await
 }
 
 // NOTE: the full index-then-search lifecycle proof lived here. Removed as flaky:
@@ -530,5 +544,93 @@ async fn index_status_reports_persisted_nested_git_policy() {
             .is_some_and(|enabled| enabled,)),
         "{roots:?}"
     );
+    server.close().await;
+}
+
+#[tokio::test]
+async fn default_agent_toolset_serves_lifecycle_on_admin() {
+    // Issue #57: a default (`agent`) daemon hid `zvec_grep_index*` from the
+    // CLI. `/mcp` stays agent-scoped; `/mcp/admin` always serves `full`.
+    let (server, base) = start(
+        stub_backend(),
+        McpToolset::Agent,
+        McpHttpEndpointOptions::default(),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_string_lossy().into_owned();
+
+    let session = initialize(&base).await;
+    let (status, listed) = message(post(&base, &list_body(2), Some(&session)).await).await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["zvec_grep_search"]);
+    let (status, unknown) = message(
+        post(
+            &base,
+            &call_body(3, "zvec_grep_index_status", &json!({"root": root})),
+            Some(&session),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    assert!(unknown.get("error").is_some(), "{unknown}");
+
+    let admin = initialize_on(&base, "/mcp/admin").await;
+    let (status, listed) =
+        message(post_path(&base, "/mcp/admin", &list_body(2), Some(&admin)).await).await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    let mut names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        vec![
+            "zvec_grep_index",
+            "zvec_grep_index_drop",
+            "zvec_grep_index_status",
+            "zvec_grep_rg",
+            "zvec_grep_search",
+            "zvec_grep_server_status",
+        ]
+    );
+    // Lifecycle tools run on the admin endpoint: `server_status` needs no
+    // index and succeeds, while `index_status` on a never-indexed root
+    // reaches the backend (`-32603` missing-index) instead of failing as an
+    // unknown method like on `/mcp` above.
+    let (status, reported) = message(
+        post_path(
+            &base,
+            "/mcp/admin",
+            &call_body(3, "zvec_grep_server_status", &json!({})),
+            Some(&admin),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::OK, "{reported}");
+    assert!(reported.get("error").is_none(), "{reported}");
+    let (status, reported) = message(
+        post_path(
+            &base,
+            "/mcp/admin",
+            &call_body(4, "zvec_grep_index_status", &json!({"root": root})),
+            Some(&admin),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::OK, "{reported}");
+    assert_eq!(reported["error"]["code"], -32603, "{reported}");
     server.close().await;
 }

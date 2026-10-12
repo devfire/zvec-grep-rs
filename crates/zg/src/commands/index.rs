@@ -328,7 +328,7 @@ async fn run_index_server(
     }
     let absolute = absolute_path(root)?;
     let result = client
-        .call_tool(
+        .call_admin_tool(
             "zvec_grep_index",
             json!({
                 "root": absolute.to_string_lossy(),
@@ -418,7 +418,7 @@ async fn run_index_drop(args: &IndexArgs, root: &Path) -> Result<(), CliError> {
 /// Drops one index through the daemon.
 async fn drop_via_server(client: &DaemonClient, root: &str) -> Result<bool, CliError> {
     let result = client
-        .call_tool("zvec_grep_index_drop", json!({"root": root}))
+        .call_admin_tool("zvec_grep_index_drop", json!({"root": root}))
         .await?;
     Ok(result
         .structured

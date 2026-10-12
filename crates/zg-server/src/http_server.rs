@@ -8,8 +8,9 @@
 //! (401 otherwise); MCP routes additionally demand a loopback Origin
 //! (403) and answer 401 with `WWW-Authenticate: Bearer`.
 //!
-//! `/mcp` and `/mcp/admin` serve the rmcp `StreamableHTTP` endpoint (plus
-//! the TS legacy-session guards) behind the same loopback/auth guards.
+//! `/mcp` serves `options.mcp_toolset` (default `agent`: search only); `/mcp/admin`
+//! always serves the `full` toolset (search plus index lifecycle, rg, status)
+//! behind the same loopback/auth guards, mirroring the TS admin endpoint.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -45,7 +46,9 @@ pub struct DaemonHttpServerOptions {
     pub token: Option<String>,
     /// Backend serving index/search/status.
     pub backend: DaemonBackend,
-    /// MCP toolset; defaults to the `agent` set.
+    /// MCP toolset for `/mcp`; defaults to the `agent` set. `/mcp/admin` always
+    /// serves the `full` toolset so CLI lifecycle commands work against a
+    /// default daemon without exposing lifecycle tools to agents on `/mcp`.
     pub mcp_toolset: McpToolset,
     /// MCP HTTP endpoint tuning.
     pub mcp_endpoint: McpHttpEndpointOptions,
@@ -71,6 +74,7 @@ struct AppState {
     token: Option<String>,
     backend: DaemonBackend,
     mcp: McpHttpEndpoint,
+    mcp_admin: McpHttpEndpoint,
     shutdown: CancellationToken,
 }
 
@@ -107,11 +111,21 @@ impl DaemonHttpServer {
         .map_err(|error| DaemonError::IndexFailed {
             message: format!("invalid MCP endpoint options: {error}"),
         })?;
+        let mcp_admin = McpHttpEndpoint::new(
+            options.backend.clone(),
+            options.version.clone(),
+            McpToolset::Full,
+            &options.mcp_endpoint,
+        )
+        .map_err(|error| DaemonError::IndexFailed {
+            message: format!("invalid MCP endpoint options: {error}"),
+        })?;
         Ok(Self {
             state: Arc::new(AppState {
                 token: options.token,
                 backend: options.backend,
                 mcp,
+                mcp_admin,
                 shutdown: CancellationToken::new(),
             }),
             host: options.host,
@@ -201,9 +215,9 @@ fn router(state: Arc<AppState>) -> axum::Router {
         )
         .route(
             "/mcp/admin",
-            post(mcp_post)
-                .get(mcp_session_request)
-                .delete(mcp_session_request),
+            post(mcp_admin_post)
+                .get(mcp_admin_session_request)
+                .delete(mcp_admin_session_request),
         )
         .fallback(not_found)
         .with_state(state)
@@ -254,22 +268,24 @@ async fn mcp_session_request(
     method: axum::http::Method,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if !valid_host(headers.get("host")) || !valid_origin(headers.get("origin")) {
-        return (
-            StatusCode::FORBIDDEN,
-            axum::Json(json!({ "error": "forbidden_origin" })),
-        )
-            .into_response();
-    }
-    if !valid_token(headers.get("authorization"), state.token.as_deref()) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
-            axum::Json(json!({ "error": "unauthorized" })),
-        )
-            .into_response();
+    if let Some(denied) = mcp_guard(&headers, state.token.as_deref()) {
+        return denied;
     }
     state.mcp.handle_session_request(&method, &headers).await
+}
+
+async fn mcp_admin_session_request(
+    State(state): State<Arc<AppState>>,
+    method: axum::http::Method,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Some(denied) = mcp_guard(&headers, state.token.as_deref()) {
+        return denied;
+    }
+    state
+        .mcp_admin
+        .handle_session_request(&method, &headers)
+        .await
 }
 
 async fn mcp_post(
@@ -277,39 +293,77 @@ async fn mcp_post(
     headers: HeaderMap,
     body: Body,
 ) -> impl IntoResponse {
+    if let Some(denied) = mcp_guard(&headers, state.token.as_deref()) {
+        return denied;
+    }
+    let body = match read_mcp_body(body).await {
+        Ok(bytes) => bytes,
+        Err(response) => return response,
+    };
+    state.mcp.handle_post(&headers, &body).await
+}
+
+async fn mcp_admin_post(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Body,
+) -> impl IntoResponse {
+    if let Some(denied) = mcp_guard(&headers, state.token.as_deref()) {
+        return denied;
+    }
+    let body = match read_mcp_body(body).await {
+        Ok(bytes) => bytes,
+        Err(response) => return response,
+    };
+    state.mcp_admin.handle_post(&headers, &body).await
+}
+
+/// Shared loopback/auth guard for both MCP routes. `Some` is the denial
+/// response; `None` means the request may proceed to the endpoint.
+fn mcp_guard(headers: &HeaderMap, token: Option<&str>) -> Option<axum::response::Response> {
     if !valid_host(headers.get("host")) || !valid_origin(headers.get("origin")) {
-        return (
-            StatusCode::FORBIDDEN,
-            axum::Json(json!({ "error": "forbidden_origin" })),
-        )
-            .into_response();
+        return Some(
+            (
+                StatusCode::FORBIDDEN,
+                axum::Json(json!({ "error": "forbidden_origin" })),
+            )
+                .into_response(),
+        );
     }
-    if !valid_token(headers.get("authorization"), state.token.as_deref()) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
-            axum::Json(json!({ "error": "unauthorized" })),
-        )
-            .into_response();
+    if !valid_token(headers.get("authorization"), token) {
+        return Some(
+            (
+                StatusCode::UNAUTHORIZED,
+                [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
+                axum::Json(json!({ "error": "unauthorized" })),
+            )
+                .into_response(),
+        );
     }
+    None
+}
+
+/// Reads and validates one MCP body, preserving the pre-split status
+/// mapping: oversized reads are 413, malformed JSON is 400.
+async fn read_mcp_body(body: Body) -> Result<bytes::Bytes, axum::response::Response> {
     let Ok(bytes) = to_bytes(body, MAX_REQUEST_BYTES + 1).await else {
-        return rpc_error(
+        return Err(rpc_error(
             StatusCode::PAYLOAD_TOO_LARGE,
             -32700,
             "Request body too large.",
-        );
+        ));
     };
     if bytes.len() > MAX_REQUEST_BYTES {
-        return rpc_error(
+        return Err(rpc_error(
             StatusCode::PAYLOAD_TOO_LARGE,
             -32700,
             "Request body too large.",
-        );
+        ));
     }
     if serde_json::from_slice::<Value>(&bytes).is_err() {
-        return rpc_error(StatusCode::BAD_REQUEST, -32700, "Invalid JSON.");
+        return Err(rpc_error(StatusCode::BAD_REQUEST, -32700, "Invalid JSON."));
     }
-    state.mcp.handle_post(&headers, &bytes).await
+    Ok(bytes)
 }
 
 fn rpc_error(status: StatusCode, code: i32, message: &str) -> axum::response::Response {
