@@ -28,7 +28,9 @@ pub fn embedding_environment_from_meta(meta: Option<&serde_json::Value>) -> Opti
 /// Reads the embedding environment from a string-keyed meta map (the
 /// shape rmcp exposes through request extensions).
 #[must_use]
-pub fn embedding_environment_from_map<S: BuildHasher>(meta: &HashMap<String, String, S>) -> Option<String> {
+pub fn embedding_environment_from_map<S: BuildHasher>(
+    meta: &HashMap<String, String, S>,
+) -> Option<String> {
     let text = meta.get(EMBEDDING_ENVIRONMENT_META_KEY)?.trim();
     if text.is_empty() {
         return None;

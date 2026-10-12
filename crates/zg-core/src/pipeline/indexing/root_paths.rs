@@ -224,7 +224,10 @@ fn root_path_to_scan_domain(root: &RootPath) -> EngineResult<RootScanDomain> {
     } else {
         ScanDomainKind::Directory
     };
-    let real_path = std::fs::canonicalize(path).map_or_else(|_| root.absolute_path.clone(), |real| to_display_path(&real));
+    let real_path = std::fs::canonicalize(path).map_or_else(
+        |_| root.absolute_path.clone(),
+        |real| to_display_path(&real),
+    );
     Ok(RootScanDomain {
         root: root.clone(),
         real_path,

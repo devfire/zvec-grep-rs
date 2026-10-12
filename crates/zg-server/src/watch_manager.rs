@@ -417,12 +417,9 @@ fn record_raw(
 /// prefix check, safe on any thread.
 fn is_internal_path(root: &str, absolute: &str) -> bool {
     if let Ok(relative) = Path::new(absolute).strip_prefix(Path::new(root))
-        && relative.components().any(|component| {
-            matches!(
-                component.as_os_str().to_str(),
-                Some(".git" | ".zvec-grep")
-            )
-        })
+        && relative
+            .components()
+            .any(|component| matches!(component.as_os_str().to_str(), Some(".git" | ".zvec-grep")))
     {
         return true;
     }
@@ -603,19 +600,19 @@ async fn classify_loop(shared: Arc<Shared>, mut events: Receiver<RawEvent>) {
         if let Ok(entries) = classified {
             fold_classified(&shared, &entries);
         } else {
-                // A panicking classifier cannot be trusted: reconcile
-                // everything (mirrors the watcher-error path, no new error
-                // taxonomy needed).
-                shared
-                    .changes
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .require_full_reconcile();
-                shared
-                    .reconcile_requested
-                    .store(true, std::sync::atomic::Ordering::SeqCst);
-                set_pending(&shared, true);
-                shared.poke();
+            // A panicking classifier cannot be trusted: reconcile
+            // everything (mirrors the watcher-error path, no new error
+            // taxonomy needed).
+            shared
+                .changes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .require_full_reconcile();
+            shared
+                .reconcile_requested
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            set_pending(&shared, true);
+            shared.poke();
         }
     }
 }

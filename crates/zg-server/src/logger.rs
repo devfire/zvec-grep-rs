@@ -178,7 +178,9 @@ fn sanitize_fields(fields: BTreeMap<String, LogField>) -> BTreeMap<String, LogFi
                     let kept: String = text.chars().take(511).collect();
                     Some((key, LogField::Text(format!("{kept}\u{2026}"))))
                 }
-                other @ (LogField::Text(_) | LogField::Int(_) | LogField::Bool(_)) => Some((key, other)),
+                other @ (LogField::Text(_) | LogField::Int(_) | LogField::Bool(_)) => {
+                    Some((key, other))
+                }
             }
         })
         .collect()

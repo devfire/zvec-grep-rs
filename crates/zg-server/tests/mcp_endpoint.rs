@@ -516,7 +516,8 @@ async fn index_status_reports_persisted_nested_git_policy() {
         if !roots.is_empty() {
             break;
         }
-        assert!(attempt != 99, 
+        assert!(
+            attempt != 99,
             "status reports workspace roots: {}",
             reported["result"]["structuredContent"]
         );

@@ -226,7 +226,8 @@ fn validate_index_version(info: &WorkspaceIndexInfo) -> EngineResult<()> {
         return Ok(());
     }
     let actual = info
-        .index_version.map_or_else(|| "null".to_owned(), |version| version.to_string());
+        .index_version
+        .map_or_else(|| "null".to_owned(), |version| version.to_string());
     let detail = error_details(vec![
         DetailEntry::Line(&workspace_index_detail(&info.name)),
         DetailEntry::Pair("expected", DetailValue::Int(CURRENT_INDEX_VERSION)),

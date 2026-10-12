@@ -507,8 +507,10 @@ impl RemoteEmbeddingAuthorizationStore {
         path: &Path,
         update: impl FnOnce(&mut RemoteEmbeddingDocument) -> bool,
     ) -> EngineResult<bool> {
-        let lock_path = path
-            .parent().map_or_else(|| PathBuf::from("authorization-store"), |parent| parent.join("authorization-store"));
+        let lock_path = path.parent().map_or_else(
+            || PathBuf::from("authorization-store"),
+            |parent| parent.join("authorization-store"),
+        );
         let _guard = acquire_read_write_lock(
             &lock_path,
             LockMode::Write,
@@ -853,11 +855,15 @@ mod tests {
             .expect("read keys");
         assert_eq!(keys.len(), 1);
         let key = keys.into_iter().next().expect("key present");
-        assert!(RemoteEmbeddingAuthorizationStore::verify_grant(&grant, &key));
+        assert!(RemoteEmbeddingAuthorizationStore::verify_grant(
+            &grant, &key
+        ));
         // Length mismatch fails before content comparison.
         let mut short = grant.clone();
         short.signature.truncate(short.signature.len() / 2);
-        assert!(!RemoteEmbeddingAuthorizationStore::verify_grant(&short, &key));
+        assert!(!RemoteEmbeddingAuthorizationStore::verify_grant(
+            &short, &key
+        ));
     }
 
     #[test]

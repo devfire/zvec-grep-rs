@@ -46,65 +46,116 @@ impl From<ModelError> for EngineError {
         // below consumes `error` for the context rendering.
         let source = error.clone();
         let context: Option<String> = match error {
-            ModelError::CatalogModelNotFound { reference } => Some(format!("embedding={reference}")),
+            ModelError::CatalogModelNotFound { reference } => {
+                Some(format!("embedding={reference}"))
+            }
             ModelError::NotImplemented { reference, backend } => {
                 Some(format!("reference={reference} backend={backend}"))
             }
-            ModelError::BackendUnavailable { reference, backend } => {
-                Some(format!("reference={reference} backend={}", backend.as_str()))
-            }
+            ModelError::BackendUnavailable { reference, backend } => Some(format!(
+                "reference={reference} backend={}",
+                backend.as_str()
+            )),
             ModelError::QwenText { context, .. }
             | ModelError::QwenVl { context, .. }
             | ModelError::DownloadFailed { context } => Some(context),
-            ModelError::MissingApiKey { context, .. } | ModelError::MissingEndpoint { context, .. } => {
-                Some(context)
-            }
+            ModelError::MissingApiKey { context, .. }
+            | ModelError::MissingEndpoint { context, .. } => Some(context),
             ModelError::EmptyInput { reference }
             | ModelError::WorkerFailed { reference }
             | ModelError::TransformersJsDisposed { reference }
             | ModelError::LlamaCppDisposed { reference } => Some(model_only(&reference)),
-            ModelError::BatchTooLarge { reference, size, max } => {
-                Some(format!("model={reference} batchSize={size} maxBatchSize={max}"))
-            }
-            ModelError::EmptyText { reference, index } | ModelError::EmptyImage { reference, index } => {
-                Some(model_index(&reference, index))
-            }
+            ModelError::BatchTooLarge {
+                reference,
+                size,
+                max,
+            } => Some(format!(
+                "model={reference} batchSize={size} maxBatchSize={max}"
+            )),
+            ModelError::EmptyText { reference, index }
+            | ModelError::EmptyImage { reference, index } => Some(model_index(&reference, index)),
             ModelError::UnsupportedImage { reference, index } => {
                 Some(unsupported_image_context(&reference, index))
             }
-            ModelError::ImageTooLarge { reference, index, bytes, max_bytes } => Some(format!(
+            ModelError::ImageTooLarge {
+                reference,
+                index,
+                bytes,
+                max_bytes,
+            } => Some(format!(
                 "model={reference} index={index} imageBytes={bytes} maxImageBytes={max_bytes}"
             )),
-            ModelError::VectorCountMismatch { reference, expected, actual } => {
-                Some(format!("model={reference} contentCount={expected} vectorCount={actual}"))
-            }
-            ModelError::DimensionMismatch { reference, vector_index, expected, actual } => Some(format!(
+            ModelError::VectorCountMismatch {
+                reference,
+                expected,
+                actual,
+            } => Some(format!(
+                "model={reference} contentCount={expected} vectorCount={actual}"
+            )),
+            ModelError::DimensionMismatch {
+                reference,
+                vector_index,
+                expected,
+                actual,
+            } => Some(format!(
                 "model={reference} vectorIndex={vector_index} expectedDimension={expected} actualDimension={actual}"
             )),
-            ModelError::NonFiniteValue { reference, vector_index, value_index } => Some(format!(
+            ModelError::NonFiniteValue {
+                reference,
+                vector_index,
+                value_index,
+            } => Some(format!(
                 "model={reference} vectorIndex={vector_index} valueIndex={value_index}"
             )),
-            ModelError::InvalidTruncatedIndex { reference, index, input_count } => {
-                Some(format!("model={reference} index={index} inputCount={input_count}"))
+            ModelError::InvalidTruncatedIndex {
+                reference,
+                index,
+                input_count,
+            } => Some(format!(
+                "model={reference} index={index} inputCount={input_count}"
+            )),
+            ModelError::Model2VecLoad {
+                reference,
+                repo,
+                revision,
+                detail,
             }
-            ModelError::Model2VecLoad { reference, repo, revision, detail }
-            | ModelError::Model2VecDownload { reference, repo, revision, detail } => {
-                Some(model_revision_detail(&reference, &repo, &revision, &detail))
+            | ModelError::Model2VecDownload {
+                reference,
+                repo,
+                revision,
+                detail,
+            } => Some(model_revision_detail(&reference, &repo, &revision, &detail)),
+            ModelError::Model2VecEmbed {
+                reference,
+                repo,
+                detail,
             }
-            ModelError::Model2VecEmbed { reference, repo, detail }
-            | ModelError::TransformersJsEmbed { reference, repo, detail }
-            | ModelError::TransformersJsTokenize { reference, repo, detail } => {
-                Some(model_repo_detail(&reference, &repo, &detail))
+            | ModelError::TransformersJsEmbed {
+                reference,
+                repo,
+                detail,
             }
-            ModelError::TokenOutOfRange { reference, id, rows } => {
-                Some(format!("model={reference} id={id} rows={rows}"))
-            }
+            | ModelError::TransformersJsTokenize {
+                reference,
+                repo,
+                detail,
+            } => Some(model_repo_detail(&reference, &repo, &detail)),
+            ModelError::TokenOutOfRange {
+                reference,
+                id,
+                rows,
+            } => Some(format!("model={reference} id={id} rows={rows}")),
             ModelError::Model2VecTokenize { reference, detail }
             | ModelError::TransformersJsInvalidTensor { reference, detail }
-            | ModelError::LlamaCppEmbed { reference, detail } => Some(model_detail(&reference, &detail)),
-            ModelError::LlamaCppInvalidGguf { reference, path, detail } => {
-                Some(format!("model={reference} path={path} detail={detail}"))
+            | ModelError::LlamaCppEmbed { reference, detail } => {
+                Some(model_detail(&reference, &detail))
             }
+            ModelError::LlamaCppInvalidGguf {
+                reference,
+                path,
+                detail,
+            } => Some(format!("model={reference} path={path} detail={detail}")),
             ModelError::LlamaCppInvalidGgufHtml { reference, path } => {
                 Some(format!("model={reference} path={path}"))
             }

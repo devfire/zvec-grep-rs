@@ -358,12 +358,16 @@ fn embed_and_commit_wave(
         }
         handles
             .into_iter()
-            .map(|handle| if let Ok(outcome) = handle.join() { outcome } else {
-                abort.store(true, Ordering::Relaxed);
-                UnitOutcome::Failed(EngineError::new(
-                    EngineErrorCode::IndexingEmbeddingThreadFailed,
-                    "embedding worker thread failed",
-                ))
+            .map(|handle| {
+                if let Ok(outcome) = handle.join() {
+                    outcome
+                } else {
+                    abort.store(true, Ordering::Relaxed);
+                    UnitOutcome::Failed(EngineError::new(
+                        EngineErrorCode::IndexingEmbeddingThreadFailed,
+                        "embedding worker thread failed",
+                    ))
+                }
             })
             .collect()
     });
@@ -567,7 +571,8 @@ fn embed_unit(
                     scheduler,
                     abort,
                     cancel,
-                    thread_progress_sink(on_progress, scheduler, stats, progress_base, total).as_ref(),
+                    thread_progress_sink(on_progress, scheduler, stats, progress_base, total)
+                        .as_ref(),
                 ) {
                     Ok(result) => results.push(FileOutcome::Embedded(FileEmbed {
                         vectors: result.vectors,

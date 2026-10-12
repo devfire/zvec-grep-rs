@@ -17,11 +17,10 @@ pub(crate) fn report_index_finalizing(
         ctx,
         IndexProgress {
             phase: Some(IndexProgressPhase::Indexing),
-            files_total: Some(
-                progress_base.map_or_else(|| {
-                        pass.diff.added.len() + pass.diff.modified.len() + pass.diff.pending.len()
-                    }, |base| base.files_total),
-            ),
+            files_total: Some(progress_base.map_or_else(
+                || pass.diff.added.len() + pass.diff.modified.len() + pass.diff.pending.len(),
+                |base| base.files_total,
+            )),
             files_indexed: Some(
                 progress_base.map_or(0, |base| base.files_succeeded)
                     + pass.stats.files_indexed
@@ -71,10 +70,7 @@ pub(crate) fn report_indexing(
         ctx,
         IndexProgress {
             phase: Some(IndexProgressPhase::Indexing),
-            files_total: Some(
-                progress_base
-                    .map_or(pending_len, |base| base.files_total),
-            ),
+            files_total: Some(progress_base.map_or(pending_len, |base| base.files_total)),
             files_indexed: Some(
                 progress_base.map_or(0, |base| base.files_succeeded)
                     + stats.files_indexed

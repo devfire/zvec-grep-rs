@@ -249,6 +249,8 @@ fn new_workspace_id() -> String {
 }
 
 fn workspace_name(location: &WorkspaceIndexLocation) -> String {
-    Path::new(&location.root)
-        .file_name().map_or_else(|| location.root.clone(), |name| name.to_string_lossy().into_owned())
+    Path::new(&location.root).file_name().map_or_else(
+        || location.root.clone(),
+        |name| name.to_string_lossy().into_owned(),
+    )
 }

@@ -165,10 +165,7 @@ fn find_script_blocks(text: &str) -> Vec<ScriptBlock> {
             break;
         };
         let mut close_end = close + 8;
-        while bytes
-            .get(close_end)
-            .is_some_and(u8::is_ascii_whitespace)
-        {
+        while bytes.get(close_end).is_some_and(u8::is_ascii_whitespace) {
             close_end += 1;
         }
         if bytes.get(close_end) != Some(&b'>') {

@@ -139,8 +139,9 @@ pub(crate) fn classify_code_node(node: &SyntaxNode<'_>, breadcrumb: &[String]) -
         let inner = node.named_children().into_iter().find(|child| {
             child.kind() == "function_definition" || child.kind() == "class_definition"
         });
-        return inner
-            .map_or(CodeSymbolType::Value, |child| classify_code_node(&child, breadcrumb));
+        return inner.map_or(CodeSymbolType::Value, |child| {
+            classify_code_node(&child, breadcrumb)
+        });
     }
     if (node_type == "field_definition"
         || node_type == "public_field_definition"

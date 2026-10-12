@@ -387,7 +387,10 @@ struct WalkFrame {
 /// Returns the parent set unchanged when ignores are disabled or the
 /// directory adds no fresh rules; otherwise appends the fresh rules to a
 /// merged copy shared down the stack by [`Arc`].
-fn resolve_frame_ignore_rules(root: &RootPath, frame: &WalkFrame) -> EngineResult<Arc<[IgnoreRule]>> {
+fn resolve_frame_ignore_rules(
+    root: &RootPath,
+    frame: &WalkFrame,
+) -> EngineResult<Arc<[IgnoreRule]>> {
     if root.no_ignore.unwrap_or(false) {
         return Ok(Arc::clone(&frame.ignore_rules));
     }
@@ -579,8 +582,7 @@ fn scan_root_path(
 }
 fn is_nested_git_repository_directory(absolute_path: &str) -> bool {
     let marker = Path::new(absolute_path).join(".git");
-    std::fs::symlink_metadata(&marker)
-        .is_ok_and(|meta| meta.is_file() || meta.is_dir())
+    std::fs::symlink_metadata(&marker).is_ok_and(|meta| meta.is_file() || meta.is_dir())
 }
 
 fn dedupe_files(files: Vec<FileInfo>) -> Vec<FileInfo> {

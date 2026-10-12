@@ -138,8 +138,12 @@ impl LexicalSearchOptions {
             max_depth: None,
             max_file_size_bytes: None,
             follow: false,
-            modified_after: context.modified_after.map(super::super::types::UnixMillis::as_millis),
-            modified_before: context.modified_before.map(super::super::types::UnixMillis::as_millis),
+            modified_after: context
+                .modified_after
+                .map(super::super::types::UnixMillis::as_millis),
+            modified_before: context
+                .modified_before
+                .map(super::super::types::UnixMillis::as_millis),
             fixed_strings: rg.is_some_and(|rg| rg.fixed_strings),
             ignore_case: rg.is_some_and(|rg| rg.case_insensitive),
             smart_case: rg.is_some_and(|rg| rg.smart_case),

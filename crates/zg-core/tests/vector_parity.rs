@@ -83,7 +83,9 @@ fn expected_truncated(reference: &str) -> Vec<usize> {
         // minilm (256): medium (~360 tokens) and long truncate.
         "local/all-minilm-l6-v2" => vec![1, 2],
         // bge (512) and GGUF (2048/8192): only the long input truncates, like TS.
-        "local/bge-small-en-v1.5" | "local/embeddinggemma-300m" | "local/qwen3-embedding-0.6b" => vec![2],
+        "local/bge-small-en-v1.5" | "local/embeddinggemma-300m" | "local/qwen3-embedding-0.6b" => {
+            vec![2]
+        }
         _ => Vec::new(),
     }
 }

@@ -28,13 +28,15 @@ pub const HARD_MAX_FILE_SIZE_BYTES: u64 = 536_870_912;
 /// selects the per-kind default.
 #[must_use]
 pub fn resolve_max_file_size_bytes(kind: FileKind, explicit: Option<u64>) -> u64 {
-    explicit
-        .map_or(match kind {
+    explicit.map_or(
+        match kind {
             FileKind::Code => DEFAULT_MAX_CODE_FILE_SIZE_BYTES,
             FileKind::Text => DEFAULT_MAX_TEXT_FILE_SIZE_BYTES,
             FileKind::Data => DEFAULT_MAX_DATA_FILE_SIZE_BYTES,
             FileKind::Image => DEFAULT_MAX_IMAGE_FILE_SIZE_BYTES,
-        }, |cap| cap.min(HARD_MAX_FILE_SIZE_BYTES))
+        },
+        |cap| cap.min(HARD_MAX_FILE_SIZE_BYTES),
+    )
 }
 
 /// Rejects a zero explicit cap (`Some(0)` would silently skip every file).

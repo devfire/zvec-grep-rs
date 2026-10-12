@@ -449,8 +449,8 @@ fn find_provider_message(text: &str) -> Option<String> {
     let position = find_ascii_insensitive(text, key)?;
     let start = position + key.len();
     let rest = text.get(start..)?;
-    let end = find_ascii_insensitive(rest, "zvec_grep.")
-        .map_or(text.len(), |offset| start + offset);
+    let end =
+        find_ascii_insensitive(rest, "zvec_grep.").map_or(text.len(), |offset| start + offset);
     text.get(start..end).map(ToOwned::to_owned)
 }
 
@@ -520,7 +520,9 @@ fn retry_delay_ms(attempt: u32, retry: &RetryClassification) -> u64 {
 fn jitter_ms() -> u64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
-        .map_or(0, |duration| u64::from(duration.subsec_nanos()) % (EMBEDDING_RETRY_JITTER_MS + 1))
+        .map_or(0, |duration| {
+            u64::from(duration.subsec_nanos()) % (EMBEDDING_RETRY_JITTER_MS + 1)
+        })
 }
 
 fn http_status_from_text(text: &str) -> Option<u16> {

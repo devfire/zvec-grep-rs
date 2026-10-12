@@ -106,10 +106,7 @@ impl JobScheduler {
                     Err(failure) => {
                         let retryable = is_retryable(&failure);
                         let attempts_left = {
-                            let job = state
-                                .jobs
-                                .get(&id)
-                                .map_or(u32::MAX, |job| job.attempt);
+                            let job = state.jobs.get(&id).map_or(u32::MAX, |job| job.attempt);
                             job < self.shared.max_attempts
                         };
                         if retryable && attempts_left && !state.closed {

@@ -405,7 +405,9 @@ impl ZvecWorkspaceIndexStorage {
                                 }
                                 break;
                             };
-                            if let Ok(Some(next)) = doc_to_stored_fragment(doc, files) { *current = next } else {
+                            if let Ok(Some(next)) = doc_to_stored_fragment(doc, files) {
+                                *current = next
+                            } else {
                                 *slot = None;
                                 break;
                             }
@@ -566,7 +568,11 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
     ) -> EngineResult<Vec<StorageSearchHit>> {
         let collection = self.require_collection("searchFts")?;
         let docs = run_fts(collection, query, limit, filter)?;
-        Ok(Self::docs_to_hits(&docs, self.meta.records(), StorageSearchPath::Fts))
+        Ok(Self::docs_to_hits(
+            &docs,
+            self.meta.records(),
+            StorageSearchPath::Fts,
+        ))
     }
 
     fn search_vector(
@@ -577,7 +583,11 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
     ) -> EngineResult<Vec<StorageSearchHit>> {
         let collection = self.require_collection("searchVector")?;
         let docs = run_vector(collection, vector, limit, filter)?;
-        Ok(Self::docs_to_hits(&docs, self.meta.records(), StorageSearchPath::Vector))
+        Ok(Self::docs_to_hits(
+            &docs,
+            self.meta.records(),
+            StorageSearchPath::Vector,
+        ))
     }
 
     fn replace_file(
@@ -628,8 +638,7 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
                     indexed_time: Some(UnixMillis::now()),
                     entity_count: entity_ids.len(),
                     truncated_fragment_count: Some(
-                        diagnostics
-                            .map_or(0, |d| d.truncated_fragment_count.unwrap_or(0)),
+                        diagnostics.map_or(0, |d| d.truncated_fragment_count.unwrap_or(0)),
                     ),
                     ..FileIndexStatus::default()
                 }),

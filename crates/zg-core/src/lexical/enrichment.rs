@@ -139,9 +139,10 @@ fn enrich_lexical_item(
 
     *enriched_items += 1;
     enriched_files.insert(key);
-    let entity_id = container
-        .group
-        .clone().map_or_else(|| container.entity.id.clone(), crate::ids::EntityId::from_raw);
+    let entity_id = container.group.clone().map_or_else(
+        || container.entity.id.clone(),
+        crate::ids::EntityId::from_raw,
+    );
     let mut enriched = item.clone();
     // `container.metadata ?? item.metadata`: the fragment wins when present.
     if container.entity.metadata.is_some() {
@@ -184,8 +185,7 @@ fn parse_structural_fragments(
 fn is_structural_fragment(fragment: &EntityFragment) -> bool {
     matches!(
         fragment.entity.metadata,
-        Some(crate::types::EntityMetadata::Code(_) |
-crate::types::EntityMetadata::Markdown(_))
+        Some(crate::types::EntityMetadata::Code(_) | crate::types::EntityMetadata::Markdown(_))
     )
 }
 
@@ -317,7 +317,10 @@ fn compare_fragment_container(left: &EntityFragment, right: &EntityFragment) -> 
             start_line,
             end_line,
             ..
-        } => i64::try_from(end_line).unwrap_or(i64::MAX) - i64::try_from(start_line).unwrap_or(i64::MAX),
+        } => {
+            i64::try_from(end_line).unwrap_or(i64::MAX)
+                - i64::try_from(start_line).unwrap_or(i64::MAX)
+        }
         crate::types::Range::File
         | crate::types::Range::Byte { .. }
         | crate::types::Range::Page { .. }

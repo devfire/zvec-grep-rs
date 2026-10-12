@@ -273,7 +273,10 @@ fn parse_atx_heading(line: &str) -> Option<(u32, String)> {
             rest.len()
         };
         if is_hash_tail(&rest[tail_byte..]) {
-            return Some((u32::try_from(hashes).ok()?, rest[..tail_byte].trim().to_owned()));
+            return Some((
+                u32::try_from(hashes).ok()?,
+                rest[..tail_byte].trim().to_owned(),
+            ));
         }
     }
     None
@@ -624,7 +627,10 @@ fn compute_markdown_overlap_lines(
 fn markdown_metadata(section: &Section) -> MarkdownEntityMetadata {
     MarkdownEntityMetadata {
         heading: section.heading.as_ref().map(|heading| heading.text.clone()),
-        level: section.heading.as_ref().map(|heading| heading.level.cast_signed()),
+        level: section
+            .heading
+            .as_ref()
+            .map(|heading| heading.level.cast_signed()),
         scope: if section.breadcrumb.is_empty() {
             None
         } else {

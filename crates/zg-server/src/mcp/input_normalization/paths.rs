@@ -41,9 +41,9 @@ fn normalize_lexical(path: &Path) -> String {
                 parts.pop();
             }
             Component::CurDir => {}
-            other @ (Component::Prefix(_)
-            | Component::RootDir
-            | Component::Normal(_)) => parts.push(other.as_os_str().to_owned()),
+            other @ (Component::Prefix(_) | Component::RootDir | Component::Normal(_)) => {
+                parts.push(other.as_os_str().to_owned())
+            }
         }
     }
     let mut normalized = PathBuf::new();

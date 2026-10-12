@@ -138,11 +138,8 @@ pub fn search_workspace_index(
         fuse_candidates(&mut fused);
         Ok::<_, EngineError>(fused)
     })?;
-    let visible: Vec<Candidate> = select_visible(
-        &mut fused,
-        limit,
-        normalized.plan.track_entity_id.as_ref(),
-    );
+    let visible: Vec<Candidate> =
+        select_visible(&mut fused, limit, normalized.plan.track_entity_id.as_ref());
     let hits: Vec<SearchHit> = timings.time("materialize", || {
         Ok::<_, EngineError>(
             visible

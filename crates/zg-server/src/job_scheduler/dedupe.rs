@@ -34,10 +34,8 @@ impl JobScheduler {
         // below: each branch takes it at most once and always returns.
         let mut incoming_run = Some(incoming_run);
         let chainable = incoming_reason == JobReason::Watch || followup_if_running;
-        let (queued_without_retry, followup_id) = state
-            .jobs
-            .get(active_id)
-            .map_or((false, None), |job| {
+        let (queued_without_retry, followup_id) =
+            state.jobs.get(active_id).map_or((false, None), |job| {
                 (
                     job.state == zg_core::index_status::IndexJobState::Queued && !job.retry_pending,
                     job.followup.clone(),

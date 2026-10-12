@@ -316,6 +316,15 @@ pub struct ProgressReporter {
     last_line: Instant,
 }
 
+/// Throttle watermark far enough in the past that the first report paints
+/// immediately. Falls back to now (first frame throttled, never panics) when
+/// the monotonic clock is younger than the offset, e.g. right after boot.
+fn throttling_epoch() -> Instant {
+    Instant::now()
+        .checked_sub(Duration::from_secs(60))
+        .unwrap_or_else(Instant::now)
+}
+
 impl ProgressReporter {
     /// Builds a reporter; `mode`/`no_color` settle `auto` against the
     /// stderr terminal (the stream the paint lands on) and `enabled`
@@ -328,8 +337,8 @@ impl ProgressReporter {
             tty: std::io::IsTerminal::is_terminal(&std::io::stderr()),
             tick: 0,
             completed: 0,
-            last_tty: Instant::now().checked_sub(Duration::from_secs(60)).unwrap(),
-            last_line: Instant::now().checked_sub(Duration::from_secs(60)).unwrap(),
+            last_tty: throttling_epoch(),
+            last_line: throttling_epoch(),
         }
     }
 

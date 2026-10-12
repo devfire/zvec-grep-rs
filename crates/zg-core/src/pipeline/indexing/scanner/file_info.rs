@@ -77,7 +77,9 @@ pub(crate) fn read_file_info(
         .modified()
         .ok()
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX));
+        .map_or(0, |duration| {
+            i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
+        });
     let known = known_files.get(&to_display_path(&normalize_path(Path::new(absolute_path))));
     if known.is_some_and(|known| {
         known.content_hash.is_some()

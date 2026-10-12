@@ -407,7 +407,8 @@ fn http_error(base_url: &str, status: u16, body: &str) -> CliError {
     let message = parse_message(body)
         .get("error")
         .and_then(|error| error.get("message"))
-        .and_then(Value::as_str).map_or_else(|| body.trim().to_owned(), str::to_owned);
+        .and_then(Value::as_str)
+        .map_or_else(|| body.trim().to_owned(), str::to_owned);
     match status {
         401 => CliError::daemon_unavailable(format!(
             "zvec-grep server at {base_url} rejected the bearer token: {message}"

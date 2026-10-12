@@ -38,7 +38,11 @@ pub fn build_filter(filter: Option<&StorageSearchFilter>) -> Option<String> {
     push_in_clause(
         &mut clauses,
         "symbol_type",
-        filter.symbol_types.iter().copied().map(symbol_type_filter_value),
+        filter
+            .symbol_types
+            .iter()
+            .copied()
+            .map(symbol_type_filter_value),
     );
     if clauses.is_empty() {
         return None;

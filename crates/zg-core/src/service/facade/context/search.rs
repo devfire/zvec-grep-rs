@@ -247,9 +247,10 @@ fn hit_to_item(hit: &SearchHit, group: &ContextGroup, trace: bool) -> ContextIte
             relative_path: hit.file.relative_path.clone(),
             root_path: hit.file.root_path.clone(),
         },
-        range: hit
-            .evidence
-            .first().map_or_else(|| hit.entity.range.clone(), |evidence| evidence.range.clone()),
+        range: hit.evidence.first().map_or_else(
+            || hit.entity.range.clone(),
+            |evidence| evidence.range.clone(),
+        ),
         excerpt_range: None,
         content: hit.entity.content.clone(),
         content_role: None,

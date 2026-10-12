@@ -360,8 +360,7 @@ fn run_path_index_pass(
                 known_files: Vec::new(),
                 cancel: ctx.cancel.clone(),
             };
-            let is_dir = std::fs::metadata(path)
-                .is_ok_and(|meta| meta.is_dir());
+            let is_dir = std::fs::metadata(path).is_ok_and(|meta| meta.is_dir());
             let scan = if is_dir {
                 scan_directory_path(
                     &ctx.workspace_index.id,
@@ -394,7 +393,14 @@ fn run_path_index_pass(
     let mut existing = exact_existing;
     existing.extend(ctx.storage.list_files_by_path_prefixes(&prefix_paths));
     let existing = dedupe_by_id(existing);
-    run_diff_pass(ctx, &scanned.0, &existing, timings, progress_base, scanned.1)
+    run_diff_pass(
+        ctx,
+        &scanned.0,
+        &existing,
+        timings,
+        progress_base,
+        scanned.1,
+    )
 }
 
 fn run_index_pass(
@@ -449,10 +455,7 @@ fn run_diff_pass(
         ctx,
         IndexProgress {
             phase: Some(IndexProgressPhase::Scanning),
-            files_total: Some(
-                progress_base
-                    .map_or(scanned_len, |base| base.files_total),
-            ),
+            files_total: Some(progress_base.map_or(scanned_len, |base| base.files_total)),
             files_indexed: Some(progress_base.map_or(0, |base| base.files_succeeded)),
             files_failed: None,
             detail: Some(format!(
