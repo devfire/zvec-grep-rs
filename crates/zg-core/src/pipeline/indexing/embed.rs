@@ -17,7 +17,7 @@ use super::context::{
     error_to_message, file_failure_reason, is_cancelled_error, throw_if_index_cancelled,
 };
 use super::prepare::{
-    PurePrepareOutcome, commit_file, commit_vectors, describe_prepared_files, finished_file_detail,
+    PurePrepareOutcome, commit_files_batch, describe_prepared_files, finished_file_detail,
     mark_file_failed, read_and_prepare_pure, record_file_failed,
 };
 use super::progress::{
@@ -157,7 +157,11 @@ pub(crate) fn index_files(
         });
         prepare_elapsed_ms += window_started.elapsed().as_secs_f64() * 1000.0;
         prepared_done = prepared_done.saturating_add(file_window.len());
-        for (file, outcome) in file_window.iter().zip(window_outcomes) {
+        // Fragment-free files and prepare failures apply serially in input
+        // order; metadata persists once per window below (#56), not per file.
+        let mut window_empty: Vec<PreparedFile> = Vec::new();
+        let mut window_failed = false;
+        for (_, outcome) in file_window.iter().zip(window_outcomes) {
             throw_if_index_cancelled(ctx)?;
             match outcome {
                 Err(failure) => {
@@ -168,7 +172,7 @@ pub(crate) fn index_files(
                     }
                     let reason = mark_file_failed(ctx.storage, &failed_file, &error, "prepare");
                     record_file_failed(&mut lock_stats_mut(&stats), &failed_file, Some(reason));
-                    ctx.storage.flush()?;
+                    window_failed = true;
                     report_indexing(
                         ctx,
                         &lock_stats(&stats),
@@ -180,17 +184,7 @@ pub(crate) fn index_files(
                 }
                 Ok(prepared) => {
                     if prepared.fragments.is_empty() {
-                        let committed = timings.time("index_commit", || {
-                            commit_file(ctx, prepared, Vec::new(), 0, &stats)
-                        })?;
-                        report_indexing(
-                            ctx,
-                            &lock_stats(&stats),
-                            Some(finished_file_detail(committed, &file.relative_path)),
-                            progress_base,
-                            total,
-                            Some(scheduler.snapshot()),
-                        );
+                        window_empty.push(prepared);
                         continue;
                     }
                     push_prepared(
@@ -202,6 +196,35 @@ pub(crate) fn index_files(
                     );
                 }
             }
+        }
+        // One batch commit for every fragment-free file in the window: two
+        // metadata snapshots per window instead of two per file (#56).
+        if !window_empty.is_empty() {
+            let batch_payload: Vec<(FileInfo, Vec<IndexedFragment>, usize)> = window_empty
+                .iter()
+                .map(|prepared| (prepared.file.clone(), Vec::new(), 0))
+                .collect();
+            let committed_vec: Vec<bool> = timings.time("index_commit", || {
+                commit_files_batch(ctx, batch_payload, &stats)
+            })?;
+            debug_assert_eq!(committed_vec.len(), window_empty.len());
+            for (prepared, committed) in window_empty.into_iter().zip(committed_vec) {
+                throw_if_index_cancelled(ctx)?;
+                report_indexing(
+                    ctx,
+                    &lock_stats(&stats),
+                    Some(finished_file_detail(
+                        committed,
+                        &prepared.file.relative_path,
+                    )),
+                    progress_base,
+                    total,
+                    Some(scheduler.snapshot()),
+                );
+            }
+        }
+        if window_failed {
+            ctx.storage.flush()?;
         }
         // `window_outcomes` drops here: consumed files release their owned
         // text before the next window prepares.
@@ -299,6 +322,29 @@ fn push_prepared(
     }
 }
 
+/// One wave file's commit plan: successes batch into a single
+/// `replace_files_batch` (two metadata snapshots per wave, not per file:
+/// #56); failures stage marks replayed in input order with one flush.
+enum WaveEntry {
+    Commit {
+        prepared: PreparedFile,
+        vectors: Vec<Vec<f32>>,
+        truncated_fragment_count: usize,
+    },
+    CommitFailed {
+        prepared: PreparedFile,
+        error: EngineError,
+    },
+    UnitFailed {
+        prepared: PreparedFile,
+        error: EngineError,
+    },
+    EmbedFailed {
+        prepared: PreparedFile,
+        reason: String,
+    },
+}
+
 /// Embeds one bounded wave of complete units in parallel, then commits the
 /// owned results serially in input order. Units are borrowed by workers and
 /// moved into the commit phase after joining, so no `unit.clone()` ever
@@ -382,14 +428,24 @@ fn embed_and_commit_wave(
     }) {
         return Err(error);
     }
+    // Phase 1: order-preserving plan with no storage, stats, or progress.
+    // Phase 2 commits every success with one `replace_files_batch`, then
+    // phase 3 replays marks, stats, and progress in input order.
+    let mut plan: Vec<WaveEntry> = Vec::new();
     for (unit, outcome) in wave.into_iter().zip(outcomes) {
         throw_if_index_cancelled(ctx)?;
         match outcome {
             UnitOutcome::Embedded(results) => {
-                for (mut prepared, result) in unit.into_iter().zip(results) {
+                for (prepared, result) in unit.into_iter().zip(results) {
                     match result {
                         FileOutcome::Embedded(embed) => {
-                            if embed.vectors.len() != prepared.fragments.len() {
+                            if embed.vectors.len() == prepared.fragments.len() {
+                                plan.push(WaveEntry::Commit {
+                                    truncated_fragment_count: embed.truncated_fragment_count,
+                                    vectors: embed.vectors,
+                                    prepared,
+                                });
+                            } else {
                                 let error = EngineError::new(
                                     EngineErrorCode::StorageEntityVectorCountMismatch,
                                     "embedding returned mismatched entity/vector counts",
@@ -400,89 +456,122 @@ fn embed_and_commit_wave(
                                     prepared.fragments.len(),
                                     embed.vectors.len()
                                 ));
-                                let reason =
-                                    mark_file_failed(ctx.storage, &prepared.file, &error, "commit");
-                                record_file_failed(
-                                    &mut lock_stats_mut(stats),
-                                    &prepared.file,
-                                    Some(reason),
-                                );
-                                ctx.storage.flush()?;
-                                report_indexing(
-                                    ctx,
-                                    &lock_stats(stats),
-                                    Some(finished_file_detail(false, &prepared.file.relative_path)),
-                                    progress_base,
-                                    total,
-                                    Some(scheduler.snapshot()),
-                                );
-                                continue;
+                                plan.push(WaveEntry::CommitFailed { prepared, error });
                             }
-                            let truncated_fragment_count = embed.truncated_fragment_count;
-                            let fragments = std::mem::take(&mut prepared.fragments);
-                            let file_vectors: Vec<IndexedFragment> = fragments
-                                .into_iter()
-                                .zip(embed.vectors)
-                                .map(|(fragment, vector)| IndexedFragment {
-                                    fragment: fragment.fragment,
-                                    vector,
-                                })
-                                .collect();
-                            let committed = timings.time("index_commit", || {
-                                commit_vectors(
-                                    ctx,
-                                    &prepared.file,
-                                    &file_vectors,
-                                    truncated_fragment_count,
-                                    stats,
-                                )
-                            })?;
-                            report_indexing(
-                                ctx,
-                                &lock_stats(stats),
-                                Some(finished_file_detail(
-                                    committed,
-                                    &prepared.file.relative_path,
-                                )),
-                                progress_base,
-                                total,
-                                Some(scheduler.snapshot()),
-                            );
                         }
                         FileOutcome::Failed(reason) => {
-                            record_file_failed(
-                                &mut lock_stats_mut(stats),
-                                &prepared.file,
-                                Some(reason),
-                            );
-                            report_indexing(
-                                ctx,
-                                &lock_stats(stats),
-                                Some(finished_file_detail(false, &prepared.file.relative_path)),
-                                progress_base,
-                                total,
-                                Some(scheduler.snapshot()),
-                            );
+                            plan.push(WaveEntry::EmbedFailed { prepared, reason });
                         }
                     }
                 }
             }
             UnitOutcome::Failed(error) => {
                 for prepared in unit {
-                    let reason = mark_file_failed(ctx.storage, &prepared.file, &error, "embed");
-                    record_file_failed(&mut lock_stats_mut(stats), &prepared.file, Some(reason));
-                    report_indexing(
-                        ctx,
-                        &lock_stats(stats),
-                        Some(finished_file_detail(false, &prepared.file.relative_path)),
-                        progress_base,
-                        total,
-                        Some(scheduler.snapshot()),
-                    );
+                    plan.push(WaveEntry::UnitFailed {
+                        prepared,
+                        error: error.clone(),
+                    });
                 }
-                ctx.storage.flush()?;
             }
         }
+    }
+    // Phase 2: move fragments and vectors into one batch payload (no clones:
+    // each `IndexedFragment` allocation is sized to its file's fragment count).
+    let mut batch: Vec<(FileInfo, Vec<IndexedFragment>, usize)> = Vec::new();
+    let mut commit_count = 0usize;
+    for entry in &mut plan {
+        if let WaveEntry::Commit {
+            prepared,
+            vectors,
+            truncated_fragment_count,
+        } = entry
+        {
+            let fragments = std::mem::take(&mut prepared.fragments);
+            let vectors_taken = std::mem::take(vectors);
+            let truncated = *truncated_fragment_count;
+            let file_vectors: Vec<IndexedFragment> = fragments
+                .into_iter()
+                .zip(vectors_taken)
+                .map(|(fragment, vector)| IndexedFragment {
+                    fragment: fragment.fragment,
+                    vector,
+                })
+                .collect();
+            batch.push((prepared.file.clone(), file_vectors, truncated));
+            commit_count += 1;
+        }
+    }
+    let committed: Vec<bool> =
+        timings.time("index_commit", || commit_files_batch(ctx, batch, stats))?;
+    debug_assert_eq!(committed.len(), commit_count);
+    // Results align with the `Commit` entries in plan order, so the replay
+    // below consumes them positionally: no index table, no panicking access.
+    let mut results = committed.into_iter();
+    // Phase 3: failure marks (staged, no per-file flush), stats, and in-order
+    // progress. Batch successes already updated stats inside the batch commit.
+    let mut staged_failure = false;
+    for entry in plan {
+        throw_if_index_cancelled(ctx)?;
+        match entry {
+            WaveEntry::Commit { prepared, .. } => {
+                // `commit_files_batch` returns one flag per `Commit` entry in
+                // order; `false` here only fires if the batch shape ever
+                // drifts, and fail-closed reporting is the safe direction.
+                let succeeded = results.next().unwrap_or(false);
+                report_indexing(
+                    ctx,
+                    &lock_stats(stats),
+                    Some(finished_file_detail(
+                        succeeded,
+                        &prepared.file.relative_path,
+                    )),
+                    progress_base,
+                    total,
+                    Some(scheduler.snapshot()),
+                );
+            }
+            WaveEntry::CommitFailed { prepared, error } => {
+                let reason = mark_file_failed(ctx.storage, &prepared.file, &error, "commit");
+                record_file_failed(&mut lock_stats_mut(stats), &prepared.file, Some(reason));
+                staged_failure = true;
+                report_indexing(
+                    ctx,
+                    &lock_stats(stats),
+                    Some(finished_file_detail(false, &prepared.file.relative_path)),
+                    progress_base,
+                    total,
+                    Some(scheduler.snapshot()),
+                );
+            }
+            WaveEntry::UnitFailed { prepared, error } => {
+                let reason = mark_file_failed(ctx.storage, &prepared.file, &error, "embed");
+                record_file_failed(&mut lock_stats_mut(stats), &prepared.file, Some(reason));
+                staged_failure = true;
+                report_indexing(
+                    ctx,
+                    &lock_stats(stats),
+                    Some(finished_file_detail(false, &prepared.file.relative_path)),
+                    progress_base,
+                    total,
+                    Some(scheduler.snapshot()),
+                );
+            }
+            WaveEntry::EmbedFailed { prepared, reason } => {
+                record_file_failed(&mut lock_stats_mut(stats), &prepared.file, Some(reason));
+                report_indexing(
+                    ctx,
+                    &lock_stats(stats),
+                    Some(finished_file_detail(false, &prepared.file.relative_path)),
+                    progress_base,
+                    total,
+                    Some(scheduler.snapshot()),
+                );
+            }
+        }
+    }
+    debug_assert!(results.next().is_none());
+    if staged_failure {
+        ctx.storage.flush()?;
     }
     Ok(())
 }

@@ -144,45 +144,6 @@ fn model_accepts_content(model: &dyn EmbeddingModel, content: &Content) -> bool 
     }
 }
 
-pub(crate) fn commit_file(
-    ctx: &mut IndexContext<'_>,
-    prepared: PreparedFile,
-    vectors: Vec<Vec<f32>>,
-    truncated_fragment_count: usize,
-    stats: &Arc<Mutex<IndexStats>>,
-) -> EngineResult<bool> {
-    throw_if_index_cancelled(ctx)?;
-    if !vectors.is_empty() && prepared.fragments.len() != vectors.len() {
-        let error = EngineError::new(
-            EngineErrorCode::StorageEntityVectorCountMismatch,
-            "embedding returned mismatched entity/vector counts",
-        )
-        .with_context(format!(
-            "fileId={} fragmentCount={} vectorCount={}",
-            prepared.file.id.as_str(),
-            prepared.fragments.len(),
-            vectors.len()
-        ));
-        let reason = mark_file_failed(ctx.storage, &prepared.file, &error, "commit");
-        record_file_failed(&mut lock_stats_mut(stats), &prepared.file, Some(reason));
-        ctx.storage.flush()?;
-        return Ok(false);
-    }
-    // Destructure by value so fragments and vectors move into the storage
-    // payload: no per-item `fragment` + `vector` clones, only one
-    // `IndexedFragment` allocation sized to the fragment count.
-    let PreparedFile { file, fragments } = prepared;
-    let file_vectors: Vec<IndexedFragment> = fragments
-        .into_iter()
-        .zip(vectors)
-        .map(|(fragment, vector)| IndexedFragment {
-            fragment: fragment.fragment,
-            vector,
-        })
-        .collect();
-    commit_vectors(ctx, &file, &file_vectors, truncated_fragment_count, stats)
-}
-
 pub(crate) fn commit_vectors(
     ctx: &mut IndexContext<'_>,
     file: &FileInfo,
@@ -214,6 +175,62 @@ pub(crate) fn commit_vectors(
             record_file_failed(&mut lock_stats_mut(stats), file, Some(reason));
             ctx.storage.flush()?;
             Ok(false)
+        }
+    }
+}
+
+/// Batched [`commit_vectors`]: one `replace_files_batch` for the whole wave
+/// (two metadata snapshots per batch, not per file), so first-index metadata
+/// I/O is `O(files)` instead of `O(files × metadata_bytes)` (#56).
+///
+/// On success every entry reports `true` and stats update once. On batch
+/// error each entry falls back to per-file [`commit_vectors`] so one bad file
+/// cannot fail the wave; cancellation still propagates as `Err`.
+pub(crate) fn commit_files_batch(
+    ctx: &mut IndexContext<'_>,
+    batch: Vec<(FileInfo, Vec<IndexedFragment>, usize)>,
+    stats: &Arc<Mutex<IndexStats>>,
+) -> EngineResult<Vec<bool>> {
+    throw_if_index_cancelled(ctx)?;
+    if batch.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut storage_batch: Vec<(FileInfo, Vec<IndexedFragment>, Option<FileIndexDiagnostics>)> =
+        Vec::with_capacity(batch.len());
+    for (file, vectors, truncated) in batch {
+        storage_batch.push((
+            file,
+            vectors,
+            Some(FileIndexDiagnostics {
+                truncated_fragment_count: Some(truncated),
+            }),
+        ));
+    }
+    match ctx.storage.replace_files_batch(&storage_batch) {
+        Ok(()) => {
+            {
+                let mut guard = lock_stats_mut(stats);
+                guard.files_indexed += storage_batch.len();
+                guard.entities_created += storage_batch
+                    .iter()
+                    .map(|(_, vectors, _)| count_public_entities(vectors))
+                    .sum::<usize>();
+            }
+            Ok(vec![true; storage_batch.len()])
+        }
+        Err(error) => {
+            if is_cancelled_error(&error) {
+                return Err(error);
+            }
+            let mut committed = Vec::with_capacity(storage_batch.len());
+            for (file, vectors, diagnostics) in &storage_batch {
+                let truncated = diagnostics
+                    .as_ref()
+                    .and_then(|diagnostics| diagnostics.truncated_fragment_count)
+                    .unwrap_or(0);
+                committed.push(commit_vectors(ctx, file, vectors, truncated, stats)?);
+            }
+            Ok(committed)
         }
     }
 }
