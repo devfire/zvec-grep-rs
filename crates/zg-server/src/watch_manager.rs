@@ -785,7 +785,7 @@ fn flush_snapshot(shared: &Arc<Shared>) {
         let mut changes = shared
             .changes
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if changes.is_empty()
             && !shared
                 .reconcile_requested
