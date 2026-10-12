@@ -47,13 +47,23 @@ pub fn format_green_progress_bar(
     if total == 0 {
         return String::new();
     }
-    let ratio = (completed.min(total) as f64) / (total as f64);
-    let percent = (ratio * 100.0).round() as usize;
+    // Rounded share `capped * scale / total` in integer arithmetic
+    // (avoids lossy `usize as f64` / `f64 as usize` casts); `u128`
+    // keeps `capped * scale` overflow-free for any `usize` inputs.
+    let capped = completed.min(total);
+    let share = |scale: usize| -> usize {
+        let value = (u128::try_from(capped).unwrap_or(u128::MAX)
+            * u128::try_from(scale).unwrap_or(u128::MAX)
+            + u128::try_from(total).unwrap_or(u128::MAX) / 2)
+            / u128::try_from(total).unwrap_or(u128::MAX);
+        usize::try_from(value).unwrap_or(scale)
+    };
+    let percent = share(100);
     if width == 0 {
         // Narrow-terminal fallback: no glyphs, but keep the counts.
         return format!("{percent}% ({completed}/{total})");
     }
-    let filled = (ratio * width as f64).round() as usize;
+    let filled = share(width);
     let bar: String = std::iter::repeat_n('█', filled.min(width)).collect::<String>()
         + &std::iter::repeat_n('░', width.saturating_sub(filled)).collect::<String>();
     if color {
