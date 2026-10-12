@@ -1,6 +1,6 @@
 //! IDE MCP config installation (`cli/install.ts` behavior).
 //!
-//! Read-modify-write behind a `--yes`/`--force` gate: managed `zvec_grep`
+//! Read-modify-write behind a `--force` gate: managed `zvec_grep`
 //! entries and marked blocks merge freely; foreign entries are never
 //! overwritten without explicit consent. JSON targets merge the
 //! `zvec_grep` server object; Codex uses a marked TOML block. Guidance

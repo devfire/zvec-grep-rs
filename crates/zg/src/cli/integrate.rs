@@ -23,7 +23,8 @@ pub struct InstallArgs {
     /// MCP toolset: agent (default) or full.
     #[arg(long = "mcp-toolset")]
     pub mcp_toolset: Option<McpToolsetArg>,
-    /// Skip confirmation prompts and allow overwrites.
+    /// Skip confirmation prompts. Does not replace unmanaged entries;
+    /// use `--force` for that.
     #[arg(long = "yes", action = clap::ArgAction::SetTrue)]
     pub yes: bool,
     /// Replace unmanaged entries without prompting.

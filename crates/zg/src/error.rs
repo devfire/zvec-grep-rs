@@ -42,7 +42,7 @@ pub enum CliError {
         /// Exact text shown on stderr.
         message: String,
     },
-    /// Install would clobber unmanaged config without `--yes`/`--force`.
+    /// Install would clobber unmanaged config without `--force`.
     #[error("{message}")]
     InstallRefused {
         /// Exact text shown on stderr.

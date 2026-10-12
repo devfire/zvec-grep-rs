@@ -9,18 +9,7 @@ use crate::install::{InstallOptions, InstallTarget, detect_targets, install, uni
 pub(crate) fn run_install(args: &InstallArgs) -> Result<(), CliError> {
     let home = user_home()?;
     let targets = resolve_targets(&args.target, &home)?;
-    let token_env = args
-        .mcp_token_env
-        .clone()
-        .map(|value| parse_environment_variable(&value, "--mcp-token-env"))
-        .transpose()?;
-    let options = InstallOptions::new(
-        args.mcp_transport,
-        args.mcp_toolset,
-        args.mcp_tool_timeout,
-        token_env,
-        args.yes || args.force,
-    );
+    let options = install_options(args)?;
     let mut files = Vec::new();
     for target in targets {
         files.extend(install(target, &options, &home)?);
@@ -30,6 +19,27 @@ pub(crate) fn run_install(args: &InstallArgs) -> Result<(), CliError> {
     }
     println!("Restart the selected agents or start a new session to load the integration.");
     Ok(())
+}
+
+/// Builds install options from CLI flags.
+///
+/// `--force` alone consents to replacing unmanaged entries; `--yes`
+/// only skips confirmation prompts and must never imply `--force`
+/// (#62), or a hand-written `zvec_grep` entry would be silently
+/// clobbered by `zg install --yes`.
+fn install_options(args: &InstallArgs) -> Result<InstallOptions, CliError> {
+    let token_env = args
+        .mcp_token_env
+        .clone()
+        .map(|value| parse_environment_variable(&value, "--mcp-token-env"))
+        .transpose()?;
+    Ok(InstallOptions::new(
+        args.mcp_transport,
+        args.mcp_toolset,
+        args.mcp_tool_timeout,
+        token_env,
+        args.force,
+    ))
 }
 
 pub(crate) fn run_uninstall(args: &UninstallArgs) -> Result<(), CliError> {
@@ -77,4 +87,36 @@ fn user_home() -> Result<PathBuf, CliError> {
                 .map(PathBuf::from)
         })
         .ok_or_else(|| CliError::usage("Cannot determine the home directory (set HOME)."))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    fn force_for(argv: &[&str]) -> bool {
+        let cli = crate::cli::Cli::try_parse_from(argv).unwrap();
+        let Some(crate::cli::Command::Install(install_args)) = cli.command else {
+            panic!("install command");
+        };
+        install_options(&install_args).unwrap().force
+    }
+
+    /// Regression for #62: `--yes` skips confirmation prompts only and
+    /// must not consent to replacing an unmanaged `zvec_grep` entry;
+    /// only `--force` does.
+    #[test]
+    fn yes_does_not_imply_force() {
+        assert!(!force_for(&[
+            "zg", "install", "--target", "claude", "--yes"
+        ]));
+        assert!(!force_for(&["zg", "install", "--target", "claude"]));
+        assert!(force_for(&[
+            "zg", "install", "--target", "claude", "--force"
+        ]));
+        assert!(force_for(&[
+            "zg", "install", "--target", "claude", "--yes", "--force"
+        ]));
+    }
 }
