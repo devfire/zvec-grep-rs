@@ -9,7 +9,7 @@
 #[must_use]
 pub fn format_score(score: f64) -> String {
     if score.fract() == 0.0 && score.is_finite() {
-        format!("{}", score.trunc() as i64)
+        format!("{score:.0}")
     } else {
         format!("{score:.4}")
     }
