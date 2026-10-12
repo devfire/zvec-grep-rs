@@ -8,6 +8,7 @@ use super::super::service::ZvecGrepService;
 use super::normalize::{ContextGroup, NormalizedContextRequest, normalize_context_request};
 use super::rank::{context_group_limit, select_and_rank};
 use crate::error::EngineResult;
+use crate::index_status::index_status_needs_refresh;
 use crate::service::root::WorkspaceIndexLocation;
 use crate::service::types::{
     ContentStatus, ContextCoverage, ContextDiagnostics, ContextFile, ContextItem, ContextItemKind,
@@ -21,8 +22,10 @@ impl ZvecGrepService {
     /// Hybrid search over the workspace index, mirroring `context()`.
     ///
     /// With `auto_update` set, a stale index is refreshed first via
-    /// [`ensure_index`](Self::ensure_index); read sessions (phase G) always
-    /// pass it cleared.
+    /// [`ensure_index`](Self::ensure_index): [`refresh`](Self::refresh)
+    /// probes freshness under a shared read lock and only escalates to the
+    /// exclusive write-lock run when the status reports pending work.
+    /// Read sessions (phase G) always pass it cleared.
     ///
     /// # Errors
     ///
@@ -56,6 +59,16 @@ impl ZvecGrepService {
         location: &WorkspaceIndexLocation,
         options: &ZvecGrepContextOptions<'_>,
     ) -> EngineResult<()> {
+        // Freshness probe under the shared read lock (`open` in read mode
+        // takes `LockMode::Read`, so concurrent queries share it). Only a
+        // stale status escalates to `ensure_index`, which takes the exclusive
+        // write lock, scans the full tree, and rewrites the manifest twice.
+        // A probe failure fails open to `ensure_index`, which surfaces the
+        // real error (or heals the index) instead of serving a maybe-stale
+        // read, so only a positively fresh status skips the run.
+        if self.index_is_fresh(location) {
+            return Ok(());
+        }
         let root = PathBuf::from(&location.root);
         self.ensure_index(&ZvecGrepIndexOptions {
             root: Some(&root),
@@ -63,6 +76,21 @@ impl ZvecGrepService {
             ..ZvecGrepIndexOptions::default()
         })?;
         Ok(())
+    }
+
+    fn index_is_fresh(&self, location: &WorkspaceIndexLocation) -> bool {
+        self.require_manifest(location)
+            .and_then(|manifest| {
+                WorkspaceIndex::open(
+                    manifest.info.clone(),
+                    WorkspaceIndexOptions {
+                        mode: IndexMode::Read,
+                        embedding_model: None,
+                    },
+                )
+                .and_then(|index| index.status())
+            })
+            .is_ok_and(|status| !index_status_needs_refresh(Some(&status)))
     }
 
     fn context_after_refresh(

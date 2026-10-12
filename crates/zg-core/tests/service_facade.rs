@@ -626,3 +626,75 @@ fn cancelled_incremental_run_keeps_index_searchable() {
     assert_eq!(retried.info.index_version, Some(CURRENT_INDEX_VERSION));
     assert_eq!(retried.info.id, before.info.id);
 }
+
+/// Issue #74: `context(auto_update)` must not run a full `ensure_index`
+/// pass on every query. A fresh index skips the run (no manifest rewrite,
+/// no exclusive write lock); a stale index still refreshes.
+#[test]
+fn context_auto_update_skips_refresh_when_fresh() {
+    use zg_core::manifest::read_workspace_manifest;
+
+    let dir = fixture_workspace();
+    let service = stub_service(&dir);
+    service.ensure_index(&index_options(&dir)).expect("index");
+    let before = read_workspace_manifest(&manifest_home(&dir))
+        .expect("read")
+        .expect("manifest exists");
+
+    // Force the clock forward so a manifest rewrite would be observable:
+    // `ensure_index` stamps `updated_time` on both its pre-run and commit
+    // writes.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    let found = service
+        .context(&ZvecGrepContextOptions {
+            root: Some(dir.path()),
+            fts: vec!["hello".to_owned()],
+            auto_update: true,
+            ..ZvecGrepContextOptions::default()
+        })
+        .expect("context");
+    assert!(
+        found
+            .items
+            .iter()
+            .any(|item| item.file.relative_path.ends_with("a.txt")),
+        "{}",
+        serde_json::to_string_pretty(&found.items).expect("json")
+    );
+
+    let after = read_workspace_manifest(&manifest_home(&dir))
+        .expect("read")
+        .expect("manifest exists");
+    assert_eq!(
+        after.info.updated_time, before.info.updated_time,
+        "fresh index must not rewrite the manifest"
+    );
+}
+
+#[test]
+fn context_auto_update_refreshes_when_stale() {
+    let dir = fixture_workspace();
+    let service = stub_service(&dir);
+    service.ensure_index(&index_options(&dir)).expect("index");
+
+    std::fs::write(dir.path().join("c.txt"), "quuxnimbus brand new content\n")
+        .expect("write c.txt");
+
+    let found = service
+        .context(&ZvecGrepContextOptions {
+            root: Some(dir.path()),
+            fts: vec!["quuxnimbus".to_owned()],
+            auto_update: true,
+            ..ZvecGrepContextOptions::default()
+        })
+        .expect("context");
+    assert!(
+        found
+            .items
+            .iter()
+            .any(|item| item.file.relative_path.ends_with("c.txt")),
+        "{}",
+        serde_json::to_string_pretty(&found.items).expect("json")
+    );
+}
