@@ -608,53 +608,83 @@ impl RemoteEmbeddingAuthorizationStore {
         Self::get_or_create_key_file(&self.signing_key_path)
     }
 
-    /// Reads the key at `path`, creating a fresh 32-byte hex key (0700 dirs,
-    /// 0600 file, create-new so concurrent creators race safely) when absent.
+    /// Reads the key at `path`, creating a fresh 32-byte hex key when absent.
+    ///
+    /// The key is written to a unique sibling temp file created with
+    /// mode 0600 on unix (via `OpenOptionsExt::mode`, so it is never
+    /// world-readable, even briefly), fsynced, then published with
+    /// `hard_link`, which fails with `AlreadyExists` instead of
+    /// overwriting a concurrent creator's key. A failed or partial write
+    /// therefore only ever leaves a temp file (removed on the error path),
+    /// never a broken key at `path`; race losers read the winner's key.
     fn get_or_create_key_file(path: &Path) -> EngineResult<Vec<u8>> {
         if let Some(key) = Self::read_key_file(path)? {
             return Ok(key);
         }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                EngineError::from(AuthError::StoreFailed {
-                    operation: "create_dir".to_owned(),
-                    detail: format!("path={} error={error}", parent.display()),
-                })
-            })?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
-            }
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent).map_err(|error| {
+            EngineError::from(AuthError::StoreFailed {
+                operation: "create_dir".to_owned(),
+                detail: format!("path={} error={error}", parent.display()),
+            })
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
         }
         let key: [u8; 32] = rand::random();
         let body = to_hex(&key);
-        let created = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path);
-        match created {
+        let file_name = path.file_name().map_or_else(
+            || SIGNING_KEY_FILE.to_owned(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let nonce: u128 = rand::random();
+        let tmp_path = parent.join(format!(
+            ".{file_name}.tmp-{}-{nonce:032x}",
+            std::process::id()
+        ));
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let write_error = |error: std::io::Error| {
+            EngineError::from(AuthError::StoreFailed {
+                operation: "write".to_owned(),
+                detail: format!("path={} error={error}", path.display()),
+            })
+        };
+        match options.open(&tmp_path) {
             Ok(mut file) => {
                 use std::io::Write;
-                if file.write_all(body.as_bytes()).is_ok() {
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
-                    }
-                    return Ok(key.to_vec());
+                if let Err(error) = file
+                    .write_all(body.as_bytes())
+                    .and_then(|()| file.sync_all())
+                {
+                    drop(file);
+                    let _ = fs::remove_file(&tmp_path);
+                    return Err(write_error(error));
                 }
             }
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(write_error(error)),
+        }
+        match fs::hard_link(&tmp_path, path) {
+            Ok(()) => {
+                let _ = fs::remove_file(&tmp_path);
+                return Ok(key.to_vec());
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                let _ = fs::remove_file(&tmp_path);
+            }
             Err(error) => {
-                return Err(EngineError::from(AuthError::StoreFailed {
-                    operation: "write".to_owned(),
-                    detail: format!("path={} error={error}", path.display()),
-                }));
+                let _ = fs::remove_file(&tmp_path);
+                return Err(write_error(error));
             }
         }
-        // Lost the create race (or the first write failed): whoever won owns
-        // the key now.
+        // Lost the create race: whoever won owns the key now.
         Self::read_key_file(path)?.ok_or_else(|| {
             EngineError::from(AuthError::StoreFailed {
                 operation: "read".to_owned(),
@@ -882,6 +912,47 @@ mod tests {
                 .expect("revoke_all"),
             0
         );
+    }
+
+    #[test]
+    fn concurrent_key_creation_converges_on_persisted_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(SIGNING_KEY_FILE);
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    RemoteEmbeddingAuthorizationStore::get_or_create_key_file(&path)
+                        .expect("create key")
+                })
+            })
+            .collect();
+        let keys: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("join creator"))
+            .collect();
+        // Every creator returns the one persisted key: a loser that
+        // overwrote (or kept its own unpublished key) would diverge.
+        let persisted = RemoteEmbeddingAuthorizationStore::read_key_file(&path)
+            .expect("read persisted")
+            .expect("key persisted");
+        assert!(keys.iter().all(|key| key == &persisted));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path)
+                .expect("key metadata")
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        // No temp files are left behind.
+        let leftovers: Vec<_> = fs::read_dir(dir.path())
+            .expect("read dir")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name() != SIGNING_KEY_FILE)
+            .collect();
+        assert!(leftovers.is_empty(), "leftovers: {leftovers:?}");
     }
 
     #[test]
