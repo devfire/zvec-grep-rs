@@ -22,7 +22,7 @@ impl ZvecGrepService {
     /// Hybrid search over the workspace index, mirroring `context()`.
     ///
     /// With `auto_update` set, a stale index is refreshed first via
-    /// [`ensure_index`](Self::ensure_index): [`refresh`](Self::refresh)
+    /// [`ensure_index`](Self::ensure_index): `refresh`
     /// probes freshness under a shared read lock and only escalates to the
     /// exclusive write-lock run when the status reports pending work.
     /// Read sessions (phase G) always pass it cleared.
