@@ -167,7 +167,14 @@ pub fn format_done_line(completed: usize) -> String {
 
 /// `12.3 MB` for embedding download counters.
 fn format_megabytes(bytes: u64) -> String {
-    format!("{:.1} MB", bytes as f64 / 1_000_000.0)
+    // Tenths of a MB, rounded half-to-even on the exact decimal remainder
+    // (integer arithmetic avoids the lossy `u64 as f64` cast).
+    let mut tenths = bytes / 100_000;
+    let remainder = bytes % 100_000;
+    if remainder > 50_000 || (remainder == 50_000 && tenths % 2 == 1) {
+        tenths += 1;
+    }
+    format!("{}.{} MB", tenths / 10, tenths % 10)
 }
 
 /// Pure line builder for every progress shape; covered by goldens.
