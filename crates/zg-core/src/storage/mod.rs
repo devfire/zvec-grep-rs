@@ -112,7 +112,10 @@ pub trait WorkspaceIndexStorage: private::Sealed + Send {
         file_id: &FileId,
         options: ListEntitiesOptions,
     ) -> Vec<StoredEntity>;
-    fn get_entity(&self, entity_id: &EntityId) -> Option<StoredEntity>;
+    /// # Errors
+    ///
+    /// Returns an error when storage is closed or the entity fetch fails.
+    fn get_entity(&self, entity_id: &EntityId) -> EngineResult<Option<StoredEntity>>;
 
     /// # Errors
     ///

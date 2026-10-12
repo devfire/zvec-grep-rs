@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::error::EngineResult;
 use crate::ids::{EntityId, FileId};
 use crate::storage::{StorageSearchFilter, StorageSearchHit, WorkspaceIndexStorage};
 use crate::types::{ResolvedSearchPlanRoute, SearchPlanRouteMode, SearchRecallTrace};
@@ -17,9 +18,9 @@ pub(crate) fn force_track_entity(
     plan_filter: &ResolvedPlanFilter,
     storage: &dyn WorkspaceIndexStorage,
     candidates: &mut HashMap<String, Candidate>,
-) {
-    let Some(tracked) = storage.get_entity(entity_id) else {
-        return;
+) -> EngineResult<()> {
+    let Some(tracked) = storage.get_entity(entity_id)? else {
+        return Ok(());
     };
     let key = entity_id.as_str().to_owned();
     candidates.entry(key.clone()).or_insert_with(|| {
@@ -82,7 +83,7 @@ pub(crate) fn force_track_entity(
                 plan_filter.filter.as_ref(),
                 storage,
                 route,
-            );
+            )?;
         } else {
             force_track_vector_route(
                 candidate,
@@ -92,9 +93,10 @@ pub(crate) fn force_track_entity(
                 storage,
                 vector_by_route,
                 route,
-            );
+            )?;
         }
     }
+    Ok(())
 }
 
 fn route_mode_str(mode: SearchPlanRouteMode) -> &'static str {
@@ -119,7 +121,7 @@ fn force_track_fts_route(
     filter: Option<&StorageSearchFilter>,
     storage: &dyn WorkspaceIndexStorage,
     route: &ResolvedSearchPlanRoute,
-) {
+) -> EngineResult<()> {
     let hit = search_tracked_entity_fts(
         entity_id,
         target_file_id,
@@ -127,7 +129,7 @@ fn force_track_fts_route(
         filter,
         storage,
         route,
-    );
+    )?;
     match hit {
         Some(hit) => {
             candidate.sources.insert(RecallPath::Fts);
@@ -162,6 +164,7 @@ fn force_track_fts_route(
             reason: Some("Target entity did not match the FTS query".to_owned()),
         }),
     }
+    Ok(())
 }
 
 fn force_track_vector_route(
@@ -172,7 +175,7 @@ fn force_track_vector_route(
     storage: &dyn WorkspaceIndexStorage,
     vector_by_route: &HashMap<String, Vec<f32>>,
     route: &ResolvedSearchPlanRoute,
-) {
+) -> EngineResult<()> {
     let Some(vector) = vector_by_route.get(&route.id) else {
         candidate.recall.push(SearchRecallTrace {
             path: "vector".to_owned(),
@@ -184,7 +187,7 @@ fn force_track_vector_route(
             score: None,
             reason: Some("Vector route was not available for this query".to_owned()),
         });
-        return;
+        return Ok(());
     };
     let hit = search_tracked_entity_vector(
         &candidate.id,
@@ -193,7 +196,7 @@ fn force_track_vector_route(
         filter,
         storage,
         vector,
-    );
+    )?;
     match hit {
         Some(hit) => {
             candidate.sources.insert(RecallPath::Vector);
@@ -228,6 +231,7 @@ fn force_track_vector_route(
             reason: Some("Target entity could not be scored by vector search".to_owned()),
         }),
     }
+    Ok(())
 }
 
 fn search_tracked_entity_fts(
@@ -237,24 +241,22 @@ fn search_tracked_entity_fts(
     filter: Option<&StorageSearchFilter>,
     storage: &dyn WorkspaceIndexStorage,
     route: &ResolvedSearchPlanRoute,
-) -> Option<StorageSearchHit> {
+) -> EngineResult<Option<StorageSearchHit>> {
     let mut group_filter = filter.cloned().unwrap_or_default();
     group_filter.group_ids = vec![entity_id.as_str().to_owned()];
     if let Some(hit) = storage
-        .search_fts(&route.query, 1, Some(&group_filter))
-        .unwrap_or_default()
+        .search_fts(&route.query, 1, Some(&group_filter))?
         .into_iter()
         .next()
     {
-        return Some(hit);
+        return Ok(Some(hit));
     }
     let mut file_filter = filter.cloned().unwrap_or_default();
     file_filter.file_ids = vec![target_file_id.clone()];
-    storage
-        .search_fts(&route.query, recall_depth, Some(&file_filter))
-        .unwrap_or_default()
+    Ok(storage
+        .search_fts(&route.query, recall_depth, Some(&file_filter))?
         .into_iter()
-        .find(|hit| public_entity_id(&hit.fragment) == entity_id.as_str())
+        .find(|hit| public_entity_id(&hit.fragment) == entity_id.as_str()))
 }
 
 fn search_tracked_entity_vector(
@@ -264,22 +266,20 @@ fn search_tracked_entity_vector(
     filter: Option<&StorageSearchFilter>,
     storage: &dyn WorkspaceIndexStorage,
     vector: &[f32],
-) -> Option<StorageSearchHit> {
+) -> EngineResult<Option<StorageSearchHit>> {
     let mut group_filter = filter.cloned().unwrap_or_default();
     group_filter.group_ids = vec![entity_id.to_owned()];
     if let Some(hit) = storage
-        .search_vector(vector, 1, Some(&group_filter))
-        .unwrap_or_default()
+        .search_vector(vector, 1, Some(&group_filter))?
         .into_iter()
         .next()
     {
-        return Some(hit);
+        return Ok(Some(hit));
     }
     let mut file_filter = filter.cloned().unwrap_or_default();
     file_filter.file_ids = vec![target_file_id.clone()];
-    storage
-        .search_vector(vector, recall_depth, Some(&file_filter))
-        .unwrap_or_default()
+    Ok(storage
+        .search_vector(vector, recall_depth, Some(&file_filter))?
         .into_iter()
-        .find(|hit| public_entity_id(&hit.fragment) == entity_id)
+        .find(|hit| public_entity_id(&hit.fragment) == entity_id))
 }

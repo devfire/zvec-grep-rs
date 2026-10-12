@@ -108,7 +108,7 @@ pub fn search_workspace_index(
     let mut recall_depth = RECALL_INITIAL_DEPTH;
     if !plan_filter.matches_no_files {
         recall_depth = timings.time("recall", || {
-            Ok::<_, EngineError>(collect_adaptive_recall(
+            collect_adaptive_recall(
                 &normalized.routes,
                 plan_filter.filter.as_ref(),
                 normalized.plan.prefer_symbol == Some(true),
@@ -116,7 +116,7 @@ pub fn search_workspace_index(
                 limit,
                 ctx.storage,
                 &mut candidates,
-            ))
+            )
         })?;
     }
     if let Some(tracked_id) = normalized.plan.track_entity_id.clone() {
@@ -129,8 +129,7 @@ pub fn search_workspace_index(
                 &plan_filter,
                 ctx.storage,
                 &mut candidates,
-            );
-            Ok::<_, EngineError>(())
+            )
         })?;
     }
     let mut fused: Vec<Candidate> = timings.time("fusion", || {

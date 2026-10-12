@@ -73,7 +73,7 @@ pub(crate) fn collect_adaptive_recall(
     limit: usize,
     storage: &dyn WorkspaceIndexStorage,
     candidates: &mut HashMap<String, Candidate>,
-) -> usize {
+) -> EngineResult<usize> {
     let recall_routes = build_recall_routes(routes, filter, prefer_symbol);
     let target = recall_target_candidate_count(limit);
     let mut previous_depth = 0usize;
@@ -86,9 +86,9 @@ pub(crate) fn collect_adaptive_recall(
             previous_depth,
             storage,
             candidates,
-        );
+        )?;
         if candidates.len() >= target || !saturated || depth >= RECALL_MAX_DEPTH {
-            return depth;
+            return Ok(depth);
         }
         previous_depth = depth;
         depth = (depth * RECALL_GROWTH_FACTOR).min(RECALL_MAX_DEPTH);
@@ -147,14 +147,14 @@ fn collect_recall_pass(
     previous_depth: usize,
     storage: &dyn WorkspaceIndexStorage,
     candidates: &mut HashMap<String, Candidate>,
-) -> bool {
+) -> EngineResult<bool> {
     let mut saturated = false;
     for route in routes {
-        let hits = recall_route_hits(route, vector_by_route, depth, storage);
+        let hits = recall_route_hits(route, vector_by_route, depth, storage)?;
         saturated = saturated || hits.len() >= depth;
-        add_recall_hits(candidates, &hits, &route.route, storage, previous_depth);
+        add_recall_hits(candidates, &hits, &route.route, storage, previous_depth)?;
     }
-    saturated
+    Ok(saturated)
 }
 
 fn recall_route_hits(
@@ -162,21 +162,17 @@ fn recall_route_hits(
     vector_by_route: &HashMap<String, Vec<f32>>,
     depth: usize,
     storage: &dyn WorkspaceIndexStorage,
-) -> Vec<StorageSearchHit> {
+) -> EngineResult<Vec<StorageSearchHit>> {
     if route.route.mode == SearchPlanRouteMode::Fts {
-        return storage
-            .search_fts(&route.route.query, depth, route.filter.as_ref())
-            .unwrap_or_default();
+        return storage.search_fts(&route.route.query, depth, route.filter.as_ref());
     }
     let id = route
         .vector_route_id
         .as_deref()
         .unwrap_or(route.route.id.as_str());
     match vector_by_route.get(id) {
-        Some(vector) => storage
-            .search_vector(vector, depth, route.filter.as_ref())
-            .unwrap_or_default(),
-        None => Vec::new(),
+        Some(vector) => storage.search_vector(vector, depth, route.filter.as_ref()),
+        None => Ok(Vec::new()),
     }
 }
 
@@ -190,7 +186,7 @@ pub(crate) fn add_recall_hits(
     route: &ResolvedSearchPlanRoute,
     storage: &dyn WorkspaceIndexStorage,
     start_index: usize,
-) {
+) -> EngineResult<()> {
     let path = match route.mode {
         SearchPlanRouteMode::Fts => RecallPath::Fts,
         SearchPlanRouteMode::Vector => RecallPath::Vector,
@@ -199,7 +195,7 @@ pub(crate) fn add_recall_hits(
         let rank = index + 1;
         let entity_id = public_entity_id(&hit.fragment).to_owned();
         if !candidates.contains_key(&entity_id) {
-            let Some(stored) = resolve_hit_entity(hit, storage) else {
+            let Some(stored) = resolve_hit_entity(hit, storage)? else {
                 continue;
             };
             candidates.insert(
@@ -231,17 +227,18 @@ pub(crate) fn add_recall_hits(
             reason: None,
         });
     }
+    Ok(())
 }
 
 fn resolve_hit_entity(
     hit: &StorageSearchHit,
     storage: &dyn WorkspaceIndexStorage,
-) -> Option<StoredEntity> {
+) -> EngineResult<Option<StoredEntity>> {
     match hit.fragment.group.as_deref() {
         Some(group) if group != hit.fragment.entity.id.as_str() => {
             storage.get_entity(&EntityId::from_raw(group.to_owned()))
         }
-        _ => Some(StoredEntity {
+        _ => Ok(Some(StoredEntity {
             entity: Entity {
                 id: EntityId::from_raw(public_entity_id(&hit.fragment).to_owned()),
                 file_id: hit.fragment.entity.file_id.clone(),
@@ -250,7 +247,7 @@ fn resolve_hit_entity(
                 metadata: hit.fragment.entity.metadata.clone(),
             },
             file: hit.file.clone(),
-        }),
+        })),
     }
 }
 

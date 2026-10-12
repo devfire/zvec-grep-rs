@@ -29,7 +29,7 @@ pub fn diagnose_entity_search(
     entity_id: &EntityId,
     ctx: &SearchContext<'_>,
 ) -> EngineResult<EntitySearchDiagnosis> {
-    let Some(stored) = ctx.storage.get_entity(entity_id) else {
+    let Some(stored) = ctx.storage.get_entity(entity_id)? else {
         return Err(
             EngineError::new(EngineErrorCode::SearchEntityNotFound, "entity not found")
                 .with_context(format!("entityId={}", entity_id.as_str())),
@@ -96,18 +96,15 @@ fn choose_best_entity_in_file(
         mode: SearchPlanRouteMode::Fts,
         query: query.to_owned(),
     };
-    let hits = ctx
-        .storage
-        .search_fts(
-            query,
-            10,
-            Some(&StorageSearchFilter {
-                file_ids: vec![file.id.clone()],
-                ..StorageSearchFilter::default()
-            }),
-        )
-        .unwrap_or_default();
-    add_recall_hits(&mut candidates, &hits, &route, ctx.storage, 0);
+    let hits = ctx.storage.search_fts(
+        query,
+        10,
+        Some(&StorageSearchFilter {
+            file_ids: vec![file.id.clone()],
+            ..StorageSearchFilter::default()
+        }),
+    )?;
+    add_recall_hits(&mut candidates, &hits, &route, ctx.storage, 0)?;
     let model = require_embedding_model(ctx, "diagnose")?;
     let inputs = [EmbeddingInput::Text { text: query }];
     // Operation's canonical root set for authorization: the diagnosed
@@ -127,18 +124,15 @@ fn choose_best_entity_in_file(
         mode: SearchPlanRouteMode::Vector,
         query: query.to_owned(),
     };
-    let hits = ctx
-        .storage
-        .search_vector(
-            &query_vector,
-            10,
-            Some(&StorageSearchFilter {
-                file_ids: vec![file.id.clone()],
-                ..StorageSearchFilter::default()
-            }),
-        )
-        .unwrap_or_default();
-    add_recall_hits(&mut candidates, &hits, &route, ctx.storage, 0);
+    let hits = ctx.storage.search_vector(
+        &query_vector,
+        10,
+        Some(&StorageSearchFilter {
+            file_ids: vec![file.id.clone()],
+            ..StorageSearchFilter::default()
+        }),
+    )?;
+    add_recall_hits(&mut candidates, &hits, &route, ctx.storage, 0)?;
     let mut fused: Vec<Candidate> = candidates.into_values().collect();
     fuse_candidates(&mut fused);
     if let Some(best) = fused.into_iter().next() {

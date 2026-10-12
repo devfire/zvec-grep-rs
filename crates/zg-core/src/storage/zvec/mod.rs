@@ -555,9 +555,8 @@ impl WorkspaceIndexStorage for ZvecWorkspaceIndexStorage {
             .collect()
     }
 
-    fn get_entity(&self, entity_id: &EntityId) -> Option<StoredEntity> {
+    fn get_entity(&self, entity_id: &EntityId) -> EngineResult<Option<StoredEntity>> {
         self.stored_entity(entity_id.as_str(), "getEntity", self.meta.records())
-            .unwrap_or(None)
     }
 
     fn search_fts(
