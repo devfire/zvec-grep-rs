@@ -44,7 +44,7 @@ pub(crate) async fn run_query(args: QueryArgs) -> Result<(), CliError> {
         }));
     }
     if args.rg {
-        return super::rg::run_rg_direct(args, queries).await;
+        return super::rg::run_rg_direct(&args, &queries);
     }
     let mode = resolve_client_mode(args.mode)?;
     route_by_mode(

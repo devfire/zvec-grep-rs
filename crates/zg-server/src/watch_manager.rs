@@ -298,7 +298,7 @@ impl WatchManager {
     }
 
     /// Delivers whatever is pending right now, bypassing the debounce.
-    pub async fn flush_now(&self) {
+    pub fn flush_now(&self) {
         flush_snapshot(&self.shared);
     }
 
@@ -813,7 +813,7 @@ fn flush_snapshot(shared: &Arc<Shared>) {
         let mut changes = shared
             .changes
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         changes.merge(&ChangeSetSnapshot {
             force_full_reconcile: true,
             ..snapshot
@@ -861,7 +861,7 @@ mod tests {
         manager
             .inject_event("/repo/b.rs", ChangeKind::Created, false)
             .unwrap();
-        manager.flush_now().await;
+        manager.flush_now();
         let batches = batches.lock().unwrap();
         assert_eq!(batches.len(), 1);
         let (snapshot, reason) = batches.iter().next().expect("one batch");
@@ -925,7 +925,7 @@ mod tests {
         manager
             .inject_event("/repo/.zvec-grep/files.json", ChangeKind::Changed, false)
             .unwrap();
-        manager.flush_now().await;
+        manager.flush_now();
         assert!(batches.lock().unwrap().is_empty());
     }
 
@@ -944,7 +944,7 @@ mod tests {
     async fn full_reconcile_flushes_as_reconcile() {
         let (manager, batches) = manager("/repo");
         manager.require_full_reconcile();
-        manager.flush_now().await;
+        manager.flush_now();
         let batches = batches.lock().unwrap();
         assert_eq!(batches.len(), 1);
         let (snapshot, reason) = batches.iter().next().expect("one batch");
@@ -958,11 +958,11 @@ mod tests {
         manager
             .inject_event("/repo/a.rs", ChangeKind::Changed, false)
             .unwrap();
-        manager.flush_now().await;
+        manager.flush_now();
         manager
             .inject_event("/repo/b.rs", ChangeKind::Changed, false)
             .unwrap();
-        manager.flush_now().await;
+        manager.flush_now();
         let batches = batches.lock().unwrap();
         let touched = batches
             .iter()
@@ -978,11 +978,11 @@ mod tests {
     async fn reconcile_flag_does_not_stick_across_batches() {
         let (manager, batches) = manager("/repo");
         manager.require_full_reconcile();
-        manager.flush_now().await;
+        manager.flush_now();
         manager
             .inject_event("/repo/a.rs", ChangeKind::Changed, false)
             .unwrap();
-        manager.flush_now().await;
+        manager.flush_now();
         let batches = batches.lock().unwrap();
         assert_eq!(batches.len(), 2);
         let (first, first_reason) = batches.first().expect("first batch");
@@ -1085,9 +1085,9 @@ mod tests {
         manager
             .inject_event(&nested, ChangeKind::Changed, false)
             .unwrap();
-        manager.flush_now().await;
+        manager.flush_now();
         assert!(
-            touched_batches().iter().all(|batch| batch.is_empty()),
+            touched_batches().iter().all(Vec::is_empty),
             "disabled policy tracks no nested change"
         );
 
@@ -1096,7 +1096,7 @@ mod tests {
         manager
             .inject_event(&nested, ChangeKind::Changed, false)
             .unwrap();
-        manager.flush_now().await;
+        manager.flush_now();
         let delivered = touched_batches();
         let latest = delivered.iter().last().expect("enabled phase flushes");
         assert_eq!(
@@ -1120,7 +1120,7 @@ mod tests {
                 false,
             )
             .unwrap();
-        manager.flush_now().await;
+        manager.flush_now();
         assert_eq!(
             batches.lock().unwrap().len(),
             batch_count,

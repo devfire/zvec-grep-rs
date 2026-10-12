@@ -8,7 +8,7 @@ use super::catalog::{catalog_entry, catalog_identity, catalog_reference};
 use super::support::map_device;
 use crate::error::CliError;
 
-pub(crate) fn run_config(args: crate::cli::ConfigArgs) -> Result<(), CliError> {
+pub(crate) fn run_config(args: &crate::cli::ConfigArgs) -> Result<(), CliError> {
     match &args.target {
         Some(crate::cli::ConfigTarget::Model(cmd)) => match &cmd.op {
             Some(crate::cli::ConfigModelOp::Set(set)) => run_config_model_set(set),

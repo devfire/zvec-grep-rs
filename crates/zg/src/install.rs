@@ -7,6 +7,7 @@
 //! markdown blocks (`AGENTS.md`) are out of scope by design (see
 //! `docs/ts-divergence.md`).
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use crate::cli::McpTransportArg;
@@ -298,7 +299,7 @@ fn install_json(
     let mut container = root
         .get(key)
         .cloned()
-        .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::default()));
     let existing = container.get("zvec_grep");
     if existing.is_some_and(|entry| !is_managed(entry)) && !options.force {
         return Err(CliError::install_refused(format!(
@@ -383,11 +384,11 @@ fn codex_block(options: &InstallOptions) -> String {
             block.push_str(&toml_string_array(&stdio_args(options)));
         }
         McpTransportArg::Http => {
-            block.push_str(&format!("url = \"{}\"", options.server_url));
+            let _ = write!(block, "url = \"{}\"", options.server_url);
         }
     }
     if let Some(env) = &options.token_env {
-        block.push_str(&format!("\nbearer_token_env_var = \"{env}\""));
+        let _ = write!(block, "\nbearer_token_env_var = \"{env}\"");
     }
     block.push('\n');
     block.push_str(CONFIG_END);
@@ -430,7 +431,7 @@ fn remove_marked_block(existing: &str, start: &str, end: &str) -> String {
 
 fn read_json_object(path: &Path) -> Result<serde_json::Value, CliError> {
     if !path.exists() {
-        return Ok(serde_json::Value::Object(Default::default()));
+        return Ok(serde_json::Value::Object(serde_json::Map::default()));
     }
     let text = std::fs::read_to_string(path).map_err(|error| CliError::io(path, error))?;
     serde_json::from_str(&text)

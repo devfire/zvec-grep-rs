@@ -73,10 +73,7 @@ impl RuntimeManager {
     /// Returns [`BackendError::Daemon`] when the manager is closed, the root is invalid,
     /// or no built index with an embedding exists, or [`BackendError::Engine`] when
     /// workspace inspection fails.
-    pub async fn activate_for_search(
-        &self,
-        requested_root: &str,
-    ) -> Result<RootHandle, BackendError> {
+    pub fn activate_for_search(&self, requested_root: &str) -> Result<RootHandle, BackendError> {
         if self.closed.load(Ordering::SeqCst) {
             return Err(DaemonError::ShuttingDown.into());
         }

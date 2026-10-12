@@ -31,19 +31,9 @@ pub fn range_label(range: &Range) -> String {
             start_offset,
             end_offset,
         } => format!("bytes:{start_offset}-{end_offset}"),
-        Range::Page { page } => format!("page:{page}"),
-        Range::PageText {
-            page,
-            start_offset: _,
-            end_offset: _,
-        } => format!("page:{page}"),
-        Range::PageRegion {
-            page,
-            x: _,
-            y: _,
-            width: _,
-            height: _,
-        } => format!("page:{page}"),
+        Range::Page { page } | Range::PageText { page, .. } | Range::PageRegion { page, .. } => {
+            format!("page:{page}")
+        }
         Range::File => "file".to_owned(),
     }
 }

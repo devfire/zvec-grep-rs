@@ -482,10 +482,10 @@ mod tests {
         let mut argv = vec!["zg", "index"];
         argv.extend_from_slice(flags);
         let cli = crate::cli::Cli::try_parse_from(argv).unwrap();
-        let Some(crate::cli::Command::Index(args)) = cli.command else {
+        let Some(crate::cli::Command::Index(parsed)) = cli.command else {
             panic!("index command");
         };
-        *args
+        *parsed
     }
 
     #[test]

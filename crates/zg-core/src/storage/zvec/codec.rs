@@ -611,8 +611,8 @@ mod tests {
 
     #[test]
     fn base64_round_trip_covers_remainder_lengths() {
-        for len in 0..12usize {
-            let data: Vec<u8> = (0..len as u8).map(|b| b.wrapping_mul(37)).collect();
+        for len in 0..12u8 {
+            let data: Vec<u8> = (0..len).map(|b| b.wrapping_mul(37)).collect();
             let decoded = base64_decode(&base64_encode(&data));
             assert_eq!(decoded, Ok(data));
         }

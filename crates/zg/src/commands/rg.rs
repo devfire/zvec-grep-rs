@@ -15,9 +15,9 @@ use crate::cli::{QueryArgs, parse_byte_size, parse_modified_time};
 use crate::error::CliError;
 use crate::format::{Rendering, print_context_result, use_color};
 
-pub(crate) async fn run_rg_direct(args: QueryArgs, queries: Vec<String>) -> Result<(), CliError> {
+pub(crate) fn run_rg_direct(args: &QueryArgs, queries: &[String]) -> Result<(), CliError> {
     let color = use_color(args.color, args.no_color);
-    let mut patterns = queries;
+    let mut patterns = queries.to_vec();
     patterns.extend(args.regexp.clone());
     let (before, after) = match (args.context, args.before_context, args.after_context) {
         (Some(both), None, None) => (both as usize, both as usize),

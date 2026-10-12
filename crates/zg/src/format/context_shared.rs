@@ -19,7 +19,7 @@ pub(crate) fn empty_detail_lines(result: &ZvecGrepContextResult) -> Vec<String> 
 
 /// Wire source name for the human view; every variant spelled out so a new
 /// source fails compilation here instead of rendering blank.
-pub(crate) fn source_label(source: &ContextSource) -> String {
+pub(crate) fn source_label(source: ContextSource) -> String {
     match source {
         ContextSource::Index => "index".to_owned(),
         ContextSource::Rg => "rg".to_owned(),

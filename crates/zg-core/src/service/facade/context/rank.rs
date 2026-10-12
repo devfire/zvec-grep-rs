@@ -270,7 +270,7 @@ mod tests {
             content_role: None,
             outline: None,
             status: ContentStatus::Fresh,
-            score: Some(1.0 / rank as f64),
+            score: Some(1.0 / f64::from(u32::try_from(rank).unwrap_or(u32::MAX))),
             matched_by: Some(matched_by.as_str().to_owned()),
             metadata: None,
             entity_id: Some(

@@ -30,7 +30,10 @@ pub fn validate(cli: &Cli) -> Result<(), CliError> {
         Command::Index(args) => validate_index(args),
         Command::Status(args) => validate_status(args),
         Command::Install(args) => validate_install(args),
-        Command::Uninstall(args) => validate_uninstall(args),
+        Command::Uninstall(args) => {
+            validate_uninstall(args);
+            Ok(())
+        }
         Command::Config(args) => validate_config(args),
         Command::Auth(args) => validate_auth(args),
         Command::Server(args) => validate_server(args),
@@ -177,9 +180,7 @@ fn validate_install(args: &InstallArgs) -> Result<(), CliError> {
     Ok(())
 }
 
-fn validate_uninstall(_args: &UninstallArgs) -> Result<(), CliError> {
-    Ok(())
-}
+fn validate_uninstall(_args: &UninstallArgs) {}
 
 fn validate_config(args: &ConfigArgs) -> Result<(), CliError> {
     const MISSING: &str = "zg config requires provider set or model set";

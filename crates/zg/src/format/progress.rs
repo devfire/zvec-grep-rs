@@ -6,6 +6,7 @@
 //! [`ProgressReporter`] owns the TTY/throttled stderr policy and clamps
 //! TTY repaints to the live stderr width.
 
+use std::fmt::Write as _;
 use std::io::Write as _;
 use std::time::{Duration, Instant};
 
@@ -66,9 +67,8 @@ pub fn format_green_progress_bar(
 fn phase_label(progress: &zg_core::types::IndexProgress) -> &'static str {
     match progress.phase {
         Some(zg_core::types::IndexProgressPhase::Scanning) => "scanning",
-        Some(zg_core::types::IndexProgressPhase::Indexing) => "indexing",
+        Some(zg_core::types::IndexProgressPhase::Indexing) | None => "indexing",
         Some(zg_core::types::IndexProgressPhase::Done) => "done",
-        None => "indexing",
     }
 }
 
@@ -260,7 +260,7 @@ fn build_progress_line(
         };
         let mut prefix = format!("{spinner} {phase}");
         if done > 0 {
-            prefix.push_str(&format!(" {done} files"));
+            let _ = write!(prefix, " {done} files");
         }
         prefix
     };
@@ -285,11 +285,12 @@ fn append_embedding_suffix(
     {
         let percent =
             (downloaded.min(total_bytes) as f64 / total_bytes as f64 * 100.0).round() as usize;
-        line.push_str(&format!(
+        let _ = write!(
+            line,
             " downloading {} / {} ({percent}%)",
             format_megabytes(downloaded),
             format_megabytes(total_bytes)
-        ));
+        );
     }
 }
 

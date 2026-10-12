@@ -42,7 +42,7 @@ fn normalize_lexical(path: &Path) -> String {
             }
             Component::CurDir => {}
             other @ (Component::Prefix(_) | Component::RootDir | Component::Normal(_)) => {
-                parts.push(other.as_os_str().to_owned())
+                parts.push(other.as_os_str().to_owned());
             }
         }
     }

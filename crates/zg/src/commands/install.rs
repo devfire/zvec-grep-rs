@@ -6,7 +6,7 @@ use crate::cli::{InstallArgs, UninstallArgs, parse_environment_variable, split_t
 use crate::error::CliError;
 use crate::install::{InstallOptions, InstallTarget, detect_targets, install, uninstall};
 
-pub(crate) fn run_install(args: InstallArgs) -> Result<(), CliError> {
+pub(crate) fn run_install(args: &InstallArgs) -> Result<(), CliError> {
     let home = user_home()?;
     let targets = resolve_targets(&args.target, &home)?;
     let token_env = args
@@ -32,7 +32,7 @@ pub(crate) fn run_install(args: InstallArgs) -> Result<(), CliError> {
     Ok(())
 }
 
-pub(crate) fn run_uninstall(args: UninstallArgs) -> Result<(), CliError> {
+pub(crate) fn run_uninstall(args: &UninstallArgs) -> Result<(), CliError> {
     let home = user_home()?;
     let targets = resolve_targets(&args.target, &home)?;
     let mut files = Vec::new();

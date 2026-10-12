@@ -406,7 +406,7 @@ impl ZvecWorkspaceIndexStorage {
                                 break;
                             };
                             if let Ok(Some(next)) = doc_to_stored_fragment(doc, files) {
-                                *current = next
+                                *current = next;
                             } else {
                                 *slot = None;
                                 break;

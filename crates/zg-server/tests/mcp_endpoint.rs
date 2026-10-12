@@ -122,7 +122,7 @@ fn initialized_notification() -> Value {
     json!({"jsonrpc": "2.0", "method": "notifications/initialized"})
 }
 
-fn call_body(id: u64, name: &str, arguments: Value) -> Value {
+fn call_body(id: u64, name: &str, arguments: &Value) -> Value {
     json!({
         "jsonrpc": "2.0",
         "id": id,
@@ -241,7 +241,7 @@ async fn agent_toolset_hides_lifecycle_tools() {
     let (status, unknown) = message(
         post(
             &base,
-            &call_body(3, "zvec_grep_rg", json!({"root": "/x", "command": "rg a"})),
+            &call_body(3, "zvec_grep_rg", &json!({"root": "/x", "command": "rg a"})),
             Some(&session),
         )
         .await,
@@ -271,7 +271,7 @@ async fn schema_bounds_reject_before_the_backend() {
             &call_body(
                 2,
                 "zvec_grep_search",
-                json!({"root": root, "query": "alpha", "limit": 51}),
+                &json!({"root": root, "query": "alpha", "limit": 51}),
             ),
             Some(&session),
         )
@@ -289,7 +289,7 @@ async fn schema_bounds_reject_before_the_backend() {
             &call_body(
                 3,
                 "zvec_grep_search",
-                json!({"root": root, "queries": groups}),
+                &json!({"root": root, "queries": groups}),
             ),
             Some(&session),
         )
@@ -319,7 +319,7 @@ async fn index_wait_and_rg_round_trips() {
             &call_body(
                 2,
                 "zvec_grep_index",
-                json!({"root": root, "wait": true, "debug": true}),
+                &json!({"root": root, "wait": true, "debug": true}),
             ),
             Some(&session),
         )
@@ -337,7 +337,7 @@ async fn index_wait_and_rg_round_trips() {
     let (status, reported) = message(
         post(
             &base,
-            &call_body(3, "zvec_grep_index_status", json!({"root": root})),
+            &call_body(3, "zvec_grep_index_status", &json!({"root": root})),
             Some(&session),
         )
         .await,
@@ -358,7 +358,7 @@ async fn index_wait_and_rg_round_trips() {
             &call_body(
                 4,
                 "zvec_grep_rg",
-                json!({"root": root, "command": "rg 'fn alpha'"}),
+                &json!({"root": root, "command": "rg 'fn alpha'"}),
             ),
             Some(&session),
         )
@@ -373,7 +373,7 @@ async fn index_wait_and_rg_round_trips() {
     let (status, dropped) = message(
         post(
             &base,
-            &call_body(5, "zvec_grep_index_drop", json!({"root": root})),
+            &call_body(5, "zvec_grep_index_drop", &json!({"root": root})),
             Some(&session),
         )
         .await,
@@ -401,7 +401,7 @@ async fn search_reports_missing_index_without_a_backend_call() {
             &call_body(
                 2,
                 "zvec_grep_search",
-                json!({"root": root, "query": "alpha"}),
+                &json!({"root": root, "query": "alpha"}),
             ),
             Some(&session),
         )
@@ -432,7 +432,7 @@ async fn index_rejects_nested_git_override_per_request() {
                 &call_body(
                     2,
                     "zvec_grep_index",
-                    json!({"root": root, "includeNestedGit": value}),
+                    &json!({"root": root, "includeNestedGit": value}),
                 ),
                 Some(&session),
             )
@@ -493,7 +493,7 @@ async fn index_status_reports_persisted_nested_git_policy() {
         let (status, reported) = message(
             post(
                 &base,
-                &call_body(2, "zvec_grep_index_status", json!({"root": root})),
+                &call_body(2, "zvec_grep_index_status", &json!({"root": root})),
                 Some(&session),
             )
             .await,

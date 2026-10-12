@@ -29,7 +29,7 @@ pub fn format_context_human(result: &ZvecGrepContextResult, color: bool) -> Stri
         &result.items.len().to_string(),
         color,
     ));
-    lines.push(human_field("source", &source_label(&result.source), color));
+    lines.push(human_field("source", &source_label(result.source), color));
     for item in &result.items {
         lines.push(String::new());
         lines.push(human_field(

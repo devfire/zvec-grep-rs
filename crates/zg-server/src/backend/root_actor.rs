@@ -65,7 +65,7 @@ impl RootActor {
                     // deciding to exit: teardown drops pending changes, so
                     // exiting over an unflushed batch would silently lose
                     // it (#34).
-                    self.watcher.flush_now().await;
+                    self.watcher.flush_now();
                     if self.runtime.is_quiet() && !self.runtime.needs_reconciliation() {
                         // A flushed batch re-enters as `WatchBatch`; handle
                         // one queued command (if any) instead of exiting

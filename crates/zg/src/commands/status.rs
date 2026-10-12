@@ -18,7 +18,7 @@ pub(crate) async fn run_status(args: StatusArgs) -> Result<(), CliError> {
     let mode = resolve_client_mode(args.mode)?;
     let state = route_by_mode(
         mode,
-        run_status_direct(&args, &absolute),
+        async { run_status_direct(&args, &absolute) },
         async {
             if args.index_location.is_some() {
                 return Err(CliError::usage(
@@ -39,7 +39,7 @@ pub(crate) async fn run_status(args: StatusArgs) -> Result<(), CliError> {
     Ok(())
 }
 
-async fn run_status_direct(args: &StatusArgs, absolute: &Path) -> Result<String, CliError> {
+fn run_status_direct(args: &StatusArgs, absolute: &Path) -> Result<String, CliError> {
     let color = use_color(args.color, args.no_color);
     let service = create_zvec_grep(service_options(
         Some(absolute.to_owned()),

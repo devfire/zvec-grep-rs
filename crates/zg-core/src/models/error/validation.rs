@@ -6,6 +6,9 @@
 //! exhaustive, so a new variant without rendering fails to compile.
 
 use super::ModelError;
+// The four width-critical single-line arms below match bare; the rest stay
+// qualified. (A full variant list would push this module past its LOC budget.)
+use super::ModelError::{LlamaCppEmbed, LlamaCppInvalidGgufHtml, NotImplemented, UnsupportedImage};
 use crate::error::EngineError;
 
 fn model_only(reference: &str) -> String {
@@ -28,38 +31,69 @@ fn model_index(reference: &str, index: usize) -> String {
     format!("model={reference} index={index}")
 }
 
-fn unsupported_image_context(reference: &str, index: Option<usize>) -> String {
+fn unsupported_image(reference: &str, index: Option<usize>) -> String {
     match index {
         Some(index) => format!("model={reference} index={index} kind=image"),
         None => format!("model={reference}"),
     }
 }
 
+fn embedding_context(reference: &str) -> String {
+    format!("embedding={reference}")
+}
+
+fn backend_context(reference: &str, backend: &str) -> String {
+    format!("reference={reference} backend={backend}")
+}
+
+fn batch_context(reference: &str, size: usize, max: usize) -> String {
+    format!("model={reference} batchSize={size} maxBatchSize={max}")
+}
+
+fn image_too_large_context(reference: &str, index: usize, bytes: u64, max_bytes: u64) -> String {
+    format!("model={reference} index={index} imageBytes={bytes} maxImageBytes={max_bytes}")
+}
+
+fn vector_count_context(reference: &str, expected: usize, actual: usize) -> String {
+    format!("model={reference} contentCount={expected} vectorCount={actual}")
+}
+
+fn dim_context(reference: &str, vector_index: usize, expected: usize, actual: usize) -> String {
+    format!(
+        "model={reference} vectorIndex={vector_index} expectedDimension={expected} actualDimension={actual}"
+    )
+}
+
+fn non_finite_context(reference: &str, vector_index: usize, value_index: usize) -> String {
+    format!("model={reference} vectorIndex={vector_index} valueIndex={value_index}")
+}
+
+fn truncated_index_context(reference: &str, index: usize, input_count: usize) -> String {
+    format!("model={reference} index={index} inputCount={input_count}")
+}
+
+fn gguf_html(reference: &str, path: &str) -> String {
+    format!("model={reference} path={path}")
+}
+
 impl From<ModelError> for EngineError {
     fn from(error: ModelError) -> Self {
-        let code = error.code();
-        let message = error.to_string();
+        let (code, message, source) = (error.code(), error.to_string(), error.clone());
         // The typed enum is the cause: io/serde/HTTP details are already
         // stringified into `context` upstream (e.g. `download.rs`), so the
         // chain `EngineError -> ModelError` stays walkable without
         // re-threading every leaf. `Clone` (not a borrow) because the match
         // below consumes `error` for the context rendering.
-        let source = error.clone();
         let context: Option<String> = match error {
-            ModelError::CatalogModelNotFound { reference } => {
-                Some(format!("embedding={reference}"))
+            ModelError::CatalogModelNotFound { reference } => Some(embedding_context(&reference)),
+            NotImplemented { reference, backend } => Some(backend_context(&reference, backend)),
+            ModelError::BackendUnavailable { reference, backend } => {
+                Some(backend_context(&reference, backend.as_str()))
             }
-            ModelError::NotImplemented { reference, backend } => {
-                Some(format!("reference={reference} backend={backend}"))
-            }
-            ModelError::BackendUnavailable { reference, backend } => Some(format!(
-                "reference={reference} backend={}",
-                backend.as_str()
-            )),
             ModelError::QwenText { context, .. }
             | ModelError::QwenVl { context, .. }
-            | ModelError::DownloadFailed { context } => Some(context),
-            ModelError::MissingApiKey { context, .. }
+            | ModelError::DownloadFailed { context }
+            | ModelError::MissingApiKey { context, .. }
             | ModelError::MissingEndpoint { context, .. } => Some(context),
             ModelError::EmptyInput { reference }
             | ModelError::WorkerFailed { reference }
@@ -69,51 +103,37 @@ impl From<ModelError> for EngineError {
                 reference,
                 size,
                 max,
-            } => Some(format!(
-                "model={reference} batchSize={size} maxBatchSize={max}"
-            )),
+            } => Some(batch_context(&reference, size, max)),
             ModelError::EmptyText { reference, index }
             | ModelError::EmptyImage { reference, index } => Some(model_index(&reference, index)),
-            ModelError::UnsupportedImage { reference, index } => {
-                Some(unsupported_image_context(&reference, index))
-            }
+            UnsupportedImage { reference, index } => Some(unsupported_image(&reference, index)),
             ModelError::ImageTooLarge {
                 reference,
                 index,
                 bytes,
                 max_bytes,
-            } => Some(format!(
-                "model={reference} index={index} imageBytes={bytes} maxImageBytes={max_bytes}"
-            )),
+            } => Some(image_too_large_context(&reference, index, bytes, max_bytes)),
             ModelError::VectorCountMismatch {
                 reference,
                 expected,
                 actual,
-            } => Some(format!(
-                "model={reference} contentCount={expected} vectorCount={actual}"
-            )),
+            } => Some(vector_count_context(&reference, expected, actual)),
             ModelError::DimensionMismatch {
                 reference,
                 vector_index,
                 expected,
                 actual,
-            } => Some(format!(
-                "model={reference} vectorIndex={vector_index} expectedDimension={expected} actualDimension={actual}"
-            )),
+            } => Some(dim_context(&reference, vector_index, expected, actual)),
             ModelError::NonFiniteValue {
                 reference,
                 vector_index,
                 value_index,
-            } => Some(format!(
-                "model={reference} vectorIndex={vector_index} valueIndex={value_index}"
-            )),
+            } => Some(non_finite_context(&reference, vector_index, value_index)),
             ModelError::InvalidTruncatedIndex {
                 reference,
                 index,
                 input_count,
-            } => Some(format!(
-                "model={reference} index={index} inputCount={input_count}"
-            )),
+            } => Some(truncated_index_context(&reference, index, input_count)),
             ModelError::Model2VecLoad {
                 reference,
                 repo,
@@ -148,17 +168,13 @@ impl From<ModelError> for EngineError {
             } => Some(format!("model={reference} id={id} rows={rows}")),
             ModelError::Model2VecTokenize { reference, detail }
             | ModelError::TransformersJsInvalidTensor { reference, detail }
-            | ModelError::LlamaCppEmbed { reference, detail } => {
-                Some(model_detail(&reference, &detail))
-            }
+            | LlamaCppEmbed { reference, detail } => Some(model_detail(&reference, &detail)),
             ModelError::LlamaCppInvalidGguf {
                 reference,
                 path,
                 detail,
             } => Some(format!("model={reference} path={path} detail={detail}")),
-            ModelError::LlamaCppInvalidGgufHtml { reference, path } => {
-                Some(format!("model={reference} path={path}"))
-            }
+            LlamaCppInvalidGgufHtml { reference, path } => Some(gguf_html(&reference, &path)),
         };
         let mut engine = EngineError::new(code, message).with_source(source);
         if let Some(context) = context {
@@ -203,7 +219,7 @@ mod tests {
                 "embedding text input is empty",
             ),
             (
-                ModelError::UnsupportedImage {
+                UnsupportedImage {
                     reference: reference(),
                     index: Some(1),
                 },
@@ -372,7 +388,7 @@ mod tests {
     fn llama_download_cases() -> Vec<(ModelError, &'static str, &'static str)> {
         vec![
             (
-                ModelError::LlamaCppEmbed {
+                LlamaCppEmbed {
                     reference: reference(),
                     detail: "d".to_owned(),
                 },
@@ -396,7 +412,7 @@ mod tests {
                 "Local embedding model is not a valid GGUF file",
             ),
             (
-                ModelError::LlamaCppInvalidGgufHtml {
+                LlamaCppInvalidGgufHtml {
                     reference: reference(),
                     path: "p".to_owned(),
                 },
@@ -431,8 +447,8 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_image_context_names_index() {
-        let engine = EngineError::from(ModelError::UnsupportedImage {
+    fn unsupported_image_names_index() {
+        let engine = EngineError::from(UnsupportedImage {
             reference: reference(),
             index: Some(1),
         });
@@ -440,7 +456,7 @@ mod tests {
             engine.context(),
             Some("model=local/test-model index=1 kind=image")
         );
-        let engine = EngineError::from(ModelError::UnsupportedImage {
+        let engine = EngineError::from(UnsupportedImage {
             reference: reference(),
             index: None,
         });

@@ -536,34 +536,48 @@ mod tests {
 
     #[tokio::test]
     async fn routes_by_mode() {
-        async fn direct() -> Result<&'static str, CliError> {
-            Ok("direct")
-        }
-        async fn server() -> Result<&'static str, CliError> {
-            Ok("server")
-        }
         assert_eq!(
-            route_by_mode(ClientMode::Direct, direct(), server(), async { false })
-                .await
-                .unwrap(),
+            route_by_mode(
+                ClientMode::Direct,
+                async { Ok::<_, CliError>("direct") },
+                async { Ok::<_, CliError>("server") },
+                async { false }
+            )
+            .await
+            .unwrap(),
             "direct"
         );
         assert_eq!(
-            route_by_mode(ClientMode::Server, direct(), server(), async { false })
-                .await
-                .unwrap(),
+            route_by_mode(
+                ClientMode::Server,
+                async { Ok::<_, CliError>("direct") },
+                async { Ok::<_, CliError>("server") },
+                async { false }
+            )
+            .await
+            .unwrap(),
             "server"
         );
         assert_eq!(
-            route_by_mode(ClientMode::Auto, direct(), server(), async { true })
-                .await
-                .unwrap(),
+            route_by_mode(
+                ClientMode::Auto,
+                async { Ok::<_, CliError>("direct") },
+                async { Ok::<_, CliError>("server") },
+                async { true }
+            )
+            .await
+            .unwrap(),
             "server"
         );
         assert_eq!(
-            route_by_mode(ClientMode::Auto, direct(), server(), async { false })
-                .await
-                .unwrap(),
+            route_by_mode(
+                ClientMode::Auto,
+                async { Ok::<_, CliError>("direct") },
+                async { Ok::<_, CliError>("server") },
+                async { false }
+            )
+            .await
+            .unwrap(),
             "direct"
         );
     }

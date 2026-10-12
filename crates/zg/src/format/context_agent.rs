@@ -3,6 +3,8 @@
 //! Ranked <file:range> headers with score/provenance, then content previews;
 //! empty results name the query and the reason.
 
+use std::fmt::Write as _;
+
 use zg_core::service::types::{ContentStatus, ContextItem, ZvecGrepContextResult};
 use zg_core::types::Content;
 
@@ -54,7 +56,7 @@ fn agent_item_header(item: &ContextItem) -> String {
         meta.push("possibly stale".to_owned());
     }
     if !meta.is_empty() {
-        header.push_str(&format!(" ({})", meta.join(", ")));
+        let _ = write!(header, " ({})", meta.join(", "));
     }
     header
 }

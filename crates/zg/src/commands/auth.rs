@@ -15,11 +15,11 @@ use super::support::{absolute_path, service_options, single_root_or_cwd};
 use crate::cli::{AuthAction, AuthArgs, AuthGrantArgs, AuthRootArgs};
 use crate::error::CliError;
 
-pub(crate) fn run_auth(args: AuthArgs) -> Result<(), CliError> {
+pub(crate) fn run_auth(args: &AuthArgs) -> Result<(), CliError> {
     match &args.action {
-        Some(AuthAction::Grant(grant)) => run_auth_grant(&args, grant),
-        Some(AuthAction::Status(status)) => run_auth_status(&args, status),
-        Some(AuthAction::Revoke(revoke)) => run_auth_revoke(&args, revoke),
+        Some(AuthAction::Grant(grant)) => run_auth_grant(args, grant),
+        Some(AuthAction::Status(status)) => run_auth_status(args, status),
+        Some(AuthAction::Revoke(revoke)) => run_auth_revoke(args, revoke),
         None => Err(CliError::usage("zg auth requires grant, status, or revoke")),
     }
 }

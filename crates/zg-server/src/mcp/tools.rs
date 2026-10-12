@@ -291,7 +291,7 @@ fn server_status_route() -> ToolRoute<ZvecGrepMcpServer> {
     ToolRoute::new_dyn(tool, |context: ToolCallContext<'_, ZvecGrepMcpServer>| {
         let server = context.service.clone();
         let envelope = envelope(&context);
-        async move { server.handle_server_status(envelope).await }.boxed()
+        async move { server.handle_server_status(&envelope) }.boxed()
     })
 }
 
@@ -540,10 +540,7 @@ impl ZvecGrepMcpServer {
         ))
     }
 
-    async fn handle_server_status(
-        &self,
-        envelope: CallEnvelope,
-    ) -> Result<CallToolResult, ErrorData> {
+    fn handle_server_status(&self, envelope: &CallEnvelope) -> Result<CallToolResult, ErrorData> {
         let _input: ServerStatusInput =
             parse_arguments(envelope.arguments.as_ref()).map_err(McpError::into_error_data)?;
         let status = self.backend.server_status();

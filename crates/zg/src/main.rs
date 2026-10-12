@@ -53,15 +53,15 @@ async fn main() {
     );
     let err_color = error_color(&cli);
     if let Err(error) = cli::validate(&cli) {
-        report(error, err_color, verbosity);
+        report(&error, err_color, verbosity);
     }
     if let Err(error) = commands::run(cli).await {
-        report(error, err_color, verbosity);
+        report(&error, err_color, verbosity);
     }
 }
 
-fn report(error: CliError, color: format::Color, verbosity: format::Verbosity) -> ! {
-    format::print_error(&error, color, verbosity);
+fn report(error: &CliError, color: format::Color, verbosity: format::Verbosity) -> ! {
+    format::print_error(error, color, verbosity);
     std::process::exit(1);
 }
 
