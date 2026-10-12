@@ -6,6 +6,11 @@ use crate::error::CliError;
 /// Parses `--max-filesize` values: plain bytes or `K`/`M`/`G` suffixed
 /// (`10MB`, `512k`). Mirrors `parseByteSize` in scale, not in message.
 pub fn parse_byte_size(value: &str) -> Result<u64, CliError> {
+    let invalid = || {
+        CliError::usage(format!(
+            "--max-filesize must be a byte size, got \"{value}\""
+        ))
+    };
     let trimmed = value.trim();
     let split = trimmed
         .char_indices()
@@ -15,28 +20,46 @@ pub fn parse_byte_size(value: &str) -> Result<u64, CliError> {
         Some(index) => trimmed.split_at(index),
         None => (trimmed, ""),
     };
-    let base: f64 = digits.trim().parse().map_err(|_| {
-        CliError::usage(format!(
-            "--max-filesize must be a byte size, got \"{value}\""
-        ))
-    })?;
-    if base < 0.0 {
-        return Err(CliError::usage(format!(
-            "--max-filesize must be a byte size, got \"{value}\""
-        )));
-    }
-    let factor = match suffix.trim().to_lowercase().as_str() {
-        "" | "b" => 1.0,
-        "k" | "kb" => 1024.0,
-        "m" | "mb" => 1024.0 * 1024.0,
-        "g" | "gb" => 1024.0 * 1024.0 * 1024.0,
-        _ => {
-            return Err(CliError::usage(format!(
-                "--max-filesize must be a byte size, got \"{value}\""
-            )));
-        }
+    let factor: u64 = match suffix.trim().to_lowercase().as_str() {
+        "" | "b" => 1,
+        "k" | "kb" => 1024,
+        "m" | "mb" => 1024 * 1024,
+        "g" | "gb" => 1024 * 1024 * 1024,
+        _ => return Err(invalid()),
     };
-    Ok((base * factor) as u64)
+    let (whole, fraction) = match digits.trim().split_once('.') {
+        Some((whole, fraction)) => (whole, fraction),
+        None => (digits.trim(), ""),
+    };
+    if (whole.is_empty() && fraction.is_empty())
+        || !fraction.chars().all(|marker| marker.is_ascii_digit())
+    {
+        return Err(invalid());
+    }
+    let whole: u64 = if whole.is_empty() {
+        0
+    } else {
+        whole.parse().map_err(|_| invalid())?
+    };
+    let fraction_value: u128 = if fraction.is_empty() {
+        0
+    } else {
+        fraction.parse().map_err(|_| invalid())?
+    };
+    let fraction_bytes = if fraction_value == 0 {
+        0
+    } else {
+        let exponent = u32::try_from(fraction.len()).map_err(|_| invalid())?;
+        let denominator = 10u128.checked_pow(exponent).ok_or_else(invalid)?;
+        let scaled = fraction_value
+            .checked_mul(u128::from(factor))
+            .ok_or_else(invalid)?;
+        u64::try_from(scaled / denominator).map_err(|_| invalid())?
+    };
+    whole
+        .checked_mul(factor)
+        .and_then(|bytes| bytes.checked_add(fraction_bytes))
+        .ok_or_else(invalid)
 }
 
 /// Parses `--modified-after`/`--modified-before`: unix millis, RFC 3339,

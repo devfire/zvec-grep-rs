@@ -184,6 +184,8 @@ fn byte_sizes_and_times_parse() {
     assert_eq!(parse_byte_size("512").unwrap(), 512);
     assert_eq!(parse_byte_size("10MB").unwrap(), 10 * 1024 * 1024);
     assert_eq!(parse_byte_size("2g").unwrap(), 2 * 1024 * 1024 * 1024);
+    assert_eq!(parse_byte_size("1.5KB").unwrap(), 1536);
+    assert!(parse_byte_size("18446744073709551615G").is_err());
     assert!(parse_byte_size("nope").is_err());
     assert_eq!(parse_modified_time("0", "--x").unwrap(), 0);
     assert!(parse_modified_time("not-a-date", "--x").is_err());
