@@ -396,9 +396,18 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         document_prefix: None,
         max_input_tokens: 512,
         max_batch_size: 4,
-        onnx_artifact: pinned(132_562, "266acb3edd98a1932f876d15bd8f7881a4955d0d53a6d5e79900f788b432de09"),
-        onnx_data_artifact: pinned(61_185_024, "77aff1dfb1e0591a40b61a91e5a97796f14c2aff56706e345bef5cbb3613b8cc"),
-        tokenizer_artifact: pinned(533_603, "ea77de727ef7fd34d177b83b4b1f1d3bb8884c95c90b6554a0adb0b3b65350a9"),
+        onnx_artifact: pinned(
+            132_562,
+            "266acb3edd98a1932f876d15bd8f7881a4955d0d53a6d5e79900f788b432de09",
+        ),
+        onnx_data_artifact: pinned(
+            61_185_024,
+            "77aff1dfb1e0591a40b61a91e5a97796f14c2aff56706e345bef5cbb3613b8cc",
+        ),
+        tokenizer_artifact: pinned(
+            533_603,
+            "ea77de727ef7fd34d177b83b4b1f1d3bb8884c95c90b6554a0adb0b3b65350a9",
+        ),
     }),
     EmbeddingCatalogEntry::TransformersJs(TransformersJsEntry {
         reference: "local/all-minilm-l6-v2",
@@ -414,9 +423,18 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         document_prefix: None,
         max_input_tokens: 256,
         max_batch_size: 4,
-        onnx_artifact: pinned(69_663, "e4dcb918111189b7686147e309379832fce83d4ecbf17c395961749b5788c786"),
-        onnx_data_artifact: pinned(54_429_696, "56fb7a55115e900196115a74e399beb45c2f41ae00b99525d46fb52935c4ee2a"),
-        tokenizer_artifact: pinned(533_808, "07805d116826679de90b4edeb2222269c4b8753bc0981be4399f732b2708e904"),
+        onnx_artifact: pinned(
+            69_663,
+            "e4dcb918111189b7686147e309379832fce83d4ecbf17c395961749b5788c786",
+        ),
+        onnx_data_artifact: pinned(
+            54_429_696,
+            "56fb7a55115e900196115a74e399beb45c2f41ae00b99525d46fb52935c4ee2a",
+        ),
+        tokenizer_artifact: pinned(
+            533_808,
+            "07805d116826679de90b4edeb2222269c4b8753bc0981be4399f732b2708e904",
+        ),
     }),
     EmbeddingCatalogEntry::Model2Vec(Model2VecEntry {
         reference: "local/potion-retrieval-32m",
@@ -432,8 +450,14 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         max_input_tokens: 1024,
         max_batch_size: 256,
         default_concurrency: 2,
-        model_artifact: pinned(129_210_456, "07609e5bd33aad37900b3fd62f4ec96f6daec88ca4d46b9d8b928bfababf6ea0"),
-        tokenizer_artifact: pinned(1_493_150, "7d75cbc54318138807c401b0f0c9721117c628b39de8e8e0edb6cb17e0ee7d18"),
+        model_artifact: pinned(
+            129_210_456,
+            "07609e5bd33aad37900b3fd62f4ec96f6daec88ca4d46b9d8b928bfababf6ea0",
+        ),
+        tokenizer_artifact: pinned(
+            1_493_150,
+            "7d75cbc54318138807c401b0f0c9721117c628b39de8e8e0edb6cb17e0ee7d18",
+        ),
     }),
     EmbeddingCatalogEntry::Model2Vec(Model2VecEntry {
         reference: "local/potion-multilingual-128m",
@@ -449,8 +473,14 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         max_input_tokens: 1024,
         max_batch_size: 256,
         default_concurrency: 2,
-        model_artifact: pinned(512_361_560, "14b5eb39cb4ce5666da8ad1f3dc6be4346e9b2d601c073302fa0a31bf7943397"),
-        tokenizer_artifact: pinned(18_616_131, "19f1909063da3cfe3bd83a782381f040dccea475f4816de11116444a73e1b6a1"),
+        model_artifact: pinned(
+            512_361_560,
+            "14b5eb39cb4ce5666da8ad1f3dc6be4346e9b2d601c073302fa0a31bf7943397",
+        ),
+        tokenizer_artifact: pinned(
+            18_616_131,
+            "19f1909063da3cfe3bd83a782381f040dccea475f4816de11116444a73e1b6a1",
+        ),
     }),
     EmbeddingCatalogEntry::Model2Vec(Model2VecEntry {
         reference: "local/potion-code-16m-v2",
@@ -466,8 +496,14 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         max_input_tokens: 1024,
         max_batch_size: 256,
         default_concurrency: 2,
-        model_artifact: pinned(32_490_072, "75cf7a6c2171b230ad19b1e7d8e0b1aee86da5a02af8e7cacedd9921d227623c"),
-        tokenizer_artifact: pinned(1_024_340, "107bbdcbad4bff1d299b7a4c3a2fb17c52890688b7dd0e4c9deab79d3c4f3d45"),
+        model_artifact: pinned(
+            32_490_072,
+            "75cf7a6c2171b230ad19b1e7d8e0b1aee86da5a02af8e7cacedd9921d227623c",
+        ),
+        tokenizer_artifact: pinned(
+            1_024_340,
+            "107bbdcbad4bff1d299b7a4c3a2fb17c52890688b7dd0e4c9deab79d3c4f3d45",
+        ),
     }),
     EmbeddingCatalogEntry::TransformersJs(TransformersJsEntry {
         reference: "local/multilingual-e5-small",
@@ -483,9 +519,15 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         document_prefix: Some("passage: "),
         max_input_tokens: 512,
         max_batch_size: 4,
-        onnx_artifact: pinned(118_308_185, "f80102d3f2a1229f387d3c81909990d8945513e347b0eab049f7de3c6f98c193"),
+        onnx_artifact: pinned(
+            118_308_185,
+            "f80102d3f2a1229f387d3c81909990d8945513e347b0eab049f7de3c6f98c193",
+        ),
         onnx_data_artifact: ArtifactExpectation::UNVERIFIED,
-        tokenizer_artifact: pinned(17_082_730, "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"),
+        tokenizer_artifact: pinned(
+            17_082_730,
+            "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39",
+        ),
     }),
     EmbeddingCatalogEntry::TransformersJs(TransformersJsEntry {
         reference: "local/jina-embeddings-v2-base-code",
@@ -501,9 +543,15 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         document_prefix: None,
         max_input_tokens: 8192,
         max_batch_size: 2,
-        onnx_artifact: pinned(161_895_621, "ed45870251c9f0cf656e78aab0d37a23489066df8a222bb1c8caf8a45f2cb16d"),
+        onnx_artifact: pinned(
+            161_895_621,
+            "ed45870251c9f0cf656e78aab0d37a23489066df8a222bb1c8caf8a45f2cb16d",
+        ),
         onnx_data_artifact: ArtifactExpectation::UNVERIFIED,
-        tokenizer_artifact: pinned(2_561_316, "b01c78a902aa4facb2f47f95449f48e2f7bbfea5d2472ee2f6ce92323c6f86e5"),
+        tokenizer_artifact: pinned(
+            2_561_316,
+            "b01c78a902aa4facb2f47f95449f48e2f7bbfea5d2472ee2f6ce92323c6f86e5",
+        ),
     }),
     EmbeddingCatalogEntry::TransformersJs(TransformersJsEntry {
         reference: "local/gte-modernbert-base",
@@ -519,9 +567,15 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         document_prefix: None,
         max_input_tokens: 8192,
         max_batch_size: 2,
-        onnx_artifact: pinned(224_152_761, "5d1278a1ba749c06b82f9a2f65c2c1c5765d36f2eb88b4888de62ff12b0724a2"),
+        onnx_artifact: pinned(
+            224_152_761,
+            "5d1278a1ba749c06b82f9a2f65c2c1c5765d36f2eb88b4888de62ff12b0724a2",
+        ),
         onnx_data_artifact: ArtifactExpectation::UNVERIFIED,
-        tokenizer_artifact: pinned(3_583_228, "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30"),
+        tokenizer_artifact: pinned(
+            3_583_228,
+            "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30",
+        ),
     }),
     EmbeddingCatalogEntry::TransformersJs(TransformersJsEntry {
         reference: "local/nomic-embed-text-v1.5",
@@ -537,9 +591,15 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         document_prefix: Some("search_document: "),
         max_input_tokens: 8192,
         max_batch_size: 2,
-        onnx_artifact: pinned(165_113_221, "314976b7b9fba83283f9c8a29ee680a159fa485f52104e3fa39d3d5858337003"),
+        onnx_artifact: pinned(
+            165_113_221,
+            "314976b7b9fba83283f9c8a29ee680a159fa485f52104e3fa39d3d5858337003",
+        ),
         onnx_data_artifact: ArtifactExpectation::UNVERIFIED,
-        tokenizer_artifact: pinned(711_396, "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66"),
+        tokenizer_artifact: pinned(
+            711_396,
+            "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+        ),
     }),
 ];
 

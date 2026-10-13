@@ -210,7 +210,7 @@ fn merge_claude_entry(
     serde_json::Value::Object(merged)
 }
 
-/// `zg --server --stdio` argv for OpenCode's array `command`, with an
+/// `zg --server --stdio` argv for `OpenCode`'s array `command`, with an
 /// explicit non-default toolset (upstream `stdioCommand`).
 fn opencode_stdio_command(options: &InstallOptions) -> Vec<String> {
     let mut command = vec!["zg".to_owned(), "--server".to_owned(), "--stdio".to_owned()];

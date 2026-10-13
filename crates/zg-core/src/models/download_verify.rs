@@ -50,18 +50,18 @@ impl<'a> ArtifactExpectation<'a> {
     }
 }
 
-fn failed(label: &str, detail: String) -> EngineError {
+fn failed(label: &str, detail: impl AsRef<str>) -> EngineError {
     EngineError::from(ModelError::DownloadFailed {
-        context: format!("artifact={label} detail={detail}"),
+        context: format!("artifact={label} detail={}", detail.as_ref()),
     })
 }
 
 /// Streams `path` and returns its lowercase hex SHA-256.
 fn sha256_file(path: &Path, label: &str) -> EngineResult<String> {
-    let mut file = fs::File::open(path)
-        .map_err(|err| failed(label, format!("open for sha256: {err}")))?;
+    let mut file =
+        fs::File::open(path).map_err(|err| failed(label, format!("open for sha256: {err}")))?;
     let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 64 * 1024];
+    let mut buffer = vec![0u8; 64 * 1024];
     loop {
         let read = file
             .read(&mut buffer)
@@ -70,7 +70,7 @@ fn sha256_file(path: &Path, label: &str) -> EngineResult<String> {
             break;
         }
         let Some(chunk) = buffer.get(..read) else {
-            return Err(failed(label, "read for sha256: short buffer".to_owned()));
+            return Err(failed(label, "read for sha256: short buffer"));
         };
         hasher.update(chunk);
     }
@@ -91,13 +91,13 @@ pub fn verify_artifact_file(
     expectation: ArtifactExpectation<'_>,
     label: &str,
 ) -> EngineResult<()> {
-    let metadata = fs::metadata(path)
-        .map_err(|err| failed(label, format!("stat cached artifact: {err}")))?;
+    let metadata =
+        fs::metadata(path).map_err(|err| failed(label, format!("stat cached artifact: {err}")))?;
     if !metadata.is_file() {
-        return Err(failed(label, "cached artifact is not a file".to_owned()));
+        return Err(failed(label, "cached artifact is not a file"));
     }
     if metadata.len() == 0 {
-        return Err(failed(label, "cached artifact is empty".to_owned()));
+        return Err(failed(label, "cached artifact is empty"));
     }
     if let Some(expected_size) = expectation.size
         && metadata.len() != expected_size
@@ -112,13 +112,8 @@ pub fn verify_artifact_file(
     }
     if let Some(expected_sha256) = expectation.sha256 {
         let normalized = expected_sha256.trim().to_ascii_lowercase();
-        if normalized.len() != 64
-            || !normalized.bytes().all(|byte| byte.is_ascii_hexdigit())
-        {
-            return Err(failed(
-                label,
-                "expected sha256 is not 64 hex characters".to_owned(),
-            ));
+        if normalized.len() != 64 || !normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(failed(label, "expected sha256 is not 64 hex characters"));
         }
         let actual = sha256_file(path, label)?;
         if actual != normalized {
@@ -214,7 +209,7 @@ fn publish_inner(
 ) -> EngineResult<()> {
     verify_artifact_file(temp_path, expectation, label)?;
     if fs::symlink_metadata(temp_path).is_ok_and(|meta| meta.file_type().is_symlink()) {
-        return Err(failed(label, "temp file was replaced by a symlink".to_owned()));
+        return Err(failed(label, "temp file was replaced by a symlink"));
     }
     let file = fs::File::open(temp_path)
         .map_err(|err| failed(label, format!("open temp file for fsync: {err}")))?;

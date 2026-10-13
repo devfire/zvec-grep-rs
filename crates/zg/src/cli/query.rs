@@ -12,6 +12,7 @@ use super::values::{ClientModeArg, ColorMode, DeviceArg, PreviewMode, RefreshMod
 
 /// `zg query` flags, mirroring the `query` branch of `parseArgs`.
 #[derive(Debug, Args)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct QueryArgs {
     /// Natural-language queries (also `--hybrid` for extra groups).
     pub queries: Vec<String>,
@@ -187,6 +188,7 @@ pub struct QueryArgs {
 /// Output-changing rg flags: rejected verbatim
 /// (`"{flag} changes rg output and cannot be used with managed --rg"`).
 #[derive(Debug, Args, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct RgOutputFlags {
     #[arg(long = "count", action = clap::ArgAction::SetTrue, hide = true)]
     pub count: bool,
@@ -277,6 +279,7 @@ impl RgOutputFlags {
 /// Non-mappable rg compatibility flags: rejected with a directive to
 /// `zvec_grep_rg` (the in-process engine never spawns rg).
 #[derive(Debug, Args, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct RgCompatFlags {
     #[arg(long = "invert-match", action = clap::ArgAction::SetTrue, hide = true)]
     pub invert_match: bool,
