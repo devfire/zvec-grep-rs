@@ -36,6 +36,6 @@ pub use color::{Color, use_color, use_color_stderr};
 pub use context::{Rendering, print_context_result, print_context_warnings};
 pub use control::print_control_status;
 pub use error::{Verbosity, print_error};
-pub use index::{print_index_result, print_no_indexable_files_tip};
+pub use index::{print_index_result, print_zero_files_indexed_warning};
 pub use progress::ProgressReporter;
 pub use workspace::print_workspace_info;

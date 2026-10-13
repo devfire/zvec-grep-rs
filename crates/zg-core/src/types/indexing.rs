@@ -71,6 +71,13 @@ pub struct IndexProgress {
     pub embedding: Option<IndexEmbeddingProgress>,
 }
 
+/// Warning for a completed build that indexed zero files. Shared by
+/// every build surface (CLI, daemon, MCP) so the wording cannot drift:
+/// without it an empty build looks identical to a successful one and
+/// only surfaces later as fruitless lookups.
+pub const ZERO_FILES_INDEXED_WARNING: &str =
+    "0 files were indexed. Check the workspace root and index filters.";
+
 /// Result of a completed index run.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -28,7 +28,7 @@ use super::support::{
 use crate::cli::{IndexArgs, parse_byte_size};
 use crate::client::{DaemonClient, resolve_client_mode, route_by_mode};
 use crate::error::CliError;
-use crate::format::{ProgressReporter, print_index_result, print_no_indexable_files_tip};
+use crate::format::{ProgressReporter, print_index_result, print_zero_files_indexed_warning};
 
 pub(crate) async fn run_index(args: IndexArgs) -> Result<(), CliError> {
     let root = single_root_or_cwd(&args.roots, "zg index accepts at most one root path")?;
@@ -216,9 +216,7 @@ async fn run_index_direct(args: &IndexArgs, root: &PathBuf) -> Result<(), CliErr
         eprintln!("debug: scan diagnostics: {diagnostics:?}");
     }
     if !args.quiet {
-        if result.files_scanned == 0 {
-            print_no_indexable_files_tip();
-        }
+        print_zero_files_indexed_warning(&result);
         print_index_result("Workspace index", &result);
     }
     Ok(())
@@ -360,6 +358,9 @@ async fn run_index_server(
         println!("Workspace index: {state}");
         println!("Root: {root_out}");
         println!("Job: {job}");
+        if let Some(warning) = structured.get("warning").and_then(Value::as_str) {
+            eprintln!("warning: {warning}");
+        }
     }
     if state == "failed" {
         let detail = structured

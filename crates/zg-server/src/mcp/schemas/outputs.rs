@@ -164,6 +164,9 @@ pub struct IndexOutput {
     /// Skipped-file diagnostics (with `debug` after a completed job).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scan_diagnostics: Option<ScanDiagnosticsOutput>,
+    /// Warning for a waited build that indexed zero files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 /// `zvec_grep_index_drop` structured output.

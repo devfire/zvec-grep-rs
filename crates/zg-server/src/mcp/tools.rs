@@ -23,7 +23,7 @@ use rmcp::model::{
 use rmcp::service::Peer;
 use rmcp::{ErrorData, RoleServer, ServerHandler};
 use serde::de::DeserializeOwned;
-use zg_core::types::UnixMillis;
+use zg_core::types::{UnixMillis, ZERO_FILES_INDEXED_WARNING};
 
 use crate::backend::SearchIndexing;
 use crate::backend::{
@@ -340,6 +340,7 @@ impl ZvecGrepMcpServer {
                 dropped: Some(removed),
                 error: None,
                 scan_diagnostics: None,
+                warning: None,
             };
             return Ok(tool_result(
                 index_text(&output),
@@ -356,7 +357,7 @@ impl ZvecGrepMcpServer {
                 },
             )
             .await?;
-        let (state, error, scan_diagnostics) = if input.wait.unwrap_or(false) {
+        let (state, error, scan_diagnostics, warning) = if input.wait.unwrap_or(false) {
             self.wait_for_index(
                 root.as_str(),
                 &submitted.job,
@@ -369,6 +370,7 @@ impl ZvecGrepMcpServer {
                 JobStateOutput::from(submitted.job.state),
                 submitted.job.error.as_ref().map(JobErrorOutput::from),
                 None,
+                None,
             )
         };
         let output = IndexOutput {
@@ -380,6 +382,7 @@ impl ZvecGrepMcpServer {
             dropped: None,
             error,
             scan_diagnostics,
+            warning,
         };
         Ok(tool_result(
             index_text(&output),
@@ -402,6 +405,7 @@ impl ZvecGrepMcpServer {
             JobStateOutput,
             Option<JobErrorOutput>,
             Option<ScanDiagnosticsOutput>,
+            Option<String>,
         ),
         McpError,
     > {
@@ -472,10 +476,23 @@ impl ZvecGrepMcpServer {
         } else {
             None
         };
+        // A waited build that succeeded with nothing stored indexed zero
+        // files; warn here so the empty result does not only surface
+        // later as fruitless lookups.
+        let warning = if matches!(
+            terminal.state,
+            zg_core::index_status::IndexJobState::Succeeded
+        ) && status.status.files_stored == 0
+        {
+            Some(ZERO_FILES_INDEXED_WARNING.to_owned())
+        } else {
+            None
+        };
         Ok((
             JobStateOutput::from(terminal.state),
             error,
             scan_diagnostics,
+            warning,
         ))
     }
 
@@ -715,6 +732,9 @@ fn index_text(output: &IndexOutput) -> String {
         if let Some(cause) = &error.cause {
             lines.push(format!("error_cause: {cause}"));
         }
+    }
+    if let Some(warning) = &output.warning {
+        lines.push(format!("warning: {warning}"));
     }
     if let Some(diagnostics) = &output.scan_diagnostics {
         lines.push(format!("skipped_files: {}", diagnostics.skipped_files));

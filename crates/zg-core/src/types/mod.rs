@@ -22,7 +22,7 @@ pub use file::{
 };
 pub use indexing::{
     EmbeddingStage, IndexEmbeddingProgress, IndexProgress, IndexProgressPhase, IndexResult,
-    TimingEntry, WorkspaceIndexStatus,
+    TimingEntry, WorkspaceIndexStatus, ZERO_FILES_INDEXED_WARNING,
 };
 pub use search::{
     ResolvedSearchPlan, ResolvedSearchPlanRoute, SearchFinalTrace, SearchHit, SearchHitEvidence,

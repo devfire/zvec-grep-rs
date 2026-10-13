@@ -107,6 +107,36 @@ fn open_index_status_search_round_trip() {
 }
 
 #[test]
+fn empty_workspace_builds_valid_empty_index() {
+    // Regression: a build over zero files staged no file mutations, so
+    // `files.json` was never persisted and the storage read as
+    // never-built — every later lookup failed with
+    // `workspace index not found` despite the build succeeding.
+    let dir = TempDir::new().expect("tempdir");
+    let service = stub_service(&dir);
+
+    let result = service.ensure_index(&index_options(&dir)).expect("index");
+    assert_eq!(result.files_scanned, 0, "{result:?}");
+
+    let info = service.workspace_info(None).expect("info");
+    assert!(info.indexed, "empty build must read as indexed: {info:?}");
+    let status = info.status.expect("status");
+    assert_eq!(status.files_stored, 0);
+
+    service
+        .index_status(None)
+        .expect("status after empty build");
+    let found = service
+        .context(&search_options(&dir))
+        .expect("context after empty build");
+    assert!(found.items.is_empty());
+    service
+        .open_read_session(None)
+        .expect("session after empty build")
+        .close();
+}
+
+#[test]
 fn drop_index_reports_existence() {
     let dir = fixture_workspace();
     let service = stub_service(&dir);

@@ -155,13 +155,18 @@ impl FileMetaStore {
     }
 
     /// Persists staged mutations when dirty, then clears the flag. No-op when
-    /// clean. Failures keep the flag so a later checkpoint retries.
+    /// clean and the file already exists. A writable store whose file does
+    /// not exist yet persists even when clean: a build that indexed zero
+    /// files stages no mutations, and without the empty `files.json` the
+    /// storage reads as never-built (`has_workspace_index_storage` requires
+    /// it), so every later lookup would report the index as not found.
+    /// Failures keep the flag so a later checkpoint retries.
     ///
     /// # Errors
     ///
     /// Returns a JSON I/O error when persistence fails.
     pub fn flush(&mut self) -> EngineResult<()> {
-        if !self.dirty {
+        if !self.dirty && (self.read_only || self.path.exists()) {
             return Ok(());
         }
         self.persist()?;
@@ -245,4 +250,30 @@ fn corrupt_quarantine_path(path: &Path) -> PathBuf {
     let mut quarantine = path.as_os_str().to_os_string();
     quarantine.push(format!(".corrupt.{timestamp}"));
     PathBuf::from(quarantine)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::EngineErrorCode;
+
+    #[test]
+    fn flush_creates_meta_file_for_empty_writable_store() {
+        // A zero-file build stages no mutations; flush must still persist
+        // the empty map or the storage reads as never-built.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("files.json");
+        let mut store = FileMetaStore::open(&path, false).expect("open writable");
+        store.flush().expect("flush");
+        assert!(path.is_file());
+        FileMetaStore::open(&path, true).expect("read-only reopen");
+    }
+
+    #[test]
+    fn read_only_missing_store_still_errors() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let path = dir.path().join("files.json");
+        let error = FileMetaStore::open(&path, true).expect_err("missing read-only store");
+        assert_eq!(*error.code(), EngineErrorCode::StorageZvecFileMetaMissing);
+    }
 }

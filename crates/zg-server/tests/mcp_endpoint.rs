@@ -399,6 +399,49 @@ async fn index_wait_and_rg_round_trips() {
 }
 
 #[tokio::test]
+async fn index_wait_on_empty_workspace_warns_zero_files() {
+    let backend = stub_backend();
+    let (server, base) = start(backend, McpToolset::Full, McpHttpEndpointOptions::default()).await;
+    let session = initialize(&base).await;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_string_lossy().into_owned();
+
+    let (status, indexed) = message(
+        post(
+            &base,
+            &call_body(2, "zvec_grep_index", &json!({"root": root, "wait": true})),
+            Some(&session),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    let text = indexed["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_else(|| panic!("index failed: {indexed}"));
+    assert!(text.contains("state: succeeded"), "{text}");
+    assert!(text.contains("warning: 0 files were indexed"), "{text}");
+    assert_eq!(
+        indexed["result"]["structuredContent"]["warning"],
+        json!(zg_core::types::ZERO_FILES_INDEXED_WARNING)
+    );
+
+    // The empty build is a valid empty index, not a missing one.
+    let (status, reported) = message(
+        post(
+            &base,
+            &call_body(3, "zvec_grep_index_status", &json!({"root": root})),
+            Some(&session),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    assert_eq!(reported["result"]["structuredContent"]["indexed"], true);
+    server.close().await;
+}
+
+#[tokio::test]
 async fn search_reports_missing_index_without_a_backend_call() {
     let (server, base) = start(
         stub_backend(),

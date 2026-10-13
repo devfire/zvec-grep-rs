@@ -8,7 +8,7 @@
 use super::context_agent::format_context_agent;
 use super::context_human::format_context_human;
 use super::error::debug_lines;
-use super::index::format_index_result;
+use super::index::{format_index_result, zero_files_indexed_warning};
 use super::progress::{
     format_done_line, format_green_progress_bar, format_progress_line,
     format_progress_line_clamped, is_downloading, stderr_width, visible_width,
@@ -192,6 +192,20 @@ fn index_result_counters() {
         "{text}"
     );
     assert!(text.contains("deleted: 2"), "{text}");
+}
+
+#[test]
+fn zero_files_indexed_warning_only_for_empty_builds() {
+    let empty = IndexResult::default();
+    assert_eq!(
+        zero_files_indexed_warning(&empty),
+        Some(zg_core::types::ZERO_FILES_INDEXED_WARNING)
+    );
+    let nonempty = IndexResult {
+        files_scanned: 1,
+        ..IndexResult::default()
+    };
+    assert_eq!(zero_files_indexed_warning(&nonempty), None);
 }
 
 #[test]
