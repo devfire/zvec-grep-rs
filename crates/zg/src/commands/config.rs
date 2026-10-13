@@ -67,6 +67,7 @@ fn run_config_model_set(set: &crate::cli::ConfigModelSetArgs) -> Result<(), CliE
             EmbeddingModelConfig {
                 endpoint: set.endpoint.clone(),
                 device: set.device.map(map_device),
+                allow_private_endpoint: None,
             },
         )])
     });
@@ -141,10 +142,10 @@ fn run_config_provider_set(set: &crate::cli::ConfigProviderSetArgs) -> Result<()
 }
 
 fn assert_http_endpoint(endpoint: &str) -> Result<(), CliError> {
-    // Same predicate the engine applies at embed time
-    // (`zg_core::config::is_http_endpoint`): prefix checks alone would store
-    // loopback / link-local / metadata / userinfo URLs that embedding then
-    // rejects, so fail fast here with the same reason.
+    // Syntactic predicate the engine applies at config-parse time
+    // (`zg_core::config::is_http_endpoint`): no DNS resolution and no
+    // IP-range rejection, so private/fake-ip/unresolvable endpoints can
+    // be stored. Strict SSRF checks run when a request is actually made.
     if zg_core::config::is_http_endpoint(endpoint) {
         return Ok(());
     }
@@ -158,16 +159,16 @@ mod tests {
     use super::assert_http_endpoint;
 
     #[test]
-    fn endpoint_check_mirrors_engine_ssrf_policy() {
-        // Literal public IP: accepted without DNS, so the test is offline-safe.
-        assert!(assert_http_endpoint("http://8.8.8.8/v1").is_ok());
-        for blocked in [
-            "http://169.254.169.254/",
-            "http://127.0.0.1:8080/v1",
-            "http://localhost:8080/v1",
-            "http://user:pass@8.8.8.8/v1",
-            "ftp://8.8.8.8/v1",
+    fn endpoint_check_is_syntactic_and_offline_safe() {
+        for accepted in [
+            "http://8.8.8.8/v1",
+            "http://192.168.1.10:11434/v1",
+            "http://198.18.0.5/v1",
+            "http://nonexistent.invalid/v1",
         ] {
+            assert!(assert_http_endpoint(accepted).is_ok(), "{accepted}");
+        }
+        for blocked in ["ftp://8.8.8.8/v1", "example.com/v1", "http://"] {
             assert!(assert_http_endpoint(blocked).is_err(), "{blocked}");
         }
     }

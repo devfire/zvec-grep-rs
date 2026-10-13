@@ -335,7 +335,10 @@ fn create_temp_file(destination: &Path, url: &str) -> EngineResult<(PathBuf, fs:
 /// Rejects artifact URLs outside the endpoint policy or the artifact host
 /// allowlist. Runs on the initial URL and on every redirect hop.
 fn validate_artifact_url(candidate: &str, url: &str) -> EngineResult<()> {
-    if !crate::config::is_http_endpoint(candidate) {
+    if !crate::config::is_allowed_request_endpoint(
+        candidate,
+        crate::config::allow_private_endpoint_from_env(),
+    ) {
         return Err(EngineError::from(ModelError::DownloadFailed {
             context: format!("url={url} detail=blocked artifact endpoint"),
         }));

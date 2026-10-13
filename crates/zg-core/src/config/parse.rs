@@ -89,6 +89,9 @@ pub fn merge_model_configs(
         if config.device.is_some() {
             entry.device = config.device;
         }
+        if config.allow_private_endpoint.is_some() {
+            entry.allow_private_endpoint = config.allow_private_endpoint;
+        }
     }
     Some(merged)
 }
@@ -185,7 +188,7 @@ fn parse_models(
         }
         assert_known_fields(
             entry,
-            &["endpoint", "device"],
+            &["endpoint", "device", "allowPrivateEndpoint"],
             path,
             &format!("models.{reference}"),
         )?;
@@ -194,6 +197,9 @@ fn parse_models(
             path,
             &format!("models.{reference}.endpoint"),
         )?;
+        // Syntactic HTTP(S) check only: no DNS resolution and no IP-range
+        // rejection on the parse path, so private/fake-ip/unresolvable
+        // endpoints still load. Strict checks run at request time.
         if let Some(endpoint) = &endpoint
             && !crate::config::is_http_endpoint(endpoint)
         {
@@ -202,6 +208,11 @@ fn parse_models(
                 &format!("models.{reference}.endpoint must be a valid HTTP(S) URL"),
             ));
         }
+        let allow_private_endpoint = optional_bool(
+            entry.get("allowPrivateEndpoint"),
+            path,
+            &format!("models.{reference}.allowPrivateEndpoint"),
+        )?;
         let device = optional_device(
             entry.get("device"),
             path,
@@ -220,7 +231,11 @@ fn parse_models(
                 &format!("models.{reference}.device is only supported for local models"),
             ));
         }
-        let config = EmbeddingModelConfig { endpoint, device };
+        let config = EmbeddingModelConfig {
+            endpoint,
+            device,
+            allow_private_endpoint,
+        };
         if !config.is_empty() {
             models.insert(reference.clone(), config);
         }
@@ -326,6 +341,14 @@ fn optional_non_empty_string(
         ));
     }
     Ok(Some(trimmed.to_owned()))
+}
+
+fn optional_bool(value: Option<&Value>, path: &str, field: &str) -> EngineResult<Option<bool>> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(flag)) => Ok(Some(*flag)),
+        Some(_) => Err(invalid_config(path, &format!("{field} must be a boolean"))),
+    }
 }
 
 fn optional_device(

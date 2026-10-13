@@ -66,10 +66,10 @@ fn remote_agent() -> ureq::Agent {
 /// body. Transport, JSON, and provider failures carry their own codes,
 /// mirroring the three TypeScript throw sites.
 ///
-/// The initial endpoint and every redirect hop must satisfy the endpoint
-/// policy (`crate::config::is_http_endpoint`); `https` -> `http`
+/// The initial endpoint and every redirect hop must satisfy the request-time
+/// endpoint policy (`crate::config::is_allowed_request_endpoint`, honouring
+/// the explicit private-endpoint opt-out); `https` -> `http`
 /// downgrades are refused, at most `MAX_REDIRECTS` hops are followed, and
-/// `Bearer` credentials are only forwarded to the endpoint's own origin.
 /// Sends one embedding HTTP exchange, forwarding `Bearer` auth only to the
 /// endpoint's own origin. Transport failures map to `request_failed`, mirroring
 /// the TypeScript throw site for request errors.
@@ -121,7 +121,8 @@ fn post_embedding_json(
     invalid_json: EngineErrorCode,
     api_error: EngineErrorCode,
 ) -> EngineResult<Value> {
-    if !crate::config::is_http_endpoint(endpoint) {
+    let allow_private = crate::config::allow_private_endpoint_from_env();
+    if !crate::config::is_allowed_request_endpoint(endpoint, allow_private) {
         return Err(EngineError::new(
             request_failed,
             format!("{display} endpoint is not a valid public HTTP(S) URL"),
@@ -132,7 +133,7 @@ fn post_embedding_json(
     let mut use_get = false;
     let mut hops: u32 = 0;
     loop {
-        if !crate::config::is_http_endpoint(&current) {
+        if !crate::config::is_allowed_request_endpoint(&current, allow_private) {
             return Err(EngineError::new(
                 request_failed,
                 format!("{display} redirected to a blocked endpoint"),
