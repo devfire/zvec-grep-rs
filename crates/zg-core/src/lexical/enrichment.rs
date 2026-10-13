@@ -309,8 +309,7 @@ fn text_range_contains(range: &crate::types::Range, start: usize, end: usize) ->
 }
 
 /// Orders candidate containers: smaller line span first, then higher
-/// specificity, then id (mirrors `compareFragmentContainer`, including the
-/// reversed specificity subtraction).
+/// specificity, then id (mirrors `compareFragmentContainer`).
 fn compare_fragment_container(left: &EntityFragment, right: &EntityFragment) -> i64 {
     let span = |fragment: &EntityFragment| match fragment.entity.range {
         crate::types::Range::Text {
@@ -328,10 +327,6 @@ fn compare_fragment_container(left: &EntityFragment, right: &EntityFragment) -> 
         | crate::types::Range::PageRegion { .. } => i64::MAX,
     };
     span(left).saturating_sub(span(right).clamp(i64::MIN + 1, i64::MAX - 1))
-        + i64::from(
-            (fragment_specificity_score(right) - fragment_specificity_score(left)).clamp(-1, 1),
-        )
-        .saturating_mul(0)
         + specificity_then_id(left, right)
 }
 
@@ -369,7 +364,7 @@ fn specificity_then_id(left: &EntityFragment, right: &EntityFragment) -> i64 {
 /// headings outrank plain chunks (mirrors `fragmentSpecificityScore`).
 fn fragment_specificity_score(fragment: &EntityFragment) -> i32 {
     match &fragment.entity.metadata {
-        Some(crate::types::EntityMetadata::Code(meta)) => i32::from(meta.symbol_name.is_none()) + 1,
+        Some(crate::types::EntityMetadata::Code(meta)) => i32::from(meta.symbol_name.is_some()) + 1,
         Some(crate::types::EntityMetadata::Markdown(meta)) => i32::from(meta.heading.is_some()),
         None => 0,
     }
@@ -474,6 +469,45 @@ mod tests {
         assert!(!result.diagnostics.truncated);
         let container = result.items[0].container.as_ref().expect("container");
         assert!(!container.entity_id.as_str().is_empty());
+    }
+
+    fn code_fragment(id: &str, symbol_name: Option<&str>) -> EntityFragment {
+        EntityFragment {
+            entity: crate::types::Entity {
+                id: crate::ids::EntityId::from_raw(id.to_owned()),
+                file_id: crate::ids::FileId::from_raw("file-1".to_owned()),
+                range: crate::types::Range::Text {
+                    start_line: 1,
+                    end_line: 3,
+                    start_offset: 0,
+                    end_offset: 3,
+                },
+                content: crate::types::Content::Text {
+                    text: "foo".to_owned(),
+                },
+                metadata: Some(crate::types::EntityMetadata::Code(
+                    crate::types::CodeEntityMetadata {
+                        symbol_type: crate::types::CodeSymbolType::Function,
+                        symbol_name: symbol_name.map(str::to_owned),
+                        scope: None,
+                        node_type: None,
+                        signature: None,
+                        doc: None,
+                        modifiers: Vec::new(),
+                    },
+                )),
+            },
+            group: None,
+        }
+    }
+
+    #[test]
+    fn named_code_fragment_outranks_anonymous_equal_span() {
+        let named = code_fragment("a-named", Some("alpha"));
+        let anonymous = code_fragment("z-anon", None);
+        assert!(fragment_specificity_score(&named) > fragment_specificity_score(&anonymous));
+        assert!(compare_fragment_container(&named, &anonymous) < 0);
+        assert!(compare_fragment_container(&anonymous, &named) > 0);
     }
 
     #[test]

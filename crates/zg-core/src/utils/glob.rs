@@ -67,7 +67,7 @@ fn collapse_slashes(value: &str) -> String {
 /// True when the pattern contains glob metacharacters.
 #[must_use]
 pub fn has_path_glob(pattern: &str) -> bool {
-    pattern.contains(['*', '?', '['])
+    pattern.contains(['*', '?', '[', '{'])
 }
 
 // -----------------------------------------------------------------------------
@@ -117,7 +117,9 @@ fn glob_fragment_to_regex(pattern: &str) -> String {
                 Some(class) => {
                     expression.push_str(&class.expression);
                     // Skip from just after `[` through the closing `]`.
-                    for _ in 1..=(class.end_index - index) {
+                    // `end_index` is a byte index, so count chars in the
+                    // consumed substring rather than using byte distance.
+                    for _ in 0..pattern[index + 1..=class.end_index].chars().count() {
                         chars.next();
                     }
                 }
@@ -133,7 +135,9 @@ fn glob_fragment_to_regex(pattern: &str) -> String {
                     let alternation_expression = format!("(?:{})", branches.join("|"));
                     expression.push_str(&alternation_expression);
                     // Skip from just after `{` through the closing `}`.
-                    for _ in 1..=(alternation.end_index - index) {
+                    // `end_index` is a byte index, so count chars in the
+                    // consumed substring rather than using byte distance.
+                    for _ in 0..pattern[index + 1..=alternation.end_index].chars().count() {
                         chars.next();
                     }
                 }
@@ -224,7 +228,9 @@ fn read_glob_alternation(pattern: &str, start_index: usize) -> Option<Alternatio
 }
 
 fn escape_regex_char(ch: char) -> String {
-    if ch.is_ascii_alphanumeric() {
+    // Unicode alphanumerics must stay literal: escaping them (e.g. `\é`)
+    // is an invalid regex escape and fails the whole pattern compile.
+    if ch.is_alphanumeric() {
         ch.to_string()
     } else {
         format!("\\{ch}")
@@ -604,6 +610,25 @@ mod tests {
         assert!(glob_matches("a.b", "a.b"));
         assert!(!glob_matches("a.b", "axb"));
         assert!(glob_matches("a+b", "a+b"));
+    }
+
+    #[test]
+    fn brace_only_patterns_are_globs_for_path_patterns() {
+        assert!(path_pattern_matches("{src,lib}.txt", "src.txt"));
+        assert!(path_pattern_matches("{src,lib}.txt", "lib.txt"));
+        assert!(!path_pattern_matches("{src,lib}.txt", "other.txt"));
+        let compiled = CompiledPathPattern::new("{src,lib}.txt");
+        assert!(compiled.matches("src.txt"));
+        assert!(!compiled.matches("other.txt"));
+    }
+
+    #[test]
+    fn non_ascii_class_and_alternation_keep_trailing_literal() {
+        assert!(glob_matches("[é]x", "éx"));
+        assert!(!glob_matches("[é]x", "é"));
+        assert!(glob_matches("{é,b}x", "éx"));
+        assert!(glob_matches("{é,b}x", "bx"));
+        assert!(!glob_matches("{é,b}x", "é"));
     }
 
     #[test]
