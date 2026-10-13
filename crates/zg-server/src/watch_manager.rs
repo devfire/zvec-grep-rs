@@ -77,6 +77,10 @@ pub type RootPathsSource = Arc<dyn Fn() -> Vec<RootPath> + Send + Sync>;
 /// Pending-state observer, mirroring TS `onPendingChange`.
 pub type WatchPending = Arc<dyn Fn(bool) + Send + Sync>;
 
+/// Liveness observer: `true` once the notify watcher is watching,
+/// `false` when it fails to start or reports a fatal error.
+pub type WatchActive = Arc<dyn Fn(bool) + Send + Sync>;
+
 /// Options for [`WatchManager`].
 pub struct WatchManagerOptions {
     /// Workspace root under watch.
@@ -98,6 +102,8 @@ pub struct WatchManagerOptions {
     pub initial_roots: Option<Vec<RootPath>>,
     /// Pending-state observer.
     pub on_pending: Option<WatchPending>,
+    /// Liveness observer.
+    pub on_active: Option<WatchActive>,
 }
 struct RawEvent {
     path: PathBuf,
@@ -122,6 +128,7 @@ struct Shared {
     overflow: Mutex<HashMap<PathBuf, Option<ChangeKind>>>,
     on_changes: WatchChanges,
     on_pending: Option<WatchPending>,
+    on_active: Option<WatchActive>,
     get_root_paths: Option<RootPathsSource>,
     flush_poke: Sender<()>,
 }
@@ -177,6 +184,7 @@ impl WatchManager {
             overflow: Mutex::new(HashMap::new()),
             on_changes: options.on_changes,
             on_pending: options.on_pending,
+            on_active: options.on_active,
             get_root_paths: options.get_root_paths,
             flush_poke,
         });
@@ -208,6 +216,13 @@ impl WatchManager {
         let mut watcher =
             recommended_watcher(move |result: Result<notify::Event, notify::Error>| {
                 if let Ok(event) = result {
+                    // Reads never change content: queueing access events
+                    // would let indexing's own file reads re-derive as
+                    // `Changed` in classification and self-trigger a
+                    // pending batch (and a spurious re-index).
+                    if matches!(event.kind, EventKind::Access(_)) {
+                        return;
+                    }
                     let kind = match event.kind {
                         EventKind::Create(_) => Some(ChangeKind::Created),
                         EventKind::Modify(_) => Some(ChangeKind::Changed),
@@ -233,6 +248,7 @@ impl WatchManager {
                     }
                 } else {
                     // A dead watcher cannot be trusted: reconcile everything.
+                    set_active(&shared, false);
                     shared
                         .changes
                         .lock()
@@ -245,15 +261,20 @@ impl WatchManager {
                     shared.poke();
                 }
             })
-            .map_err(|error| DaemonError::IndexFailed {
-                message: format!("failed to start filesystem watcher: {error}"),
+            .map_err(|error| {
+                set_active(&self.shared, false);
+                DaemonError::IndexFailed {
+                    message: format!("failed to start filesystem watcher: {error}"),
+                }
             })?;
-        watcher
-            .watch(Path::new(&self.shared.root), RecursiveMode::Recursive)
-            .map_err(|error| DaemonError::IndexFailed {
+        if let Err(error) = watcher.watch(Path::new(&self.shared.root), RecursiveMode::Recursive) {
+            set_active(&self.shared, false);
+            return Err(DaemonError::IndexFailed {
                 message: format!("failed to watch {}: {error}", self.shared.root),
-            })?;
+            });
+        }
         self.watcher = Some(watcher);
+        set_active(&self.shared, true);
         Ok(())
     }
 
@@ -296,6 +317,19 @@ impl WatchManager {
             .store(true, std::sync::atomic::Ordering::SeqCst);
         set_pending(&self.shared, true);
         self.shared.poke();
+    }
+
+    /// Marks the cached roots snapshot stale. The next classified batch
+    /// refreshes it on the blocking classify thread before filtering, so
+    /// an index run that (re)wrote the manifest (root paths may have
+    /// appeared or changed) takes effect without a blocking manifest
+    /// read on the caller. Without this, a manager constructed before
+    /// the first index caches an empty root list and filters out every
+    /// real event, so pending state never fires (#70).
+    pub fn mark_roots_stale(&self) {
+        self.shared
+            .roots_stale
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Re-snapshots index roots from the [`RootPathsSource`]. Call after a
@@ -361,6 +395,13 @@ impl Drop for WatchManager {
         for task in self.tasks.drain(..) {
             task.abort();
         }
+    }
+}
+
+fn set_active(shared: &Shared, active: bool) {
+    if let Some(observe) = &shared.on_active {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| observe(active)));
+        let _ = result;
     }
 }
 

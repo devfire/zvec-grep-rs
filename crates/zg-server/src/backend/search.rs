@@ -192,8 +192,11 @@ impl RootActor {
         let job = self.shared.scheduler.get_by_root(self.key.as_str());
         let active_known_change = matches!(&job,
             Some(job) if job.reason != JobReason::BackgroundReconcile && !job.is_terminal());
+        // A dead watcher (`watcher_active == false`) means edits may
+        // have been missed entirely: never report fresh (#70).
         let freshness = if self.runtime.needs_reconciliation()
             || snapshot.watcher_pending
+            || !self.runtime.watcher_active()
             || active_known_change
         {
             ResultFreshness::PossiblyStale

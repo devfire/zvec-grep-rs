@@ -19,6 +19,7 @@ fn manager(root: &str) -> (WatchManager, RecordedBatches) {
         get_root_paths: None,
         initial_roots: None,
         on_pending: None,
+        on_active: None,
     });
     (manager, batches)
 }
@@ -38,6 +39,63 @@ async fn coalesces_events_into_one_batch() {
     let (snapshot, reason) = batches.iter().next().expect("one batch");
     assert_eq!(snapshot.touched_files, vec!["/repo/a.rs", "/repo/b.rs"]);
     assert_eq!(*reason, WatchReason::Watch);
+}
+
+#[tokio::test]
+async fn pending_and_active_callbacks_track_lifecycle() {
+    // Regression (#70): pending/active observers must fire so the root
+    // actor can mirror them into its runtime state.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().to_string_lossy().into_owned();
+    let pending: Arc<StdMutex<Vec<bool>>> = Arc::new(StdMutex::new(Vec::new()));
+    let pending_clone = Arc::clone(&pending);
+    let active: Arc<StdMutex<Vec<bool>>> = Arc::new(StdMutex::new(Vec::new()));
+    let active_clone = Arc::clone(&active);
+    let mut manager = WatchManager::new(WatchManagerOptions {
+        root: root.clone(),
+        debounce: Some(Duration::from_secs(3600)),
+        max_wait: Some(Duration::from_secs(3600)),
+        max_changed_paths: None,
+        on_changes: Arc::new(|_, _| {}),
+        get_root_paths: None,
+        initial_roots: None,
+        on_pending: Some(Arc::new(move |value| {
+            pending_clone.lock().unwrap().push(value);
+        })),
+        on_active: Some(Arc::new(move |value| {
+            active_clone.lock().unwrap().push(value);
+        })),
+    });
+    manager.start().unwrap();
+    assert_eq!(*active.lock().unwrap(), vec![true]);
+    manager
+        .inject_event(&format!("{root}/a.rs"), ChangeKind::Changed, false)
+        .unwrap();
+    assert_eq!(*pending.lock().unwrap(), vec![true]);
+    manager.flush_now();
+    assert_eq!(*pending.lock().unwrap(), vec![true, false]);
+    manager.close().await;
+
+    // A root that cannot be watched reports inactive instead of
+    // silently pretending to watch.
+    let failed_active: Arc<StdMutex<Vec<bool>>> = Arc::new(StdMutex::new(Vec::new()));
+    let failed_clone = Arc::clone(&failed_active);
+    let mut failed = WatchManager::new(WatchManagerOptions {
+        root: "/definitely/not/here-zvec-grep".to_owned(),
+        debounce: None,
+        max_wait: None,
+        max_changed_paths: None,
+        on_changes: Arc::new(|_, _| {}),
+        get_root_paths: None,
+        initial_roots: None,
+        on_pending: None,
+        on_active: Some(Arc::new(move |value| {
+            failed_clone.lock().unwrap().push(value);
+        })),
+    });
+    assert!(failed.start().is_err());
+    assert_eq!(*failed_active.lock().unwrap(), vec![false]);
+    failed.close().await;
 }
 
 #[tokio::test]
@@ -62,6 +120,7 @@ async fn internal_only_batches_skip_roots_refresh() {
         get_root_paths: Some(source),
         initial_roots: None,
         on_pending: None,
+        on_active: None,
     });
     // Construction takes one blocking snapshot up front.
     let baseline = calls.load(Ordering::SeqCst);
@@ -249,6 +308,7 @@ async fn nested_git_policy_gates_watcher_batches() {
         get_root_paths: Some(source),
         initial_roots: None,
         on_pending: None,
+        on_active: None,
     });
     let touched_batches = || {
         batches

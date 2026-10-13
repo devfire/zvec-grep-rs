@@ -98,6 +98,64 @@ async fn index_status_search_round_trip() {
 }
 
 #[tokio::test]
+async fn watcher_reports_active_and_pending_search_is_stale() {
+    // Regression (#70): the actor never wired the watcher's pending
+    // callback and never marked the watcher active, so status always
+    // read `watcher_active: false` and a search inside the debounce
+    // window (750 ms, before the flush enqueues a reconcile) read fresh
+    // over unflushed edits.
+    let backend = backend();
+    let dir = fixture();
+    let root = root(&dir);
+    let submitted = backend
+        .index(
+            &root,
+            IndexInput {
+                rebuild: true,
+                ..IndexInput::default()
+            },
+        )
+        .await
+        .unwrap();
+    backend
+        .scheduler()
+        .wait(&submitted.job.id, None)
+        .await
+        .unwrap();
+    let status = backend.index_status(&root).await.unwrap();
+    assert!(status.watcher_active, "{status:?}");
+    std::fs::write(
+        dir.path().join("a.rs"),
+        "fn alpha() {}\nfn alpha_pending() {}\n",
+    )
+    .unwrap();
+    // Poll only inside the debounce window: after the flush, the
+    // enqueued reconcile alone would already read as possibly stale.
+    let deadline = std::time::Instant::now() + Duration::from_millis(500);
+    let mut freshness = ResultFreshness::Fresh;
+    while std::time::Instant::now() < deadline {
+        let searched = backend
+            .search(
+                &root,
+                SearchQuery {
+                    query: Some("alpha function".to_owned()),
+                    limit: Some(5),
+                    ..SearchQuery::default()
+                },
+            )
+            .await
+            .unwrap();
+        freshness = searched.freshness;
+        if freshness == ResultFreshness::PossiblyStale {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(freshness, ResultFreshness::PossiblyStale);
+    backend.close().await;
+}
+
+#[tokio::test]
 async fn late_waiter_observes_terminal_state() {
     // Regression: tokio 1.53+ `watch::send` drops values without
     // receivers, so the scheduler must store snapshots

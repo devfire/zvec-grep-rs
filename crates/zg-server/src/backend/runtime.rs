@@ -29,7 +29,9 @@ use crate::read_session_cache::{OpenSession, SessionError, WorkspaceReadSessionC
 use crate::root_runtime::RootKey;
 use crate::root_runtime::RootRuntime;
 use crate::runtime_manager::RuntimeManager;
-use crate::watch_manager::{WatchManager, WatchManagerOptions, WatchReason};
+use crate::watch_manager::{
+    WatchActive, WatchChanges, WatchManager, WatchManagerOptions, WatchPending, WatchReason,
+};
 
 /// Spawns one root actor task. Called by the manager with a fresh channel;
 /// `tx` is shared back into the watcher callbacks so flushed batches
@@ -45,13 +47,7 @@ pub(crate) async fn spawn_root_actor(
     let coordinator = IndexCoordinator::new(key.as_str(), None);
     let opener = session_opener(shared.clone(), key.clone());
     let sessions = WorkspaceReadSessionCache::new(opener, Some(shared.read_session_ttl));
-    let batch_sender = tx.clone();
-    let on_changes = Arc::new(move |snapshot: ChangeSetSnapshot, reason: WatchReason| {
-        let _ = batch_sender.send(RootCommand::WatchBatch {
-            changes: snapshot,
-            reason,
-        });
-    });
+    let (on_changes, on_pending, on_active) = watcher_callbacks(&tx);
     let service = shared.service.clone();
     let root = key.to_string();
     let get_roots = Arc::new(move || {
@@ -90,7 +86,8 @@ pub(crate) async fn spawn_root_actor(
         on_changes,
         get_root_paths: Some(get_roots),
         initial_roots: Some(initial_roots),
-        on_pending: None,
+        on_pending: Some(on_pending),
+        on_active: Some(on_active),
     });
     if let Err(error) = watcher.start() {
         log_event(
@@ -140,6 +137,31 @@ pub(crate) async fn spawn_root_actor(
         tx,
     };
     actor.run().await;
+}
+
+/// Watcher callbacks forwarding into the actor mailbox. Pending/active
+/// state re-enters as actor commands: the callbacks run on watcher
+/// tasks, while `RootRuntime` is actor-owned `&mut` state, so direct
+/// mutation is impossible (#70).
+fn watcher_callbacks(
+    tx: &UnboundedSender<RootCommand>,
+) -> (WatchChanges, WatchPending, WatchActive) {
+    let batch_sender = tx.clone();
+    let on_changes = Arc::new(move |snapshot: ChangeSetSnapshot, reason: WatchReason| {
+        let _ = batch_sender.send(RootCommand::WatchBatch {
+            changes: snapshot,
+            reason,
+        });
+    });
+    let pending_sender = tx.clone();
+    let on_pending = Arc::new(move |pending: bool| {
+        let _ = pending_sender.send(RootCommand::WatcherPending { pending });
+    });
+    let active_sender = tx.clone();
+    let on_active = Arc::new(move |active: bool| {
+        let _ = active_sender.send(RootCommand::WatcherActive { active });
+    });
+    (on_changes, on_pending, on_active)
 }
 
 /// Session opener: resolves the manifest model (or the override) and

@@ -109,6 +109,19 @@ impl RootActor {
                 let _ = reply.send(self.handle_drop().await);
                 return false;
             }
+            RootCommand::WatcherPending { pending } => {
+                self.runtime.set_watcher_pending(pending);
+            }
+            RootCommand::WatcherActive { active } => {
+                self.runtime.set_watcher_active(active);
+                if !active {
+                    // No live watcher: unseen edits are possible from
+                    // now on, so a full reconciliation is owed and
+                    // `watcher_active() == false` keeps searches from
+                    // reading as fresh (#70).
+                    self.runtime.require_full_reconciliation(false);
+                }
+            }
             RootCommand::WatchBatch { changes, reason } => {
                 self.handle_watch_batch(&changes, reason);
             }
@@ -294,6 +307,10 @@ impl RootActor {
                 }
                 self.scan.clone_from(&ok.index_result.scan_diagnostics);
                 self.status = Some(ok.status);
+                // The run (re)wrote the manifest: the watcher's cached
+                // root paths may predate the first index (empty) or a
+                // rescope, so the next batch must re-snapshot (#70).
+                self.watcher.mark_roots_stale();
             }
             IndexOutcome::Noop => {
                 if !finished.force_full {

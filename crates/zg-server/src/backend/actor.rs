@@ -70,6 +70,18 @@ pub(crate) enum RootCommand {
         /// True when storage existed.
         reply: oneshot::Sender<Result<bool, BackendError>>,
     },
+    /// Watcher pending state changed (unflushed edits exist).
+    WatcherPending {
+        /// True while changes are recorded but not yet flushed.
+        pending: bool,
+    },
+    /// Watcher liveness changed. `false` degrades the root: a full
+    /// reconciliation is owed and searches must not read as fresh
+    /// until a live watcher replaces this actor.
+    WatcherActive {
+        /// True once the notify watcher is watching.
+        active: bool,
+    },
     /// Watcher batch from the watch manager.
     WatchBatch {
         /// Flushed changes.
