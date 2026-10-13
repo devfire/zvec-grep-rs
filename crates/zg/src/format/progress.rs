@@ -300,8 +300,14 @@ fn append_embedding_suffix(
             (embedding.downloaded_bytes, embedding.total_bytes)
         && total_bytes > 0
     {
-        let percent =
-            (downloaded.min(total_bytes) as f64 / total_bytes as f64 * 100.0).round() as usize;
+        // Rounded percent in integer arithmetic (avoids lossy
+        // `u64 as f64` / `f64 as usize` casts); `u128` keeps
+        // `capped * 100` overflow-free for any `u64` inputs.
+        let percent = {
+            let capped = u128::from(downloaded.min(total_bytes));
+            let total = u128::from(total_bytes);
+            usize::try_from((capped * 100 + total / 2) / total).unwrap_or(100)
+        };
         let _ = write!(
             line,
             " downloading {} / {} ({percent}%)",
