@@ -75,9 +75,12 @@ impl ZvecWorkspaceIndexStorage {
     pub fn open(options: StorageOptions<'_>) -> EngineResult<Box<dyn WorkspaceIndexStorage>> {
         let read_only = options.read_only();
         let storage_path = options.storage_path().to_path_buf();
+        // Both modes carry the expected schema: read-only opens verify
+        // provenance too, so the type makes a fingerprint-less read
+        // unrepresentable.
         let embedding = match &options {
-            StorageOptions::ReadOnly { .. } => None,
-            StorageOptions::ReadWrite { embedding, .. } => Some(*embedding),
+            StorageOptions::ReadOnly { embedding, .. }
+            | StorageOptions::ReadWrite { embedding, .. } => *embedding,
         };
         initialize_zvec()?;
         let paths = resolve_workspace_index_storage_paths(&storage_path);
@@ -129,10 +132,9 @@ impl ZvecWorkspaceIndexStorage {
                 Collection::open(&index_path, Some(&open_options))
             })?;
             // Provenance gate: a foreign index.zvec is refused here, before
-            // any read can silently serve (or empty on) its vectors.
-            if let Some(expected) = embedding {
-                verify_embedding_fingerprint(&paths.storage_path, expected)?;
-            }
+            // any read can silently serve (or empty on) its vectors. Runs
+            // in read-only mode too: `embedding` is mandatory there.
+            verify_embedding_fingerprint(&paths.storage_path, embedding)?;
             collection
         } else if read_only {
             return Err(EngineError::new(
@@ -141,13 +143,6 @@ impl ZvecWorkspaceIndexStorage {
             )
             .with_context(format!("path={index_path}")));
         } else {
-            let embedding = embedding.ok_or_else(|| {
-                EngineError::new(
-                    EngineErrorCode::StorageMissingEmbeddingSchema,
-                    "embedding schema is required to create workspace index storage",
-                )
-                .with_context(format!("path={index_path}"))
-            })?;
             let collection_schema = create_entities_schema(embedding)?;
             let collection = open_zvec_collection(&index_path, read_only, "create", || {
                 Collection::create_and_open(&index_path, &collection_schema, None)

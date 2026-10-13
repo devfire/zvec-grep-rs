@@ -80,9 +80,10 @@ impl WorkspaceIndex {
                 storage_path,
                 embedding: &embedding,
             })?,
-            IndexMode::Read => {
-                create_workspace_index_storage(StorageOptions::ReadOnly { storage_path })?
-            }
+            IndexMode::Read => create_workspace_index_storage(StorageOptions::ReadOnly {
+                storage_path,
+                embedding: &embedding,
+            })?,
         };
         Ok(Self {
             info,
@@ -490,5 +491,47 @@ mod lifecycle_tests {
         )
         .expect("reopen after drop");
         reopened.status().expect("status after reopen");
+    }
+
+    #[test]
+    fn read_open_refuses_tampered_embedding_fingerprint() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let storage_path = dir.path().join("storage");
+        let info = test_info(&storage_path);
+        let mut index = WorkspaceIndex::open(
+            info.clone(),
+            WorkspaceIndexOptions {
+                mode: IndexMode::Write,
+                embedding_model: None,
+            },
+        )
+        .expect("open test index");
+        index
+            .storage
+            .replace_file(&seed_file_info(&storage_path), &[], None)
+            .expect("seed test storage");
+        drop(index);
+        // Same dimension/metric, different model than the manifest records:
+        // a read session must refuse, not silently serve wrong-model hits.
+        let fingerprint_path = storage_path.join("embedding.json");
+        let fingerprint = std::fs::read_to_string(&fingerprint_path).expect("read fingerprint");
+        std::fs::write(
+            &fingerprint_path,
+            fingerprint.replace("dummy", "other-model"),
+        )
+        .expect("tamper fingerprint");
+        let error = WorkspaceIndex::open(
+            info,
+            WorkspaceIndexOptions {
+                mode: IndexMode::Read,
+                embedding_model: None,
+            },
+        )
+        .err()
+        .expect("tampered fingerprint must refuse read open");
+        assert_eq!(
+            *error.code(),
+            EngineErrorCode::WorkspaceIndexEmbeddingModelMismatch
+        );
     }
 }

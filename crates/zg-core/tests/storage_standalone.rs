@@ -35,6 +35,7 @@ fn foreign_ts_collection_aborts_open_and_survives_delete() {
         let result = if read_only {
             create_workspace_index_storage(StorageOptions::ReadOnly {
                 storage_path: &storage,
+                embedding: &schema,
             })
         } else {
             create_workspace_index_storage(StorageOptions::ReadWrite {
@@ -55,4 +56,70 @@ fn foreign_ts_collection_aborts_open_and_survives_delete() {
     assert!(!has_workspace_index_storage(&storage));
     delete_workspace_index_storage(&storage).expect("delete");
     assert!(storage.join("files.zvec").exists());
+}
+
+#[test]
+fn read_only_open_verifies_embedding_fingerprint() {
+    let dir = TempDir::new().expect("tempdir");
+    let storage = dir.path().join("storage");
+    let schema = dummy_schema();
+    {
+        let mut created = create_workspace_index_storage(StorageOptions::ReadWrite {
+            storage_path: &storage,
+            embedding: &schema,
+        })
+        .expect("create storage");
+        created.close();
+    }
+    // Matching provenance: read-only open succeeds.
+    create_workspace_index_storage(StorageOptions::ReadOnly {
+        storage_path: &storage,
+        embedding: &schema,
+    })
+    .expect("read-only open with matching fingerprint");
+
+    let fingerprint_path = storage.join("embedding.json");
+    let original = std::fs::read_to_string(&fingerprint_path).expect("read fingerprint");
+
+    // Same dimension/metric, different model: silently serving this would
+    // rank hits with the wrong model's vectors.
+    std::fs::write(&fingerprint_path, original.replace("dummy", "other-model"))
+        .expect("tamper model");
+    let error = create_workspace_index_storage(StorageOptions::ReadOnly {
+        storage_path: &storage,
+        embedding: &schema,
+    })
+    .err()
+    .expect("tampered model must refuse read-only open");
+    assert_eq!(
+        error.code().to_string(),
+        "ZVEC_GREP.ENGINE.WORKSPACE_INDEX.EMBEDDING_MODEL_MISMATCH"
+    );
+
+    // Foreign (TS-generation `jieba`) tokenizer is refused, not adopted.
+    std::fs::write(&fingerprint_path, original.replace("standard", "jieba"))
+        .expect("tamper tokenizer");
+    let error = create_workspace_index_storage(StorageOptions::ReadOnly {
+        storage_path: &storage,
+        embedding: &schema,
+    })
+    .err()
+    .expect("foreign tokenizer must refuse read-only open");
+    assert_eq!(
+        error.code().to_string(),
+        "ZVEC_GREP.ENGINE.STORAGE.FOREIGN_TS_INDEX_PRESENT"
+    );
+
+    // Missing sidecar: a collection this build did not stamp.
+    std::fs::remove_file(&fingerprint_path).expect("remove fingerprint");
+    let error = create_workspace_index_storage(StorageOptions::ReadOnly {
+        storage_path: &storage,
+        embedding: &schema,
+    })
+    .err()
+    .expect("missing fingerprint must refuse read-only open");
+    assert_eq!(
+        error.code().to_string(),
+        "ZVEC_GREP.ENGINE.STORAGE.FOREIGN_TS_INDEX_PRESENT"
+    );
 }

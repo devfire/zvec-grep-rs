@@ -14,6 +14,10 @@ use crate::types::{CodeSymbolType, EntityFragment, FileInfo, WorkspaceIndexEmbed
 pub enum StorageOptions<'a> {
     ReadOnly {
         storage_path: &'a Path,
+        /// Expected embedding provenance: a read-only open verifies the
+        /// stored fingerprint against it, never silently serving a
+        /// foreign/wrong-model collection.
+        embedding: &'a WorkspaceIndexEmbeddingSchema,
     },
     ReadWrite {
         storage_path: &'a Path,
@@ -25,7 +29,9 @@ impl StorageOptions<'_> {
     #[must_use]
     pub fn storage_path(&self) -> &Path {
         match self {
-            Self::ReadOnly { storage_path } | Self::ReadWrite { storage_path, .. } => storage_path,
+            Self::ReadOnly { storage_path, .. } | Self::ReadWrite { storage_path, .. } => {
+                storage_path
+            }
         }
     }
 
