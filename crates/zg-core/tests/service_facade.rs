@@ -478,6 +478,45 @@ fn nested_git_reset_paths_removes_policy_from_index() {
 }
 
 #[test]
+fn nested_git_policy_survives_rebuild() {
+    use zg_core::manifest::read_workspace_manifest;
+
+    let dir = nested_workspace();
+    let service = stub_service(&dir);
+    service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(dir.path()),
+            include_nested_git: Some(true),
+            ..ZvecGrepIndexOptions::default()
+        })
+        .expect("index");
+    // A rebuild wipes storage, not configuration: the stored root paths
+    // (and their nested-git policy) carry over unless explicitly reset
+    // or replaced. The daemon's catch-up reconcile rebuilds with default
+    // options, so dropping them here silently un-indexes nested repos.
+    service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(dir.path()),
+            rebuild: true,
+            ..ZvecGrepIndexOptions::default()
+        })
+        .expect("rebuild");
+    assert!(
+        !fts_search(&service, &dir, "zephyrnestedone")
+            .items
+            .is_empty(),
+        "nested content must survive a rebuild"
+    );
+    let info = service.workspace_info(Some(dir.path())).expect("info");
+    let workspace = info.workspace_index.expect("workspace");
+    assert_eq!(workspace.root_paths[0].include_nested_git, Some(true));
+    let manifest = read_workspace_manifest(&manifest_home(&dir))
+        .expect("read manifest")
+        .expect("manifest exists");
+    assert_eq!(manifest.info.root_paths[0].include_nested_git, Some(true));
+}
+
+#[test]
 fn nested_git_manifest_validation() {
     use zg_core::manifest::read_workspace_manifest;
 
