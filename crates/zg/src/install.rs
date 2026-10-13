@@ -184,66 +184,139 @@ fn container_key(target: InstallTarget) -> &'static str {
     }
 }
 
-/// Managed server entry for a JSON target.
-fn server_entry(target: InstallTarget, options: &InstallOptions) -> serde_json::Value {
-    let timeout_ms = u64::from(options.timeout_secs) * 1000;
-    match options.transport {
-        McpTransportArg::Stdio => {
-            let mut entry = serde_json::json!({
-                "command": "zg",
-                "args": stdio_args(options),
-                "timeout": timeout_ms,
-            });
-            if target == InstallTarget::Qwen
-                && let Some(map) = entry.as_object_mut()
-            {
-                map.insert("alwaysLoadTools".to_owned(), true.into());
-                map.insert("trust".to_owned(), true.into());
-            }
-            if target == InstallTarget::Qoder
-                && let Some(map) = entry.as_object_mut()
-            {
-                map.insert("trust".to_owned(), true.into());
-            }
-            if target == InstallTarget::OpenCode {
-                entry = serde_json::json!({
-                    "type": "local",
-                    "command": "zg",
-                    "args": stdio_args(options),
-                });
-            }
-            entry
-        }
-        McpTransportArg::Http => {
-            let mut entry = match target {
-                InstallTarget::Qwen => serde_json::json!({
-                    "httpUrl": options.server_url,
-                    "timeout": timeout_ms,
-                    "alwaysLoadTools": true,
-                    "trust": true,
-                }),
-                InstallTarget::Qoder | InstallTarget::OpenCode => serde_json::json!({
-                    "type": "http",
-                    "url": options.server_url,
-                    "timeout": timeout_ms,
-                }),
-                InstallTarget::Claude | InstallTarget::Codex | InstallTarget::Cursor => {
-                    serde_json::json!({"url": options.server_url})
-                }
-            };
-            if let Some(env) = &options.token_env
-                && let Some(map) = entry.as_object_mut()
-            {
-                map.insert(
-                    "headers".to_owned(),
-                    serde_json::json!({
-                        "Authorization": format!("Bearer ${{{env}}}"),
-                    }),
-                );
-            }
-            entry
+/// Owned Claude keys: everything else on an existing Claude entry
+/// (e.g. a user-set `env`) is retained when merging (upstream
+/// `updateClaudeMcpConfig`).
+const CLAUDE_OWNED_KEYS: [&str; 5] = ["type", "url", "command", "args", "headers"];
+
+/// Merges a fresh Claude entry into the existing one, preserving
+/// unknown user fields and replacing only owned keys.
+fn merge_claude_entry(
+    existing: Option<&serde_json::Value>,
+    owned: serde_json::Value,
+) -> serde_json::Value {
+    let mut merged = existing
+        .and_then(|value| value.as_object())
+        .cloned()
+        .unwrap_or_default();
+    for key in CLAUDE_OWNED_KEYS {
+        merged.remove(key);
+    }
+    if let serde_json::Value::Object(owned_map) = owned {
+        for (key, value) in owned_map {
+            merged.insert(key, value);
         }
     }
+    serde_json::Value::Object(merged)
+}
+
+/// `zg --server --stdio` argv for OpenCode's array `command`, with an
+/// explicit non-default toolset (upstream `stdioCommand`).
+fn opencode_stdio_command(options: &InstallOptions) -> Vec<String> {
+    let mut command = vec!["zg".to_owned(), "--server".to_owned(), "--stdio".to_owned()];
+    if options.toolset == McpToolset::Full {
+        command.push("--mcp-toolset".to_owned());
+        command.push("full".to_owned());
+    }
+    command
+}
+
+/// Managed server entry for a JSON target. `existing` is the current
+/// `zvec_grep` entry, used only by Claude's merge-into-existing write.
+fn server_entry(
+    target: InstallTarget,
+    options: &InstallOptions,
+    existing: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    let timeout_ms = u64::from(options.timeout_secs) * 1000;
+    let mut entry = match options.transport {
+        McpTransportArg::Stdio => match target {
+            // OpenCode requires `command` as a single argv array; it
+            // has no separate `args` field.
+            InstallTarget::OpenCode => serde_json::json!({
+                "type": "local",
+                "command": opencode_stdio_command(options),
+                "enabled": true,
+                "timeout": timeout_ms,
+            }),
+            // Claude Code only recognises the entry as stdio with an
+            // explicit `type`; without it an http entry is likewise
+            // not treated as HTTP.
+            InstallTarget::Claude => serde_json::json!({
+                "type": "stdio",
+                "command": "zg",
+                "args": stdio_args(options),
+            }),
+            InstallTarget::Codex
+            | InstallTarget::Cursor
+            | InstallTarget::Qwen
+            | InstallTarget::Qoder => {
+                let mut entry = serde_json::json!({
+                    "command": "zg",
+                    "args": stdio_args(options),
+                    "timeout": timeout_ms,
+                });
+                if target == InstallTarget::Qwen
+                    && let Some(map) = entry.as_object_mut()
+                {
+                    map.insert("alwaysLoadTools".to_owned(), true.into());
+                    map.insert("trust".to_owned(), true.into());
+                }
+                if target == InstallTarget::Qoder
+                    && let Some(map) = entry.as_object_mut()
+                {
+                    map.insert("trust".to_owned(), true.into());
+                }
+                entry
+            }
+        },
+        McpTransportArg::Http => match target {
+            InstallTarget::Qwen => serde_json::json!({
+                "httpUrl": options.server_url,
+                "timeout": timeout_ms,
+                "alwaysLoadTools": true,
+                "trust": true,
+            }),
+            InstallTarget::Qoder => serde_json::json!({
+                "type": "http",
+                "url": options.server_url,
+                "timeout": timeout_ms,
+            }),
+            // OpenCode calls HTTP servers `remote`, not `http`.
+            InstallTarget::OpenCode => serde_json::json!({
+                "type": "remote",
+                "url": options.server_url,
+                "enabled": true,
+                "timeout": timeout_ms,
+                "oauth": false,
+            }),
+            InstallTarget::Claude => serde_json::json!({
+                "type": "http",
+                "url": options.server_url,
+            }),
+            InstallTarget::Codex | InstallTarget::Cursor => {
+                serde_json::json!({"url": options.server_url})
+            }
+        },
+    };
+    if let Some(env) = &options.token_env
+        && let Some(map) = entry.as_object_mut()
+    {
+        // OpenCode expands `{env:VAR}`; other hosts use `${VAR}`.
+        let authorization = if target == InstallTarget::OpenCode {
+            format!("Bearer {{env:{env}}}")
+        } else {
+            format!("Bearer ${{{env}}}")
+        };
+        map.insert(
+            "headers".to_owned(),
+            serde_json::json!({ "Authorization": authorization }),
+        );
+    }
+    if target == InstallTarget::Claude {
+        entry = merge_claude_entry(existing, entry);
+    }
+    entry
 }
 
 /// `zg server --stdio` argv, with an explicit non-default toolset.
@@ -260,6 +333,15 @@ fn stdio_args(options: &InstallOptions) -> Vec<String> {
 /// http(s) URL entry.
 fn is_managed(entry: &serde_json::Value) -> bool {
     if entry.get("command").and_then(|command| command.as_str()) == Some("zg") {
+        return true;
+    }
+    // OpenCode array form: `["zg", "--server", "--stdio", ..]`.
+    if let Some(command) = entry.get("command").and_then(|command| command.as_array())
+        && let [program, action, stdio, ..] = command.as_slice()
+        && program.as_str() == Some("zg")
+        && matches!(action.as_str(), Some("--server" | "server"))
+        && stdio.as_str() == Some("--stdio")
+    {
         return true;
     }
     for key in ["url", "httpUrl"] {
@@ -300,8 +382,8 @@ fn install_json(
         .get(key)
         .cloned()
         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::default()));
-    let existing = container.get("zvec_grep");
-    if existing.is_some_and(|entry| !is_managed(entry)) && !options.force {
+    let existing = container.get("zvec_grep").cloned();
+    if existing.as_ref().is_some_and(|entry| !is_managed(entry)) && !options.force {
         return Err(CliError::install_refused(format!(
             "Existing unmanaged zvec_grep MCP server found in {}. Re-run with --force to replace it for {}.",
             path.display(),
@@ -309,7 +391,10 @@ fn install_json(
         )));
     }
     if let Some(container_map) = container.as_object_mut() {
-        container_map.insert("zvec_grep".to_owned(), server_entry(target, options));
+        container_map.insert(
+            "zvec_grep".to_owned(),
+            server_entry(target, options, existing.as_ref()),
+        );
     }
     if let Some(root_map) = root.as_object_mut() {
         root_map.insert(key.to_owned(), container);
@@ -577,6 +662,10 @@ fn write_text_file(path: &Path, text: &str) -> Result<(), CliError> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod golden_tests;
 
 #[cfg(test)]
 // A panic in test code is just a test failure, so indexing in assertions needs no guard.
