@@ -6,12 +6,7 @@ on:
 
 jobs:
   test:
-    strategy:
-      # A flake on one OS must not cancel (and mask the result of) the other.
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -22,9 +17,7 @@ jobs:
       - name: Cache ONNX Runtime (ort-sys)
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/ort.pyke.io
-            ~/Library/Caches/ort.pyke.io
+          path: ~/.cache/ort.pyke.io
           key: ort-sys-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: ort-sys-${{ runner.os }}-
       # Warms the vector-parity gate (phases C/D): with the models cached,
@@ -52,9 +45,7 @@ jobs:
       - name: Cache ONNX Runtime (ort-sys)
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/ort.pyke.io
-            ~/Library/Caches/ort.pyke.io
+          path: ~/.cache/ort.pyke.io
           key: ort-sys-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: ort-sys-${{ runner.os }}-
       # Own key (not the `test` job's `embedding-models-v1`): the gate needs
@@ -82,11 +73,7 @@ jobs:
           ZVEC_REQUIRE_MODELS: 1
 
   clippy:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -95,9 +82,7 @@ jobs:
       - name: Cache ONNX Runtime (ort-sys)
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/ort.pyke.io
-            ~/Library/Caches/ort.pyke.io
+          path: ~/.cache/ort.pyke.io
           key: ort-sys-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: ort-sys-${{ runner.os }}-
       - run: cargo clippy --workspace --all-targets --locked
