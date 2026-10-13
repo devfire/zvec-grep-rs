@@ -145,7 +145,12 @@ impl ZvecGrepService {
                 embedding_model: Some(Arc::clone(&model)),
             },
         )?;
-        let changed_paths = if options.changed_paths.is_empty() {
+        // Fresh builds deleted (or never had) storage, so there is no
+        // prior index for a scoped update to amend: `rebuild` and a
+        // first build always full-scan, ignoring `changed_paths` (#86).
+        // Otherwise a scoped run would be stamped complete below while
+        // every untouched file is missing.
+        let changed_paths = if fresh_build || options.changed_paths.is_empty() {
             None
         } else {
             Some(

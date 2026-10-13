@@ -107,6 +107,51 @@ fn open_index_status_search_round_trip() {
 }
 
 #[test]
+fn rebuild_with_changed_paths_full_scans() {
+    // #86: rebuild deletes storage, so a scoped run would keep only the
+    // changed file and stamp the partial index complete.
+    let dir = fixture_workspace();
+    let service = stub_service(&dir);
+    service.ensure_index(&index_options(&dir)).expect("index");
+    let result = service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(dir.path()),
+            rebuild: true,
+            changed_paths: vec![dir.path().join("a.txt")],
+            ..ZvecGrepIndexOptions::default()
+        })
+        .expect("rebuild");
+    assert!(result.files_scanned >= 2, "{result:?}");
+    assert!(
+        fts_search(&service, &dir, "goodbye")
+            .items
+            .iter()
+            .any(|item| item.file.relative_path.ends_with("b.txt"))
+    );
+}
+
+#[test]
+fn first_build_with_changed_paths_full_scans() {
+    // #86: no prior index exists to update incrementally.
+    let dir = fixture_workspace();
+    let service = stub_service(&dir);
+    let result = service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(dir.path()),
+            changed_paths: vec![dir.path().join("a.txt")],
+            ..ZvecGrepIndexOptions::default()
+        })
+        .expect("first build");
+    assert!(result.files_scanned >= 2, "{result:?}");
+    assert!(
+        fts_search(&service, &dir, "goodbye")
+            .items
+            .iter()
+            .any(|item| item.file.relative_path.ends_with("b.txt"))
+    );
+}
+
+#[test]
 fn empty_workspace_builds_valid_empty_index() {
     // Regression: a build over zero files staged no file mutations, so
     // `files.json` was never persisted and the storage read as

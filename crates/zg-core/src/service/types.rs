@@ -39,7 +39,9 @@ pub type AbortCheck = Arc<dyn Fn() -> bool + Send + Sync>;
 ///   ([`crate::file_size_policy::HARD_MAX_FILE_SIZE_BYTES`]).
 /// - `max_depth`: `None` (default) searches without a depth limit.
 /// - `changed_paths` empty (default) runs a full index; non-empty scopes an
-///   incremental update to those paths.
+///   incremental update to those paths on an existing index. On a fresh
+///   build (`rebuild` or no complete prior index) it is ignored and the
+///   run full-scans, since there is no prior index to amend (#86).
 /// - `embedding_concurrency`: `None` (default) auto-sizes the embed pool.
 #[derive(Default)]
 pub struct ZvecGrepIndexOptions<'a> {
@@ -85,7 +87,8 @@ pub struct ZvecGrepIndexOptions<'a> {
     pub embedding_concurrency: Option<usize>,
     /// Progress sink; `None` (default) reports nothing.
     pub on_progress: Option<IndexProgressSink>,
-    /// Empty (default) runs a full index; non-empty scopes an incremental update.
+    /// Empty (default) runs a full index; non-empty scopes an incremental
+    /// update on an existing index, and is ignored on a fresh build.
     pub changed_paths: Vec<std::path::PathBuf>,
     /// Abort probe; `None` (default) runs to completion.
     pub signal: Option<AbortCheck>,
