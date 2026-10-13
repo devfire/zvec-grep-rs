@@ -136,18 +136,17 @@ pub fn workspace_index_location_with_override(
     Ok(location_with_home(resolved, &home))
 }
 
-/// Default locations: home is `<root>/.zvec-grep-rs`, root re-derives from the
-/// canonicalized home so symlinked checkouts report stable paths.
+/// Default locations: home is `<root>/.zvec-grep-rs`. Only the home is
+/// canonicalized; the root stays the resolved source checkout. Deriving the
+/// root from the canonicalized home's parent would change the root when
+/// `.zvec-grep-rs` is a symlink to storage elsewhere (e.g. another disk).
 fn location_in_default_home(resolved: &str) -> WorkspaceIndexLocation {
     let requested_home = workspace_home(resolved);
     let home = match std::fs::canonicalize(&requested_home) {
         Ok(real) => to_display_path(&real),
         Err(_) => requested_home,
     };
-    let canonical_root = Path::new(&home)
-        .parent()
-        .map_or_else(|| resolved.to_owned(), to_display_path);
-    location_with_home(canonical_root, &home)
+    location_with_home(resolved.to_owned(), &home)
 }
 
 /// Locations sharing one storage home directory.
@@ -334,6 +333,25 @@ mod tests {
             location
                 .index_path
                 .ends_with("/repo/.zvec-grep-rs/index.zvec")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_location_keeps_root_when_home_is_symlink() {
+        let base = tempfile::TempDir::new().expect("tempdir");
+        let repo = base.path().join("repo");
+        let state = base.path().join("state");
+        std::fs::create_dir_all(&repo).expect("repo dir");
+        std::fs::create_dir_all(&state).expect("state dir");
+        std::os::unix::fs::symlink(&state, repo.join(ZVEC_GREP_DIR)).expect("symlink home");
+        let location = workspace_index_location(&repo.to_string_lossy()).expect("location");
+        let canonical_state = std::fs::canonicalize(&state).expect("canonical state");
+        assert_eq!(location.root, to_display_path(&repo));
+        assert_eq!(location.home, to_display_path(&canonical_state));
+        assert_eq!(
+            location.manifest_path,
+            to_display_path(&canonical_state.join("manifest.json"))
         );
     }
 
