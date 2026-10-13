@@ -33,11 +33,8 @@ use std::sync::OnceLock;
 use std::sync::mpsc;
 
 use crate::error::{EngineError, EngineResult};
-use crate::models::catalog::{
-    LLAMA_CPP_GGUF_REVISION, LlamaCppEntry, LlamaModelFormat, ModelReference,
-};
+use crate::models::catalog::{LlamaCppEntry, LlamaModelFormat, ModelReference};
 use crate::models::download::{self, ModelDownloadReporter};
-use crate::models::download_verify::ArtifactExpectation;
 use crate::models::embeddings::{DeviceKind, EmbeddingResult, embed_validated};
 use crate::models::error::ModelError;
 use crate::models::{
@@ -173,9 +170,8 @@ impl LlamaCppEmbeddingModel {
         let entry = &self.entry;
         let (repo, remote_file) = split_hf_uri(entry.uri)
             .ok_or_else(|| embed_failed(entry, format_args!("invalid model uri {}", entry.uri)))?;
-        // Revision and size/SHA-256 expectation come from the catalog
-        // entry (`LLAMA_CPP_GGUF_REVISION` is the single spelling of the
-        // revision); never a literal `main` at this call site.
+        // Revision and size/SHA-256 expectation are the catalog entry's
+        // immutable per-model pin; never a literal at this call site.
         let model_path = download::scoped_cache_path(
             &self.cache_dir,
             "llama-cpp",
@@ -629,8 +625,8 @@ mod tests {
             context_size: 32,
             max_batch_size: 8,
             format,
-            revision: LLAMA_CPP_GGUF_REVISION,
-            artifact: ArtifactExpectation::UNVERIFIED,
+            revision: "test-revision",
+            artifact: crate::models::download_verify::ArtifactExpectation::UNVERIFIED,
         }
     }
 

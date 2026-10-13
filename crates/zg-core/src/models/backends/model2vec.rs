@@ -26,7 +26,6 @@ use crate::error::{EngineError, EngineResult};
 
 use crate::models::catalog::{Model2VecEntry, ModelReference};
 use crate::models::download::{self, ModelDownloadReporter};
-use crate::models::download_verify::ArtifactExpectation;
 use crate::models::embeddings::{EmbeddingResult, embed_validated};
 use crate::models::error::ModelError;
 use crate::models::{
@@ -183,7 +182,7 @@ impl Model2VecEmbeddingModel {
             entry.model_file,
             &model_path,
             model_file_name,
-            ArtifactExpectation::UNVERIFIED,
+            entry.model_artifact,
             reporter,
         )
         .map_err(|err| download_failed(entry, format_args!("{err}")))?;
@@ -193,7 +192,7 @@ impl Model2VecEmbeddingModel {
             entry.tokenizer_file,
             &tokenizer_json_path,
             entry.tokenizer_file,
-            ArtifactExpectation::UNVERIFIED,
+            entry.tokenizer_artifact,
             reporter,
         )
         .map_err(|err| download_failed(entry, format_args!("{err}")))?;

@@ -16,14 +16,6 @@ pub const QWEN_TEXT_EMBEDDING_ENDPOINT: &str =
     "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings";
 /// `DashScope` endpoint for Qwen multimodal (VL) embeddings.
 pub const QWEN3_VL_EMBEDDING_ENDPOINT: &str = "https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding";
-/// GGUF revision used by every [`LlamaCppEntry`]: the single place the
-/// llama.cpp download revision is spelled. No immutable (commit-hash)
-/// GGUF revision is derivable from this repository — the only in-repo
-/// resolution is `main` — so this stays `main` until a verified immutable
-/// revision is recorded here together with size/SHA-256 expectations.
-/// Cache paths and download URLs must both go through this constant via
-/// `LlamaCppEntry::revision`, never a literal at a call site.
-pub const LLAMA_CPP_GGUF_REVISION: &str = "main";
 
 /// Fully-qualified catalog reference, e.g. `local/potion-retrieval-32m`.
 ///
@@ -155,12 +147,18 @@ pub struct LlamaCppEntry {
     pub context_size: usize,
     pub max_batch_size: usize,
     pub format: LlamaModelFormat,
-    /// Hugging Face revision the GGUF is fetched at (see
-    /// [`LLAMA_CPP_GGUF_REVISION`]).
+    /// Immutable Hugging Face commit revision the GGUF is fetched at:
+    /// cache paths and download URLs go through this pin, never `main`
+    /// or a literal at a call site.
     pub revision: &'static str,
-    /// Known size/SHA-256 for the GGUF artifact. `UNVERIFIED` until a
-    /// value verifiable from in-repo sources is recorded; never guessed.
+    /// Upstream-recorded size/SHA-256 for the GGUF artifact, verified
+    /// before a download is published and on every cache revalidation.
     pub artifact: ArtifactExpectation<'static>,
+}
+
+/// Builds a pinned size/SHA-256 expectation from upstream-recorded values.
+const fn pinned(size: u64, sha256: &'static str) -> ArtifactExpectation<'static> {
+    ArtifactExpectation::new(Some(size), Some(sha256))
 }
 
 /// Catalog entry for a Qwen text embedding model (remote API).
@@ -204,6 +202,13 @@ pub struct TransformersJsEntry {
     pub document_prefix: Option<&'static str>,
     pub max_input_tokens: usize,
     pub max_batch_size: usize,
+    /// Upstream-recorded size/SHA-256 for the ONNX graph file.
+    pub onnx_artifact: ArtifactExpectation<'static>,
+    /// Upstream-recorded size/SHA-256 for the external-data companion
+    /// (`*_data`), or `UNVERIFIED` when the model has none upstream.
+    pub onnx_data_artifact: ArtifactExpectation<'static>,
+    /// Upstream-recorded size/SHA-256 for `tokenizer.json`.
+    pub tokenizer_artifact: ArtifactExpectation<'static>,
 }
 
 /// Catalog entry for a static-embedding (model2vec) model.
@@ -222,6 +227,10 @@ pub struct Model2VecEntry {
     pub max_input_tokens: usize,
     pub max_batch_size: usize,
     pub default_concurrency: usize,
+    /// Upstream-recorded size/SHA-256 for `model_file`.
+    pub model_artifact: ArtifactExpectation<'static>,
+    /// Upstream-recorded size/SHA-256 for `tokenizer_file`.
+    pub tokenizer_artifact: ArtifactExpectation<'static>,
 }
 
 /// One row of the embedding model catalog, discriminated by backend.
@@ -324,8 +333,11 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         context_size: 2048,
         max_batch_size: 16,
         format: LlamaModelFormat::Embeddinggemma,
-        revision: LLAMA_CPP_GGUF_REVISION,
-        artifact: ArtifactExpectation::UNVERIFIED,
+        revision: "0f741b5a6585bd53aeb15cd1372c56f2a0f65e12",
+        artifact: ArtifactExpectation::new(
+            Some(333_590_944),
+            Some("b5ce9d77a3fc4b3b39ccb5643c36777911cc4eb46a66962eadfa3f5f60490d63"),
+        ),
     }),
     EmbeddingCatalogEntry::LlamaCpp(LlamaCppEntry {
         reference: "local/qwen3-embedding-0.6b",
@@ -336,8 +348,11 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         context_size: 8192,
         max_batch_size: 8,
         format: LlamaModelFormat::Qwen3,
-        revision: LLAMA_CPP_GGUF_REVISION,
-        artifact: ArtifactExpectation::UNVERIFIED,
+        revision: "370f27d7550e0def9b39c1f16d3fbaa13aa67728",
+        artifact: ArtifactExpectation::new(
+            Some(639_150_592),
+            Some("06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439"),
+        ),
     }),
     EmbeddingCatalogEntry::QwenText(QwenTextEntry {
         reference: "qwen/text-embedding-v4",
@@ -381,6 +396,9 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         document_prefix: None,
         max_input_tokens: 512,
         max_batch_size: 4,
+        onnx_artifact: pinned(132_562, "266acb3edd98a1932f876d15bd8f7881a4955d0d53a6d5e79900f788b432de09"),
+        onnx_data_artifact: pinned(61_185_024, "77aff1dfb1e0591a40b61a91e5a97796f14c2aff56706e345bef5cbb3613b8cc"),
+        tokenizer_artifact: pinned(533_603, "ea77de727ef7fd34d177b83b4b1f1d3bb8884c95c90b6554a0adb0b3b65350a9"),
     }),
     EmbeddingCatalogEntry::TransformersJs(TransformersJsEntry {
         reference: "local/all-minilm-l6-v2",
@@ -396,6 +414,9 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         document_prefix: None,
         max_input_tokens: 256,
         max_batch_size: 4,
+        onnx_artifact: pinned(69_663, "e4dcb918111189b7686147e309379832fce83d4ecbf17c395961749b5788c786"),
+        onnx_data_artifact: pinned(54_429_696, "56fb7a55115e900196115a74e399beb45c2f41ae00b99525d46fb52935c4ee2a"),
+        tokenizer_artifact: pinned(533_808, "07805d116826679de90b4edeb2222269c4b8753bc0981be4399f732b2708e904"),
     }),
     EmbeddingCatalogEntry::Model2Vec(Model2VecEntry {
         reference: "local/potion-retrieval-32m",
@@ -411,6 +432,8 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         max_input_tokens: 1024,
         max_batch_size: 256,
         default_concurrency: 2,
+        model_artifact: pinned(129_210_456, "07609e5bd33aad37900b3fd62f4ec96f6daec88ca4d46b9d8b928bfababf6ea0"),
+        tokenizer_artifact: pinned(1_493_150, "7d75cbc54318138807c401b0f0c9721117c628b39de8e8e0edb6cb17e0ee7d18"),
     }),
     EmbeddingCatalogEntry::Model2Vec(Model2VecEntry {
         reference: "local/potion-multilingual-128m",
@@ -426,6 +449,8 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         max_input_tokens: 1024,
         max_batch_size: 256,
         default_concurrency: 2,
+        model_artifact: pinned(512_361_560, "14b5eb39cb4ce5666da8ad1f3dc6be4346e9b2d601c073302fa0a31bf7943397"),
+        tokenizer_artifact: pinned(18_616_131, "19f1909063da3cfe3bd83a782381f040dccea475f4816de11116444a73e1b6a1"),
     }),
     EmbeddingCatalogEntry::Model2Vec(Model2VecEntry {
         reference: "local/potion-code-16m-v2",
@@ -441,6 +466,8 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         max_input_tokens: 1024,
         max_batch_size: 256,
         default_concurrency: 2,
+        model_artifact: pinned(32_490_072, "75cf7a6c2171b230ad19b1e7d8e0b1aee86da5a02af8e7cacedd9921d227623c"),
+        tokenizer_artifact: pinned(1_024_340, "107bbdcbad4bff1d299b7a4c3a2fb17c52890688b7dd0e4c9deab79d3c4f3d45"),
     }),
     EmbeddingCatalogEntry::TransformersJs(TransformersJsEntry {
         reference: "local/multilingual-e5-small",
@@ -456,6 +483,9 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         document_prefix: Some("passage: "),
         max_input_tokens: 512,
         max_batch_size: 4,
+        onnx_artifact: pinned(118_308_185, "f80102d3f2a1229f387d3c81909990d8945513e347b0eab049f7de3c6f98c193"),
+        onnx_data_artifact: ArtifactExpectation::UNVERIFIED,
+        tokenizer_artifact: pinned(17_082_730, "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"),
     }),
     EmbeddingCatalogEntry::TransformersJs(TransformersJsEntry {
         reference: "local/jina-embeddings-v2-base-code",
@@ -471,6 +501,9 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         document_prefix: None,
         max_input_tokens: 8192,
         max_batch_size: 2,
+        onnx_artifact: pinned(161_895_621, "ed45870251c9f0cf656e78aab0d37a23489066df8a222bb1c8caf8a45f2cb16d"),
+        onnx_data_artifact: ArtifactExpectation::UNVERIFIED,
+        tokenizer_artifact: pinned(2_561_316, "b01c78a902aa4facb2f47f95449f48e2f7bbfea5d2472ee2f6ce92323c6f86e5"),
     }),
     EmbeddingCatalogEntry::TransformersJs(TransformersJsEntry {
         reference: "local/gte-modernbert-base",
@@ -486,6 +519,9 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         document_prefix: None,
         max_input_tokens: 8192,
         max_batch_size: 2,
+        onnx_artifact: pinned(224_152_761, "5d1278a1ba749c06b82f9a2f65c2c1c5765d36f2eb88b4888de62ff12b0724a2"),
+        onnx_data_artifact: ArtifactExpectation::UNVERIFIED,
+        tokenizer_artifact: pinned(3_583_228, "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30"),
     }),
     EmbeddingCatalogEntry::TransformersJs(TransformersJsEntry {
         reference: "local/nomic-embed-text-v1.5",
@@ -501,6 +537,9 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         document_prefix: Some("search_document: "),
         max_input_tokens: 8192,
         max_batch_size: 2,
+        onnx_artifact: pinned(165_113_221, "314976b7b9fba83283f9c8a29ee680a159fa485f52104e3fa39d3d5858337003"),
+        onnx_data_artifact: ArtifactExpectation::UNVERIFIED,
+        tokenizer_artifact: pinned(711_396, "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66"),
     }),
 ];
 
@@ -529,4 +568,77 @@ pub fn get_embedding_model_catalog_entry(
 #[must_use]
 pub fn embedding_model_catalog_entry(reference: &str) -> Option<&'static EmbeddingCatalogEntry> {
     get_embedding_model_catalog_entry(reference)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn is_commit_revision(text: &str) -> bool {
+        text.len() == 40
+            && text
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    }
+
+    fn is_sha256_hex(text: &str) -> bool {
+        text.len() == 64
+            && text
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    }
+
+    #[test]
+    fn gguf_entries_are_pinned_and_verified() {
+        let mut seen = 0usize;
+        for entry in EMBEDDING_MODEL_CATALOG {
+            let EmbeddingCatalogEntry::LlamaCpp(entry) = entry else {
+                continue;
+            };
+            seen += 1;
+            assert_ne!(entry.revision, "main", "{}", entry.reference);
+            assert!(is_commit_revision(entry.revision), "{}", entry.reference);
+            assert!(
+                entry.artifact.size.is_some_and(|size| size > 0),
+                "{}",
+                entry.reference
+            );
+            let sha = entry.artifact.sha256.unwrap_or("");
+            assert!(is_sha256_hex(sha), "{} sha256={sha}", entry.reference);
+        }
+        assert_eq!(seen, 2);
+    }
+
+    fn assert_pinned(expectation: ArtifactExpectation<'static>, reference: &str) {
+        assert!(
+            expectation.size.is_some_and(|size| size > 0),
+            "{reference} size"
+        );
+        let sha = expectation.sha256.unwrap_or("");
+        assert!(is_sha256_hex(sha), "{reference} sha256={sha}");
+    }
+
+    #[test]
+    fn downloaded_artifacts_carry_size_and_sha256() {
+        let (mut onnx, mut model2vec) = (0usize, 0usize);
+        for entry in EMBEDDING_MODEL_CATALOG {
+            match entry {
+                EmbeddingCatalogEntry::TransformersJs(e) => {
+                    onnx += 1;
+                    assert_pinned(e.onnx_artifact, e.reference);
+                    assert_pinned(e.tokenizer_artifact, e.reference);
+                }
+                EmbeddingCatalogEntry::Model2Vec(e) => {
+                    model2vec += 1;
+                    assert_pinned(e.model_artifact, e.reference);
+                    assert_pinned(e.tokenizer_artifact, e.reference);
+                }
+                EmbeddingCatalogEntry::LlamaCpp(_)
+                | EmbeddingCatalogEntry::QwenText(_)
+                | EmbeddingCatalogEntry::QwenMultimodal(_) => {}
+            }
+        }
+        assert_eq!(onnx, 6);
+        assert_eq!(model2vec, 3);
+    }
 }

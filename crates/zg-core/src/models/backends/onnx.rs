@@ -24,7 +24,6 @@ use std::sync::{Condvar, Mutex, OnceLock};
 use crate::error::{EngineError, EngineResult};
 use crate::models::catalog::{PoolingKind, TransformersJsEntry};
 use crate::models::download::{self, ModelDownloadReporter};
-use crate::models::download_verify::ArtifactExpectation;
 use crate::models::embeddings::{DeviceKind, EmbeddingResult, embed_validated, purpose_prefix};
 use crate::models::error::ModelError;
 use crate::models::{
@@ -308,7 +307,7 @@ impl OnnxEmbeddingModel {
             remote_onnx,
             &model_path,
             &onnx_file_name,
-            ArtifactExpectation::UNVERIFIED,
+            entry.onnx_artifact,
             reporter,
         )
         .map_err(|err| embed_failed(entry, format_args!("{err}")))?;
@@ -338,7 +337,7 @@ impl OnnxEmbeddingModel {
                 &data_remote,
                 &data_path,
                 &data_file_name,
-                ArtifactExpectation::UNVERIFIED,
+                entry.onnx_data_artifact,
                 reporter,
             )
             .map_err(|err| embed_failed(entry, format_args!("{err}")))?;
@@ -349,7 +348,7 @@ impl OnnxEmbeddingModel {
             "tokenizer.json",
             &tokenizer_path,
             "tokenizer.json",
-            ArtifactExpectation::UNVERIFIED,
+            entry.tokenizer_artifact,
             reporter,
         )
         .map_err(|err| embed_failed(entry, format_args!("{err}")))?;
@@ -646,6 +645,9 @@ mod tests {
             document_prefix: Some("passage: "),
             max_input_tokens: 512,
             max_batch_size: 4,
+            onnx_artifact: crate::models::download_verify::ArtifactExpectation::UNVERIFIED,
+            onnx_data_artifact: crate::models::download_verify::ArtifactExpectation::UNVERIFIED,
+            tokenizer_artifact: crate::models::download_verify::ArtifactExpectation::UNVERIFIED,
         }
     }
 
