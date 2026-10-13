@@ -461,7 +461,20 @@ async fn remove_record_if(home: Option<&Path>, stopped: &DaemonInstanceRecord) {
     }
 }
 
+/// Re-reads the lock and confirms it still names the same instance
+/// (PID + instance token). A missing or replaced record means the PID
+/// may have been reused by an unrelated process, so it must not be
+/// signalled (#67).
+async fn instance_still_recorded(home: Option<&Path>, expected: &DaemonInstanceRecord) -> bool {
+    read_record(&lock_path(home)).await.is_some_and(|current| {
+        current.pid == expected.pid && current.instance_token == expected.instance_token
+    })
+}
+
 /// Unix-only signal escalation via `/bin/kill` (no `unsafe` anywhere).
+/// The instance record is re-verified immediately before each signal:
+/// if it no longer names this instance, no signal is sent and the stop
+/// fails instead of killing a possibly unrelated reused PID (#67).
 async fn force_stop(
     home: Option<&Path>,
     record: &DaemonInstanceRecord,
@@ -478,6 +491,9 @@ async fn force_stop(
                 server_url: None,
             });
         }
+        if !instance_still_recorded(home, record).await {
+            return Err(DaemonError::ShutdownFailed { status: 0 });
+        }
         let grace = TERMINATION_GRACE.min(timeout.max(Duration::from_millis(100)));
         signal(record.pid, "-TERM");
         if wait_for_exit(record.pid, grace).await {
@@ -488,6 +504,9 @@ async fn force_stop(
                 pid: None,
                 server_url: None,
             });
+        }
+        if !instance_still_recorded(home, record).await {
+            return Err(DaemonError::ShutdownFailed { status: 0 });
         }
         signal(record.pid, "-KILL");
         if !wait_for_exit(record.pid, grace).await {
@@ -589,6 +608,98 @@ mod tests {
             .unwrap();
         assert_ne!(lock.record().instance_token, "stale");
         lock.release().await;
+    }
+
+    #[cfg(unix)]
+    async fn write_lock(home: &Path, pid: u32, token: &str) {
+        // `daemon_dir(home)` is `home` itself; the lock sits directly in it.
+        let dir = home.to_owned();
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let body = serde_json::json!({
+            "pid": pid,
+            "hostname": machine_name(),
+            "instanceToken": token,
+            "startedAt": 0,
+            "updatedAt": 0,
+            "serverUrl": "http://127.0.0.1:9",
+            "ready": false,
+        });
+        tokio::fs::write(dir.join("instance.lock"), format!("{body}\n"))
+            .await
+            .unwrap();
+    }
+
+    #[cfg(unix)]
+    fn record_for(pid: u32, token: &str) -> DaemonInstanceRecord {
+        DaemonInstanceRecord {
+            pid,
+            hostname: machine_name(),
+            instance_token: token.to_owned(),
+            server_url: "http://127.0.0.1:9".to_owned(),
+            ready: false,
+        }
+    }
+
+    /// Regression (#67): the lock record was replaced after it was read, so
+    /// the recorded PID may now belong to an unrelated (reused-PID) process.
+    /// `force_stop` must not signal it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn force_stop_does_not_signal_when_record_was_replaced() {
+        let home = home();
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        write_lock(home.path(), pid, "original").await;
+        write_lock(home.path(), pid, "replacement").await;
+        let result = force_stop(
+            Some(home.path()),
+            &record_for(pid, "original"),
+            Duration::from_millis(100),
+        )
+        .await;
+        let still_alive = child.try_wait().unwrap().is_none();
+        let record_kept = read_record(&lock_path(Some(home.path())))
+            .await
+            .is_some_and(|current| current.instance_token == "replacement");
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(result.is_err(), "mismatched record must refuse to signal");
+        assert!(still_alive, "unrelated process must not be signalled");
+        assert!(record_kept, "replacement record must be left in place");
+    }
+
+    /// Regression (#67), escalation arm: record replaced while waiting out
+    /// the `SIGTERM` grace period must block the `SIGKILL`.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn force_stop_does_not_escalate_when_record_changes_during_grace() {
+        let home = home();
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "trap '' TERM; while true; do sleep 1; done"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        write_lock(home.path(), pid, "original").await;
+        let replacer_home = home.path().to_owned();
+        let replacer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            write_lock(&replacer_home, pid, "replacement").await;
+        });
+        let result = force_stop(
+            Some(home.path()),
+            &record_for(pid, "original"),
+            Duration::from_millis(300),
+        )
+        .await;
+        replacer.await.unwrap();
+        let still_alive = child.try_wait().unwrap().is_none();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(result.is_err(), "mismatched record must refuse to signal");
+        assert!(still_alive, "SIGKILL must not hit a replaced record's PID");
     }
 
     #[tokio::test]
