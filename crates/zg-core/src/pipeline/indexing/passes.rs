@@ -7,7 +7,7 @@ use super::context::{
     IndexContext, IndexPassResult, IndexStats, MAX_SKIPPED_FILE_SAMPLES, ProgressBase,
     error_to_message, summarize_failed_files, throw_if_index_cancelled, workspace_index_context,
 };
-use super::diff::{compute_diff_from_files, normalize_for_diff};
+use super::diff::{compute_diff_from_files, normalize_for_diff, protect_unreadable_deletions};
 use super::embed::index_files;
 use super::progress::{
     report, report_index_finalizing, report_indexing, report_scanning, retry_progress_base,
@@ -84,7 +84,8 @@ pub fn get_workspace_index_status(
                 cancel: cancel.cloned(),
             },
         )?;
-        let diff = compute_diff_from_files(&scan.files, stored_files)?;
+        let mut diff = compute_diff_from_files(&scan.files, stored_files)?;
+        protect_unreadable_deletions(&mut diff, &scan.diagnostics.unreadable_directories);
         let pending_files: Vec<FileInfo> = stored_files
             .iter()
             .filter(|file| {
@@ -440,9 +441,11 @@ fn run_diff_pass(
     progress_base: Option<ProgressBase>,
     scan_diagnostics: FileScanDiagnostics,
 ) -> EngineResult<IndexPassResult> {
-    let diff = timings.time("index_diff", || {
+    let mut diff = timings.time("index_diff", || {
         compute_diff_from_files(scanned_files, existing_files)
     })?;
+    // #63: never delete files whose directory could not be read this scan.
+    protect_unreadable_deletions(&mut diff, &scan_diagnostics.unreadable_directories);
     throw_if_index_cancelled(ctx)?;
     let mut pending =
         Vec::with_capacity(diff.added.len() + diff.modified.len() + diff.pending.len());
@@ -547,7 +550,12 @@ fn build_index_result(
         entities_created: passes.iter().map(|pass| pass.stats.entities_created).sum(),
         duration_ms,
         timings: Some(timings.entries()),
-        scan_diagnostics: if final_pass.scan_diagnostics.skipped_files > 0 {
+        scan_diagnostics: if final_pass.scan_diagnostics.skipped_files > 0
+            || !final_pass
+                .scan_diagnostics
+                .unreadable_directories
+                .is_empty()
+        {
             Some(final_pass.scan_diagnostics.clone())
         } else {
             None
@@ -559,6 +567,11 @@ fn merge_scan_diagnostics(target: &mut FileScanDiagnostics, source: FileScanDiag
     target.skipped_files += source.skipped_files;
     for (reason, count) in source.skipped_by_reason {
         *target.skipped_by_reason.entry(reason).or_insert(0) += count;
+    }
+    for dir in source.unreadable_directories {
+        if !target.unreadable_directories.contains(&dir) {
+            target.unreadable_directories.push(dir);
+        }
     }
     let remaining = MAX_SKIPPED_FILE_SAMPLES.saturating_sub(target.skipped_samples.len());
     target

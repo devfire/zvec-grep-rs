@@ -404,7 +404,34 @@ fn resolve_frame_ignore_rules(
     Ok(Arc::from(merged))
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Records `path` once in scan diagnostics as unreadable (#63).
+///
+/// Dedupe is a linear scan: unreadable directories are rare and few, so a
+/// set would add state without measurable benefit.
+fn record_unreadable_directory(diagnostics: &mut FileScanDiagnostics, path: &str) {
+    if !diagnostics
+        .unreadable_directories
+        .iter()
+        .any(|dir| dir == path)
+    {
+        diagnostics.unreadable_directories.push(path.to_owned());
+    }
+}
+
+/// Opens `path`, recording it as unreadable on failure (#63).
+fn read_dir_or_record(
+    path: &str,
+    diagnostics: &mut FileScanDiagnostics,
+) -> Option<std::fs::ReadDir> {
+    if let Ok(entries) = std::fs::read_dir(path) {
+        Some(entries)
+    } else {
+        record_unreadable_directory(diagnostics, path);
+        None
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn walk(
     workspace_index_id: &str,
     root: &RootPath,
@@ -427,15 +454,28 @@ fn walk(
     while let Some(frame) = stack.pop() {
         throw_if_cancelled(cancel)?;
         let ignore_rules = resolve_frame_ignore_rules(root, &frame)?;
-        let Ok(entries) = std::fs::read_dir(&frame.current_path) else {
+        // #63: an unreadable directory (transient EMFILE/EACCES, unmounted
+        // FUSE/network path) must not read as "empty".
+        let Some(entries) = read_dir_or_record(&frame.current_path, diagnostics) else {
             continue;
         };
         let mut child_directories: Vec<String> = Vec::new();
-        for entry in entries.flatten() {
+        for entry in entries {
             throw_if_cancelled(cancel)?;
+            let Ok(entry) = entry else {
+                // Entry-level read failure: the entry name is unknown, so
+                // protect the whole parent directory (#63).
+                record_unreadable_directory(diagnostics, &frame.current_path);
+                continue;
+            };
             let absolute_path = to_display_path(&entry.path());
             let relative_path = display_relative(&root.absolute_path, &absolute_path);
-            let file_type = entry.file_type().ok();
+            let file_type = if let Ok(kind) = entry.file_type() {
+                Some(kind)
+            } else {
+                record_unreadable_directory(diagnostics, &frame.current_path);
+                None
+            };
             let mut is_directory = file_type.is_some_and(|kind| kind.is_dir());
             let mut is_file = file_type.is_some_and(|kind| kind.is_file());
             if file_type.is_some_and(|kind| kind.is_symlink()) && root.follow.unwrap_or(false) {
@@ -533,6 +573,9 @@ fn scan_root_path(
     throw_if_cancelled(options.cancel.as_ref())?;
     let selection = root_file_selection(root)?;
     let Ok(info) = std::fs::metadata(&root.absolute_path) else {
+        // #63: a root that cannot even be stat'ed (e.g. unmounted mount
+        // point) must not read as "all files deleted".
+        record_unreadable_directory(diagnostics, &root.absolute_path);
         return Ok(());
     };
     if info.is_file() {
@@ -864,6 +907,70 @@ mod tests {
         let scanned = full_scan_relative(&dir, &unlimited);
         assert!(scanned.contains("shallow.txt"), "{scanned:?}");
         assert!(scanned.contains(&deep_rel), "{scanned:?}");
+    }
+
+    /// #63: an unreadable directory must be reported and its previously
+    /// indexed files must survive the stale-deletion diff, while a file
+    /// genuinely removed from a readable directory is still deleted.
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_directory_keeps_its_indexed_files() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        use crate::pipeline::indexing::diff::{
+            compute_diff_from_files, protect_unreadable_deletions,
+        };
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(&dir.path().join("locked/keep.txt"), "keep\n");
+        write(&dir.path().join("gone.txt"), "gone\n");
+        let root = base_root(&dir, None);
+        let roots = std::slice::from_ref(&root);
+        let before = scan_root_paths("test-index", roots, &ScanOptions::default())
+            .expect("scan before lock");
+        assert_eq!(before.files.len(), 2, "{before:?}");
+        assert!(before.diagnostics.unreadable_directories.is_empty());
+
+        let locked = dir.path().join("locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))
+            .expect("lock dir");
+        // Root (and some CI sandboxes) can read mode-000 directories; the
+        // premise does not hold there, so there is nothing to assert.
+        if std::fs::read_dir(&locked).is_ok() {
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755))
+                .expect("restore dir");
+            return;
+        }
+        std::fs::remove_file(dir.path().join("gone.txt")).expect("remove readable file");
+        let after =
+            scan_root_paths("test-index", roots, &ScanOptions::default()).expect("scan after lock");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755))
+            .expect("restore dir");
+
+        let locked_display = crate::paths::to_display_path(&locked);
+        assert_eq!(
+            after.diagnostics.unreadable_directories,
+            vec![locked_display]
+        );
+        assert!(
+            after
+                .files
+                .iter()
+                .all(|file| !file.absolute_path.contains("locked")),
+            "unreadable subtree must contribute no files: {after:?}"
+        );
+
+        let mut diff = compute_diff_from_files(&after.files, &before.files).expect("diff");
+        // Both missing files look stale before protection is applied.
+        assert_eq!(diff.deleted.len(), 2, "{diff:?}");
+        protect_unreadable_deletions(&mut diff, &after.diagnostics.unreadable_directories);
+        assert!(
+            diff.deleted
+                .iter()
+                .all(|file| file.absolute_path.ends_with("gone.txt")),
+            "only the readable-dir removal stays deleted: {diff:?}"
+        );
+        assert_eq!(diff.deleted.len(), 1);
     }
 
     #[test]

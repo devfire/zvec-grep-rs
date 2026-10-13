@@ -718,6 +718,12 @@ fn index_text(output: &IndexOutput) -> String {
     }
     if let Some(diagnostics) = &output.scan_diagnostics {
         lines.push(format!("skipped_files: {}", diagnostics.skipped_files));
+        if !diagnostics.unreadable_directories.is_empty() {
+            lines.push(format!(
+                "unreadable_directories: {}",
+                diagnostics.unreadable_directories.join(", ")
+            ));
+        }
     }
     lines.join("\n")
 }

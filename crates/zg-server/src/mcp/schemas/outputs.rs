@@ -90,6 +90,9 @@ pub struct ScanDiagnosticsOutput {
     /// Bounded skip samples.
     #[serde(rename = "skippedSamples")]
     pub skipped_samples: Vec<SkippedFileSampleOutput>,
+    /// Directories that could not be read; their indexed files were kept (#63).
+    #[serde(rename = "unreadableDirectories")]
+    pub unreadable_directories: Vec<String>,
 }
 
 impl From<&zg_core::types::FileScanDiagnostics> for ScanDiagnosticsOutput {
@@ -112,6 +115,7 @@ impl From<&zg_core::types::FileScanDiagnostics> for ScanDiagnosticsOutput {
                     limit_bytes: sample.limit_bytes,
                 })
                 .collect(),
+            unreadable_directories: diagnostics.unreadable_directories.clone(),
         }
     }
 }

@@ -60,6 +60,32 @@ pub(crate) fn compute_diff_from_files(
     Ok(diff)
 }
 
+/// Drops stale deletions under unreadable directories (#63).
+///
+/// A directory the scanner could not read provides no evidence that its
+/// previously indexed files were removed, so they must not be deleted (and
+/// later fully re-embedded) on a transient read failure. Paths are compared
+/// after display normalization, so separator/trailing-slash differences
+/// between scanner output and stored paths cannot defeat the protection.
+pub(crate) fn protect_unreadable_deletions(
+    diff: &mut DiffResult,
+    unreadable_directories: &[String],
+) {
+    if unreadable_directories.is_empty() || diff.deleted.is_empty() {
+        return;
+    }
+    let protected: Vec<String> = unreadable_directories
+        .iter()
+        .map(|dir| normalize_for_diff(dir).trim_end_matches('/').to_owned())
+        .collect();
+    diff.deleted.retain(|file| {
+        let path = normalize_for_diff(&file.absolute_path);
+        !protected
+            .iter()
+            .any(|dir| path == *dir || path.starts_with(&format!("{dir}/")))
+    });
+}
+
 pub(crate) fn with_content_hash(file: &FileInfo) -> EngineResult<FileInfo> {
     match std::fs::read(&file.absolute_path) {
         Ok(bytes) => {

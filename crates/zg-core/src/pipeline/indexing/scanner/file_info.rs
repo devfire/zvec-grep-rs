@@ -152,6 +152,7 @@ pub fn create_scan_diagnostics() -> FileScanDiagnostics {
         skipped_files: 0,
         skipped_by_reason: BTreeMap::default(),
         skipped_samples: Vec::new(),
+        unreadable_directories: Vec::new(),
     }
 }
 

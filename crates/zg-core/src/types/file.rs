@@ -164,4 +164,9 @@ pub struct FileScanDiagnostics {
     pub skipped_by_reason: BTreeMap<SkippedFileReason, usize>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skipped_samples: Vec<SkippedFile>,
+    /// Directories the scanner could not read (#63). Their previously
+    /// indexed files are protected from stale deletion: an unreadable
+    /// directory is not evidence its contents were removed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unreadable_directories: Vec<String>,
 }
