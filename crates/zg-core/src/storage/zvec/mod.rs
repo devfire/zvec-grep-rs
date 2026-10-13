@@ -10,6 +10,9 @@ pub mod schema;
 pub mod search;
 pub mod store;
 
+#[cfg(test)]
+mod group_cycle_tests;
+
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
@@ -209,7 +212,14 @@ impl ZvecWorkspaceIndexStorage {
         let Some(mut stored) = doc_to_stored_fragment(doc, files)? else {
             return Ok(None);
         };
+        // Foreign/corrupt docs can form a group cycle (A->B->A); the
+        // validated write path cannot. Revisiting an id is malformed:
+        // omit the entity like a missing/malformed chain member.
+        let mut visited: HashSet<String> = HashSet::new();
         loop {
+            if !visited.insert(stored.fragment.entity.id.as_str().to_owned()) {
+                return Ok(None);
+            }
             let group = stored.fragment.group.clone();
             match group {
                 Some(group_id) if group_id != stored.fragment.entity.id.as_str() => {
@@ -391,7 +401,15 @@ impl ZvecWorkspaceIndexStorage {
                 let Some(current) = slot.as_mut() else {
                     continue;
                 };
+                // Per-chain visited set: a cyclic group link (A->B->A in
+                // foreign/corrupt docs) is malformed, so omit the slot
+                // instead of looping forever.
+                let mut visited: HashSet<String> = HashSet::new();
                 loop {
+                    if !visited.insert(current.fragment.entity.id.as_str().to_owned()) {
+                        *slot = None;
+                        break;
+                    }
                     let group = current.fragment.group.clone();
                     match group {
                         Some(target) if target != current.fragment.entity.id.as_str() => {
