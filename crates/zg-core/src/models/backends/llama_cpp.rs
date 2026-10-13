@@ -33,8 +33,11 @@ use std::sync::OnceLock;
 use std::sync::mpsc;
 
 use crate::error::{EngineError, EngineResult};
-use crate::models::catalog::{LlamaCppEntry, LlamaModelFormat, ModelReference};
+use crate::models::catalog::{
+    LLAMA_CPP_GGUF_REVISION, LlamaCppEntry, LlamaModelFormat, ModelReference,
+};
 use crate::models::download::{self, ModelDownloadReporter};
+use crate::models::download_verify::ArtifactExpectation;
 use crate::models::embeddings::{DeviceKind, EmbeddingResult, embed_validated};
 use crate::models::error::ModelError;
 use crate::models::{
@@ -170,12 +173,26 @@ impl LlamaCppEmbeddingModel {
         let entry = &self.entry;
         let (repo, remote_file) = split_hf_uri(entry.uri)
             .ok_or_else(|| embed_failed(entry, format_args!("invalid model uri {}", entry.uri)))?;
-        // The catalog pins no revision for GGUF entries (like TS
-        // `catalog.ts:6-31`), so `main` is the resolution, not a freeze.
-        let model_path =
-            download::scoped_cache_path(&self.cache_dir, "llama-cpp", repo, "main", file_name);
-        download::download_cached_file(repo, "main", remote_file, &model_path, file_name, reporter)
-            .map_err(|err| embed_failed(entry, format_args!("{err}")))?;
+        // Revision and size/SHA-256 expectation come from the catalog
+        // entry (`LLAMA_CPP_GGUF_REVISION` is the single spelling of the
+        // revision); never a literal `main` at this call site.
+        let model_path = download::scoped_cache_path(
+            &self.cache_dir,
+            "llama-cpp",
+            repo,
+            entry.revision,
+            file_name,
+        );
+        download::download_cached_file(
+            repo,
+            entry.revision,
+            remote_file,
+            &model_path,
+            file_name,
+            entry.artifact,
+            reporter,
+        )
+        .map_err(|err| embed_failed(entry, format_args!("{err}")))?;
         validate_gguf_file(entry, &model_path)?;
         spawn_worker(entry, model_path)
     }
@@ -612,6 +629,8 @@ mod tests {
             context_size: 32,
             max_batch_size: 8,
             format,
+            revision: LLAMA_CPP_GGUF_REVISION,
+            artifact: ArtifactExpectation::UNVERIFIED,
         }
     }
 

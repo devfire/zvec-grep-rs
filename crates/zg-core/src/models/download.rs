@@ -15,6 +15,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::catalog::ModelReference;
+use super::download_verify::{
+    ArtifactExpectation, discard_invalid_cached_file, publish_verified_temp,
+};
 use super::error::ModelError;
 use super::{EmbeddingModelProgress, EmbeddingStageKind, ModelLoadSink};
 use crate::error::{EngineError, EngineResult};
@@ -240,16 +243,19 @@ fn is_allowed_artifact_host(host: &str) -> bool {
 
 /// Streams `url` to `destination` with per-chunk progress.
 ///
-/// Writes to a sibling temp file first and atomically renames on success;
-/// a failed download never leaves a partial file at `destination`.
+/// Writes to a sibling temp file first, verifies it against
+/// `expectation` (size/SHA-256 when known), fsyncs it, and atomically
+/// renames on success; a failed or unverified download never leaves a
+/// partial file at `destination`.
 ///
 /// # Errors
 ///
 /// Returns [`ModelError::DownloadFailed`] when the cache directory cannot be created, the request
-/// or stream fails, the downloaded file is empty, or the rename into place fails.
+/// or stream fails, the downloaded file is empty or fails verification, or the rename into place fails.
 pub fn download_file(
     url: &str,
     destination: &Path,
+    expectation: ArtifactExpectation<'_>,
     on_progress: Option<&mut dyn FnMut(u64, Option<u64>)>,
 ) -> EngineResult<()> {
     if let Some(parent) = destination.parent()
@@ -264,25 +270,7 @@ pub fn download_file(
     let (temp_path, file) = create_temp_file(destination, url)?;
     let result = download_to(url, file, on_progress);
     match result {
-        Ok(()) => {
-            if !is_usable_file(&temp_path) {
-                let _ = fs::remove_file(&temp_path);
-                return Err(EngineError::from(ModelError::DownloadFailed {
-                    context: format!("url={url} detail=downloaded file is empty"),
-                }));
-            }
-            if fs::symlink_metadata(&temp_path).is_ok_and(|meta| meta.file_type().is_symlink()) {
-                let _ = fs::remove_file(&temp_path);
-                return Err(EngineError::from(ModelError::DownloadFailed {
-                    context: format!("url={url} detail=temp file was replaced by a symlink"),
-                }));
-            }
-            fs::rename(&temp_path, destination).map_err(|err| {
-                EngineError::from(ModelError::DownloadFailed {
-                    context: format!("url={url} detail=rename into cache: {err}"),
-                })
-            })
-        }
+        Ok(()) => publish_verified_temp(&temp_path, destination, expectation, url),
         Err(err) => {
             let _ = fs::remove_file(&temp_path);
             Err(err)
@@ -379,8 +367,10 @@ fn join_redirect(current: &str, location: &str, url: &str) -> EngineResult<Strin
 }
 
 /// Ensures `remote_file` from a Hugging Face repo is present at `local_path`,
-/// downloading it when the cache misses. Reports through `reporter` under
-/// `artifact_name` (usually the file's base name).
+/// downloading it when the cache misses or when a cached file fails
+/// revalidation against `expectation` (invalid entries are removed first,
+/// so garbage is never accepted forever). Reports through `reporter`
+/// under `artifact_name` (usually the file's base name).
 ///
 /// # Errors
 ///
@@ -391,9 +381,10 @@ pub fn download_cached_file(
     remote_file: &str,
     local_path: &Path,
     artifact_name: &str,
+    expectation: ArtifactExpectation<'_>,
     reporter: &mut ModelDownloadReporter,
 ) -> EngineResult<PathBuf> {
-    if is_usable_file(local_path) {
+    if discard_invalid_cached_file(local_path, expectation, artifact_name)? {
         reporter.skip(artifact_name);
         return Ok(local_path.to_owned());
     }
@@ -403,6 +394,7 @@ pub fn download_cached_file(
     let result = download_file(
         &url,
         local_path,
+        expectation,
         Some(&mut |downloaded, total| {
             reporter.report(&ArtifactDownloadProgress {
                 artifact: artifact.clone(),
@@ -475,6 +467,11 @@ fn download_to(
         file.flush().map_err(|err| {
             EngineError::from(ModelError::DownloadFailed {
                 context: format!("url={url} detail=flush file: {err}"),
+            })
+        })?;
+        file.sync_all().map_err(|err| {
+            EngineError::from(ModelError::DownloadFailed {
+                context: format!("url={url} detail=fsync file: {err}"),
             })
         })?;
         return Ok(());

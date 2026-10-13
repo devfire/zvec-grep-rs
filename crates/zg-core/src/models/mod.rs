@@ -6,6 +6,7 @@
 pub mod backends;
 pub mod catalog;
 pub mod download;
+pub mod download_verify;
 pub mod embeddings;
 pub mod error;
 pub mod factory;

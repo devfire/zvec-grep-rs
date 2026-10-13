@@ -8,6 +8,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use super::download_verify::ArtifactExpectation;
 use crate::types::SearchMetric;
 
 /// `DashScope` OpenAI-compatible endpoint for Qwen text embeddings.
@@ -15,6 +16,14 @@ pub const QWEN_TEXT_EMBEDDING_ENDPOINT: &str =
     "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings";
 /// `DashScope` endpoint for Qwen multimodal (VL) embeddings.
 pub const QWEN3_VL_EMBEDDING_ENDPOINT: &str = "https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding";
+/// GGUF revision used by every [`LlamaCppEntry`]: the single place the
+/// llama.cpp download revision is spelled. No immutable (commit-hash)
+/// GGUF revision is derivable from this repository — the only in-repo
+/// resolution is `main` — so this stays `main` until a verified immutable
+/// revision is recorded here together with size/SHA-256 expectations.
+/// Cache paths and download URLs must both go through this constant via
+/// `LlamaCppEntry::revision`, never a literal at a call site.
+pub const LLAMA_CPP_GGUF_REVISION: &str = "main";
 
 /// Fully-qualified catalog reference, e.g. `local/potion-retrieval-32m`.
 ///
@@ -146,6 +155,12 @@ pub struct LlamaCppEntry {
     pub context_size: usize,
     pub max_batch_size: usize,
     pub format: LlamaModelFormat,
+    /// Hugging Face revision the GGUF is fetched at (see
+    /// [`LLAMA_CPP_GGUF_REVISION`]).
+    pub revision: &'static str,
+    /// Known size/SHA-256 for the GGUF artifact. `UNVERIFIED` until a
+    /// value verifiable from in-repo sources is recorded; never guessed.
+    pub artifact: ArtifactExpectation<'static>,
 }
 
 /// Catalog entry for a Qwen text embedding model (remote API).
@@ -309,6 +324,8 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         context_size: 2048,
         max_batch_size: 16,
         format: LlamaModelFormat::Embeddinggemma,
+        revision: LLAMA_CPP_GGUF_REVISION,
+        artifact: ArtifactExpectation::UNVERIFIED,
     }),
     EmbeddingCatalogEntry::LlamaCpp(LlamaCppEntry {
         reference: "local/qwen3-embedding-0.6b",
@@ -319,6 +336,8 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
         context_size: 8192,
         max_batch_size: 8,
         format: LlamaModelFormat::Qwen3,
+        revision: LLAMA_CPP_GGUF_REVISION,
+        artifact: ArtifactExpectation::UNVERIFIED,
     }),
     EmbeddingCatalogEntry::QwenText(QwenTextEntry {
         reference: "qwen/text-embedding-v4",
