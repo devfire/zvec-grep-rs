@@ -217,7 +217,7 @@ pub(crate) async fn load_request_for(
     if let Some(reference) = &service.embedding {
         return Ok(ModelLoadRequest {
             reference: reference.clone(),
-            options: service.load_options(),
+            options: service.load_options(reference)?,
         });
     }
     let options = service.facade_options(key.as_str(), None);
@@ -244,8 +244,8 @@ pub(crate) async fn load_request_for(
             })
         })?;
     Ok(ModelLoadRequest {
+        options: service.load_options(&reference)?,
         reference,
-        options: service.load_options(),
     })
 }
 

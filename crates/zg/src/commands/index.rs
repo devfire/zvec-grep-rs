@@ -23,8 +23,8 @@ use zg_core::types::{IndexProgress, RootPath};
 use super::authz::{authorize_plan, read_choice};
 use super::catalog::{catalog_entry, catalog_identity, catalog_reference, catalog_reference_for};
 use super::support::{
-    absolute_path, bool_flag, cancel_flag, map_device_kind, server_available, service_options,
-    single_root_or_cwd,
+    absolute_path, bool_flag, cancel_flag, map_device_kind, resolved_model_options,
+    server_available, service_options, single_root_or_cwd,
 };
 use crate::cli::{IndexArgs, parse_byte_size};
 use crate::client::{DaemonClient, resolve_client_mode, route_by_mode};
@@ -294,12 +294,16 @@ async fn plan_index_permit(
     };
     let model = create_embedding_model(
         &reference,
-        &CreateEmbeddingModelOptions {
-            api_key: args.api_key.clone(),
-            endpoint: args.endpoint.clone(),
-            model_cache_dir: args.model_cache.clone(),
-            device: args.device.map(map_device_kind).unwrap_or_default(),
-        },
+        &resolved_model_options(
+            &reference,
+            &CreateEmbeddingModelOptions {
+                api_key: args.api_key.clone(),
+                endpoint: args.endpoint.clone(),
+                model_cache_dir: args.model_cache.clone(),
+                device: args.device.map(map_device_kind).unwrap_or_default(),
+                allow_private_endpoint: false,
+            },
+        )?,
     )?;
     let plan = plan_remote_index_authorization(&PlanIndexInput {
         info,

@@ -21,6 +21,7 @@ fn qwen_text_model() -> QwenTextEmbeddingModel {
         *entry,
         ApiKey::new("test-key"),
         "https://example.invalid/embeddings".to_owned(),
+        false,
     )
 }
 

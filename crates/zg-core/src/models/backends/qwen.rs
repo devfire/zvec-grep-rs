@@ -120,8 +120,8 @@ fn post_embedding_json(
     request_failed: EngineErrorCode,
     invalid_json: EngineErrorCode,
     api_error: EngineErrorCode,
+    allow_private: bool,
 ) -> EngineResult<Value> {
-    let allow_private = crate::config::allow_private_endpoint_from_env();
     if !crate::config::is_allowed_request_endpoint(endpoint, allow_private) {
         return Err(EngineError::new(
             request_failed,
@@ -430,6 +430,7 @@ pub struct QwenTextEmbeddingModel {
     model_kind: QwenTextModel,
     max_batch_size: usize,
     model: String,
+    allow_private_endpoint: bool,
 }
 
 impl QwenTextEmbeddingModel {
@@ -437,7 +438,12 @@ impl QwenTextEmbeddingModel {
     /// `ModelBuildPlan::QwenText` arm. Display name and error-code prefix
     /// follow the entry's model id, mirroring the two TypeScript subclasses.
     #[must_use]
-    pub fn from_plan(entry: QwenTextEntry, api_key: ApiKey, endpoint: String) -> Self {
+    pub fn from_plan(
+        entry: QwenTextEntry,
+        api_key: ApiKey,
+        endpoint: String,
+        allow_private_endpoint: bool,
+    ) -> Self {
         let model_kind = QwenTextModel::from_model_id(entry.model);
         let display_name = model_kind.display_name();
         let info = EmbeddingModelInfo {
@@ -461,6 +467,7 @@ impl QwenTextEmbeddingModel {
             display_name,
             model_kind,
             max_batch_size: entry.max_batch_size,
+            allow_private_endpoint,
         }
     }
 
@@ -486,6 +493,21 @@ impl QwenTextEmbeddingModel {
         Ok(texts)
     }
 
+    fn post_json(&self, body: &Value) -> EngineResult<Value> {
+        post_embedding_json(
+            &self.agent,
+            self.display_name,
+            &self.info.reference,
+            &self.endpoint,
+            &self.api_key,
+            body,
+            self.code(QwenTextFailure::RequestFailed),
+            self.code(QwenTextFailure::InvalidJson),
+            self.code(QwenTextFailure::ApiError),
+            self.allow_private_endpoint,
+        )
+    }
+
     fn embed_core(&self, inputs: &[EmbeddingInput<'_>]) -> EngineResult<EmbeddingResult> {
         let texts = self.collect_texts(inputs)?;
         let request = serde_json::json!({
@@ -494,17 +516,7 @@ impl QwenTextEmbeddingModel {
             "dimensions": self.info.dimension,
             "encoding_format": "float",
         });
-        let body = post_embedding_json(
-            &self.agent,
-            self.display_name,
-            &self.info.reference,
-            &self.endpoint,
-            &self.api_key,
-            &request,
-            self.code(QwenTextFailure::RequestFailed),
-            self.code(QwenTextFailure::InvalidJson),
-            self.code(QwenTextFailure::ApiError),
-        )?;
+        let body = self.post_json(&request)?;
         let data = body.get("data").and_then(Value::as_array).ok_or_else(|| {
             EngineError::new(
                 self.code(QwenTextFailure::MissingData),
@@ -634,13 +646,19 @@ pub struct Qwen3VlEmbeddingModel {
     agent: ureq::Agent,
     max_batch_size: usize,
     max_image_bytes: u64,
+    allow_private_endpoint: bool,
 }
 
 impl Qwen3VlEmbeddingModel {
     /// Builds the backend from the resolved factory plan fields for the
     /// `ModelBuildPlan::QwenMultimodal` arm.
     #[must_use]
-    pub fn from_plan(entry: QwenMultimodalEntry, api_key: ApiKey, endpoint: String) -> Self {
+    pub fn from_plan(
+        entry: QwenMultimodalEntry,
+        api_key: ApiKey,
+        endpoint: String,
+        allow_private_endpoint: bool,
+    ) -> Self {
         let info = EmbeddingModelInfo {
             reference: entry.reference.to_owned(),
             provider: entry.provider.to_owned(),
@@ -662,6 +680,7 @@ impl Qwen3VlEmbeddingModel {
             agent,
             max_batch_size: entry.max_batch_size,
             max_image_bytes: entry.max_image_bytes,
+            allow_private_endpoint,
         }
     }
 
@@ -742,6 +761,7 @@ impl Qwen3VlEmbeddingModel {
             Self::code(QwenVlFailure::RequestFailed),
             Self::code(QwenVlFailure::InvalidJson),
             Self::code(QwenVlFailure::ApiError),
+            self.allow_private_endpoint,
         )?;
         let embeddings = body
             .get("output")
@@ -928,6 +948,7 @@ mod scoped_authorization_tests {
             },
             ApiKey::new("test-key"),
             endpoint,
+            false,
         )
     }
 

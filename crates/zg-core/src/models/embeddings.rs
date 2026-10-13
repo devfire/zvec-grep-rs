@@ -55,6 +55,11 @@ pub struct CreateEmbeddingModelOptions {
     pub endpoint: Option<String>,
     pub model_cache_dir: Option<PathBuf>,
     pub device: DeviceKind,
+    /// Opt out of request-time SSRF IP/DNS checks for a trusted
+    /// private/self-hosted remote endpoint. Resolved from global
+    /// config / env by `factory::resolved_create_options`; `false`
+    /// keeps the strict policy.
+    pub allow_private_endpoint: bool,
 }
 
 /// Per-request embedding options.

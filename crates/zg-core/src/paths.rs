@@ -31,13 +31,6 @@ pub fn default_home() -> PathBuf {
     home_dir.join(STATE_DIR_NAME)
 }
 
-/// Global config file: `~/.zvec-grep-rs/config.json` (uses the real home
-/// directory, not `$ZVEC_GREP_HOME`).
-pub fn global_config_path() -> PathBuf {
-    let home_dir = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
-    home_dir.join(STATE_DIR_NAME).join("config.json")
-}
-
 /// Lexically absolute form of `path` (no symlink resolution, like `resolve`).
 #[must_use]
 pub fn normalize_path(path: &Path) -> PathBuf {
@@ -108,12 +101,8 @@ mod tests {
     }
 
     #[test]
-    fn global_config_lives_in_namespaced_home() {
-        // `global_config_path` ignores `$ZVEC_GREP_HOME`, so this holds
-        // regardless of the ambient environment: the fallback home must
-        // be the namespaced directory, never the upstream one.
-        let config = global_config_path();
-        assert!(config.ends_with(Path::new(STATE_DIR_NAME).join("config.json")));
-        assert!(!config.ends_with(Path::new(LEGACY_STATE_DIR_NAME).join("config.json")));
+    fn default_home_is_namespaced() {
+        let home = default_home();
+        assert!(!home.ends_with(LEGACY_STATE_DIR_NAME));
     }
 }

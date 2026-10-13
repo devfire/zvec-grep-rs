@@ -26,8 +26,12 @@ use super::catalog::{
 // kind import is dead when every backend is enabled.
 #[cfg(any(not(feature = "onnx"), not(feature = "llama")))]
 use super::catalog::BackendKind;
-use super::embeddings::{ApiKey, CreateEmbeddingModelOptions};
+use super::embeddings::{ApiKey, CreateEmbeddingModelOptions, DeviceKind};
 use super::error::{ModelError, QwenBackend, QwenTextModel};
+use crate::config::{
+    EmbeddingDevice, EmbeddingRuntimeConfig, GlobalConfig, resolve_embedding_runtime_options,
+};
+use crate::error::EngineResult;
 use crate::paths::default_home;
 
 /// Environment variable overriding the local model cache directory.
@@ -63,11 +67,13 @@ pub enum ModelBuildPlan {
         entry: QwenTextEntry,
         api_key: ApiKey,
         endpoint: String,
+        allow_private_endpoint: bool,
     },
     QwenMultimodal {
         entry: QwenMultimodalEntry,
         api_key: ApiKey,
         endpoint: String,
+        allow_private_endpoint: bool,
     },
     TransformersJs {
         entry: TransformersJsEntry,
@@ -90,6 +96,75 @@ impl ModelBuildPlan {
             Self::Model2Vec { entry, .. } => entry.reference,
         }
     }
+}
+
+fn device_to_config(device: DeviceKind) -> EmbeddingDevice {
+    match device {
+        DeviceKind::Auto => EmbeddingDevice::Auto,
+        DeviceKind::Cpu => EmbeddingDevice::Cpu,
+        DeviceKind::Metal => EmbeddingDevice::Metal,
+        DeviceKind::Vulkan => EmbeddingDevice::Vulkan,
+        DeviceKind::Cuda => EmbeddingDevice::Cuda,
+    }
+}
+
+fn device_from_config(device: EmbeddingDevice) -> DeviceKind {
+    match device {
+        EmbeddingDevice::Auto => DeviceKind::Auto,
+        EmbeddingDevice::Cpu => DeviceKind::Cpu,
+        EmbeddingDevice::Metal => DeviceKind::Metal,
+        EmbeddingDevice::Vulkan => DeviceKind::Vulkan,
+        EmbeddingDevice::Cuda => DeviceKind::Cuda,
+    }
+}
+
+/// Applies global config + workspace + env resolution to raw model
+/// options: explicit fields in `options` win, then `workspace`, then
+/// per-model/per-provider global config, then env. `device == Auto`
+/// and `allow_private_endpoint == false` in `options` count as unset
+/// (they are the defaults), so configured values can supply them.
+/// Also fills `model_cache_dir` from `defaults.modelCacheDir`.
+///
+/// # Errors
+///
+/// Returns `CONFIG.INVALID_EMBEDDING_RUNTIME` when explicit options
+/// are invalid for the reference (endpoint on a local model, device
+/// on a remote model, non-HTTP(S) endpoint).
+pub fn resolved_create_options(
+    reference: &ModelReference,
+    options: &CreateEmbeddingModelOptions,
+    workspace: &EmbeddingRuntimeConfig,
+    config: &GlobalConfig,
+) -> EngineResult<CreateEmbeddingModelOptions> {
+    let explicit = EmbeddingRuntimeConfig {
+        api_key: options.api_key.clone(),
+        endpoint: options.endpoint.clone(),
+        device: if options.device == DeviceKind::Auto {
+            None
+        } else {
+            Some(device_to_config(options.device))
+        },
+        allow_private_endpoint: options.allow_private_endpoint.then_some(true),
+    };
+    let resolved =
+        resolve_embedding_runtime_options(reference.as_str(), &explicit, workspace, config)?;
+    Ok(CreateEmbeddingModelOptions {
+        api_key: if resolved.api_key.is_empty() {
+            options.api_key.clone()
+        } else {
+            Some(resolved.api_key)
+        },
+        endpoint: resolved.endpoint,
+        model_cache_dir: options.model_cache_dir.clone().or_else(|| {
+            config
+                .defaults
+                .as_ref()
+                .and_then(|defaults| defaults.model_cache_dir.as_ref())
+                .map(PathBuf::from)
+        }),
+        device: resolved.device.map_or(options.device, device_from_config),
+        allow_private_endpoint: resolved.allow_private_endpoint,
+    })
 }
 
 /// Resolves `reference` against the catalog and validates backend-specific
@@ -131,6 +206,8 @@ pub fn plan_embedding_model(
                     QwenBackend::Text(model),
                     options.endpoint.as_deref(),
                 )?,
+                allow_private_endpoint: options.allow_private_endpoint
+                    || crate::config::allow_private_endpoint_from_env(),
             })
         }
         EmbeddingCatalogEntry::QwenMultimodal(entry) => Ok(ModelBuildPlan::QwenMultimodal {
@@ -142,6 +219,8 @@ pub fn plan_embedding_model(
                 QwenBackend::Vl,
                 options.endpoint.as_deref(),
             )?,
+            allow_private_endpoint: options.allow_private_endpoint
+                || crate::config::allow_private_endpoint_from_env(),
         }),
         EmbeddingCatalogEntry::TransformersJs(entry) => Ok(ModelBuildPlan::TransformersJs {
             entry: *entry,
@@ -186,15 +265,23 @@ pub fn create_embedding_model(
             entry,
             api_key,
             endpoint,
+            allow_private_endpoint,
         } => Ok(Arc::new(QwenTextEmbeddingModel::from_plan(
-            entry, api_key, endpoint,
+            entry,
+            api_key,
+            endpoint,
+            allow_private_endpoint,
         ))),
         ModelBuildPlan::QwenMultimodal {
             entry,
             api_key,
             endpoint,
+            allow_private_endpoint,
         } => Ok(Arc::new(Qwen3VlEmbeddingModel::from_plan(
-            entry, api_key, endpoint,
+            entry,
+            api_key,
+            endpoint,
+            allow_private_endpoint,
         ))),
         #[cfg(feature = "onnx")]
         ModelBuildPlan::TransformersJs { entry, cache_dir } => Ok(Arc::new(
@@ -307,6 +394,97 @@ mod tests {
         };
         assert_eq!(api_key.as_str(), "secret");
         assert!(endpoint.starts_with("https://"));
+    }
+
+    #[test]
+    fn resolved_options_apply_global_config_and_explicit_wins() {
+        use crate::config::{EmbeddingDevice, GlobalConfig, GlobalDefaults, ProviderConfig};
+        use std::collections::BTreeMap;
+        let config = GlobalConfig {
+            version: 1,
+            defaults: Some(GlobalDefaults {
+                embedding: None,
+                model_cache_dir: Some("/tmp/global-cache".to_owned()),
+            }),
+            providers: Some(BTreeMap::from([(
+                "qwen".to_owned(),
+                ProviderConfig {
+                    api_key: Some("global-key".to_owned()),
+                },
+            )])),
+            models: Some(BTreeMap::from([(
+                "qwen/text-embedding-v4".to_owned(),
+                crate::config::EmbeddingModelConfig {
+                    endpoint: Some("http://192.168.1.10:11434/v1".to_owned()),
+                    device: None,
+                    allow_private_endpoint: Some(true),
+                },
+            )])),
+            client: None,
+            server: None,
+        };
+        let resolved = resolved_create_options(
+            &reference("qwen/text-embedding-v4"),
+            &options(),
+            &EmbeddingRuntimeConfig::default(),
+            &config,
+        )
+        .unwrap();
+        assert_eq!(resolved.api_key.as_deref(), Some("global-key"));
+        assert_eq!(
+            resolved.endpoint.as_deref(),
+            Some("http://192.168.1.10:11434/v1")
+        );
+        assert!(resolved.allow_private_endpoint);
+        assert_eq!(
+            resolved.model_cache_dir,
+            Some(PathBuf::from("/tmp/global-cache"))
+        );
+        // Explicit key wins over the global provider key.
+        let mut explicit = options();
+        explicit.api_key = Some("explicit-key".to_owned());
+        let resolved = resolved_create_options(
+            &reference("qwen/text-embedding-v4"),
+            &explicit,
+            &EmbeddingRuntimeConfig::default(),
+            &config,
+        )
+        .unwrap();
+        assert_eq!(resolved.api_key.as_deref(), Some("explicit-key"));
+        // Local device comes from global config when unset (Auto).
+        let local_config = GlobalConfig {
+            models: Some(BTreeMap::from([(
+                "local/bge-small-en-v1.5".to_owned(),
+                crate::config::EmbeddingModelConfig {
+                    endpoint: None,
+                    device: Some(EmbeddingDevice::Cpu),
+                    allow_private_endpoint: None,
+                },
+            )])),
+            ..GlobalConfig::empty()
+        };
+        let resolved = resolved_create_options(
+            &reference("local/bge-small-en-v1.5"),
+            &options(),
+            &EmbeddingRuntimeConfig::default(),
+            &local_config,
+        )
+        .unwrap();
+        assert_eq!(resolved.device, DeviceKind::Cpu);
+        // The resolved key actually constructs the Qwen model (no MISSING_API_KEY).
+        let resolved = resolved_create_options(
+            &reference("qwen/text-embedding-v4"),
+            &options(),
+            &EmbeddingRuntimeConfig::default(),
+            &config,
+        )
+        .unwrap();
+        let model =
+            create_embedding_model(&reference("qwen/text-embedding-v4"), &resolved).unwrap();
+        assert_eq!(
+            model.info().endpoint.as_deref(),
+            Some("http://192.168.1.10:11434/v1")
+        );
     }
 
     #[test]

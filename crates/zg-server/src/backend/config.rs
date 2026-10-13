@@ -57,15 +57,31 @@ impl ServiceConfig {
         }
     }
 
-    /// Model construction options for pool loads.
-    #[must_use]
-    pub fn load_options(&self) -> CreateEmbeddingModelOptions {
-        CreateEmbeddingModelOptions {
+    /// Model construction options for pool loads, with global
+    /// config / env resolution applied (explicit daemon options win).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the global config is invalid or the
+    /// explicit options are invalid for `reference`.
+    pub fn load_options(
+        &self,
+        reference: &ModelReference,
+    ) -> zg_core::error::EngineResult<CreateEmbeddingModelOptions> {
+        let base = CreateEmbeddingModelOptions {
             api_key: self.api_key.clone(),
             endpoint: self.endpoint.clone(),
             model_cache_dir: self.model_cache_dir.clone(),
             device: self.device,
-        }
+            allow_private_endpoint: false,
+        };
+        let config = zg_core::config::read_global_config(&zg_core::config::global_config_path())?;
+        zg_core::models::factory::resolved_create_options(
+            reference,
+            &base,
+            &zg_core::config::EmbeddingRuntimeConfig::default(),
+            &config,
+        )
     }
 }
 

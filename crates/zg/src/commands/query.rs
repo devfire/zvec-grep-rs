@@ -13,7 +13,7 @@ use super::authz::{SearchPermit, authorize_plan};
 use super::catalog::catalog_reference_for;
 use super::support::{
     absolute_cwd, cancel_flag, map_device_kind, map_modified_time, map_symbol_types,
-    server_available, service_options,
+    resolved_model_options, server_available, service_options,
 };
 use crate::cli::{PreviewMode, QueryArgs, RefreshMode};
 use crate::client::{
@@ -234,12 +234,16 @@ async fn plan_search_permit(
     })?;
     let model = create_embedding_model(
         &reference,
-        &CreateEmbeddingModelOptions {
-            api_key,
-            endpoint: None,
-            model_cache_dir: args.model_cache.clone(),
-            device: args.device.map(map_device_kind).unwrap_or_default(),
-        },
+        &resolved_model_options(
+            &reference,
+            &CreateEmbeddingModelOptions {
+                api_key,
+                endpoint: None,
+                model_cache_dir: args.model_cache.clone(),
+                device: args.device.map(map_device_kind).unwrap_or_default(),
+                allow_private_endpoint: false,
+            },
+        )?,
     )?;
     let plan = plan_remote_search_authorization(&PlanSearchInput {
         info,

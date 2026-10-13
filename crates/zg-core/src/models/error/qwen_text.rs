@@ -12,8 +12,8 @@
 //! ([`ModelError::missing_api_key`], [`ModelError::missing_endpoint`]).
 
 use super::{ModelError, QwenBackend};
+use crate::config::global_config_path;
 use crate::error::EngineErrorCode;
-use crate::paths::global_config_path;
 
 /// Qwen text model identity: selects the error-code prefix and display name.
 ///

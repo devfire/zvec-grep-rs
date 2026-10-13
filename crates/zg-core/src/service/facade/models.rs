@@ -4,11 +4,12 @@
 use std::sync::Arc;
 
 use super::service::ZvecGrepService;
+use crate::config::{EmbeddingRuntimeConfig, global_config_path, read_global_config};
 use crate::error::{EngineError, EngineResult, codes};
 use crate::manifest::WorkspaceManifest;
 use crate::models::catalog::{EmbeddingCatalogEntry, ModelReference};
 use crate::models::embeddings::CreateEmbeddingModelOptions;
-use crate::models::factory::create_embedding_model;
+use crate::models::factory::{create_embedding_model, resolved_create_options};
 use crate::models::resolution::{ResolveEmbeddingReferenceOptions, resolve_embedding_reference};
 use crate::models::{EmbeddingModel, EmbeddingModelInfo};
 use crate::types::WorkspaceIndexEmbeddingSchema;
@@ -25,11 +26,17 @@ impl ZvecGrepService {
         if let Some(model) = &self.embedding_model {
             return Ok(Arc::clone(model));
         }
+        let config = read_global_config(&global_config_path())?;
+        let global_default = config
+            .defaults
+            .as_ref()
+            .and_then(|defaults| defaults.embedding.as_deref())
+            .map(ModelReference::new);
         let existing = manifest.and_then(schema_reference);
         let reference = resolve_embedding_reference(&ResolveEmbeddingReferenceOptions {
             explicit: self.embedding.clone(),
             existing,
-            global_default: None,
+            global_default,
             environment: None,
             fallback: Some(ModelReference::new(DEFAULT_EMBEDDING_REFERENCE)),
         })?
@@ -39,12 +46,17 @@ impl ZvecGrepService {
                 "no embedding model is selected",
             )
         })?;
-        let options = CreateEmbeddingModelOptions {
+        let workspace = manifest.map_or_else(EmbeddingRuntimeConfig::default, |manifest| {
+            manifest.embedding_runtime.clone()
+        });
+        let base = CreateEmbeddingModelOptions {
             api_key: self.api_key.clone(),
             endpoint: self.endpoint.clone(),
             model_cache_dir: self.model_cache_dir.clone(),
             device: self.device.unwrap_or_default(),
+            allow_private_endpoint: false,
         };
+        let options = resolved_create_options(&reference, &base, &workspace, &config)?;
         create_embedding_model(&reference, &options).map_err(EngineError::from)
     }
 }

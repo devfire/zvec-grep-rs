@@ -11,7 +11,9 @@ use zg_core::models::factory::create_embedding_model;
 use zg_core::service::facade::create_zvec_grep;
 
 use super::catalog::{catalog_entry, catalog_identity, catalog_reference, catalog_reference_for};
-use super::support::{absolute_path, map_device_kind, service_options, single_root_or_cwd};
+use super::support::{
+    absolute_path, map_device_kind, resolved_model_options, service_options, single_root_or_cwd,
+};
 use crate::cli::{AuthAction, AuthArgs, AuthGrantArgs, AuthRootArgs};
 use crate::error::CliError;
 
@@ -96,12 +98,16 @@ fn run_auth_grant(args: &AuthArgs, grant: &AuthGrantArgs) -> Result<(), CliError
     }
     let model_info = create_embedding_model(
         &reference,
-        &CreateEmbeddingModelOptions {
-            api_key: args.api_key.clone(),
-            endpoint: args.endpoint.clone(),
-            model_cache_dir: args.model_cache.clone(),
-            device: args.device.map(map_device_kind).unwrap_or_default(),
-        },
+        &resolved_model_options(
+            &reference,
+            &CreateEmbeddingModelOptions {
+                api_key: args.api_key.clone(),
+                endpoint: args.endpoint.clone(),
+                model_cache_dir: args.model_cache.clone(),
+                device: args.device.map(map_device_kind).unwrap_or_default(),
+                allow_private_endpoint: false,
+            },
+        )?,
     )?;
     let endpoint = model_info.info().endpoint.clone().ok_or_else(|| {
         CliError::usage(format!(

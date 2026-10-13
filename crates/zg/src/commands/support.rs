@@ -37,6 +37,22 @@ pub(crate) fn service_options(
     }
 }
 
+/// Applies global-config/env resolution to raw model options, so
+/// `zg config` provider/model settings take effect on direct
+/// `create_embedding_model` calls (permit planning in index/query/auth).
+pub(crate) fn resolved_model_options(
+    reference: &ModelReference,
+    options: &zg_core::models::embeddings::CreateEmbeddingModelOptions,
+) -> Result<zg_core::models::embeddings::CreateEmbeddingModelOptions, CliError> {
+    let config = zg_core::config::read_global_config(&zg_core::config::global_config_path())?;
+    Ok(zg_core::models::factory::resolved_create_options(
+        reference,
+        options,
+        &zg_core::config::EmbeddingRuntimeConfig::default(),
+        &config,
+    )?)
+}
+
 /// Maps a CLI device flag onto the model options.
 pub(crate) fn map_device(device: DeviceArg) -> EmbeddingDevice {
     match device {
