@@ -11,7 +11,6 @@
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 use zg_core::error::EngineError;
-use zg_core::lexical::LexicalSearchResult;
 use zg_core::models::EmbeddingModelInfo;
 use zg_core::service::facade::ReadSession;
 use zg_core::types::{IndexResult, WorkspaceIndexStatus};
@@ -19,7 +18,7 @@ use zg_core::types::{IndexResult, WorkspaceIndexStatus};
 use crate::root_runtime::Generation;
 
 use super::error::BackendError;
-use super::request_types::{DaemonIndexStatus, IndexInput, RgQuery};
+use super::request_types::{DaemonIndexStatus, IndexInput};
 use super::search_types::{DaemonSearchResult, SearchQuery};
 use crate::change_set::ChangeSetSnapshot;
 use crate::errors::DaemonError;
@@ -65,13 +64,6 @@ pub(crate) enum RootCommand {
     Status {
         /// Status plus overlay.
         reply: oneshot::Sender<Result<DaemonIndexStatus, BackendError>>,
-    },
-    /// In-process lexical search.
-    Rg {
-        /// Owned lexical query.
-        query: RgQuery,
-        /// Lexical result.
-        reply: oneshot::Sender<Result<LexicalSearchResult, BackendError>>,
     },
     /// Cancels jobs, closes handles, deletes storage.
     Drop {

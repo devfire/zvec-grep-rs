@@ -7,7 +7,9 @@
 
 use std::path::PathBuf;
 
-use zg_core::lexical::LexicalSearchResult;
+use crate::root_runtime::Generation;
+use zg_core::index_status::{index_completion_for_job, index_completion_from_status};
+use zg_core::lexical::{LexicalSearchResult, run_lexical_search};
 use zg_core::service::facade::ZvecGrepService;
 use zg_core::types::UnixMillis;
 
@@ -132,26 +134,62 @@ impl DaemonBackend {
     ///
     /// # Errors
     ///
-    /// Returns [`BackendError::Daemon`] when the root cannot be activated or the actor call
-    /// fails, or [`BackendError::Engine`] when the lexical search fails.
+    /// Returns [`BackendError::Daemon`] when the root is invalid, or
+    /// [`BackendError::Engine`] when the lexical search fails.
     pub async fn rg_search(
         &self,
         root: &str,
         query: RgQuery,
     ) -> Result<LexicalSearchResult, BackendError> {
-        let handle = self.manager.activate_for_index(root)?;
-        send_recv(&handle, |reply| RootCommand::Rg { query, reply }).await?
+        // Read-only (#68): lexical search needs no actor, watcher, or
+        // writable root; run it directly on a blocking thread.
+        let (key, _live) = self.manager.resolve_live(root)?;
+        let options = query.into_options(PathBuf::from(key.as_str()));
+        tokio::task::spawn_blocking(move || run_lexical_search(&options))
+            .await
+            .map_err(|error| join_backend_error(&error))?
+            .map_err(BackendError::Engine)
     }
 
     /// Index status with live job overlay.
     ///
     /// # Errors
     ///
-    /// Returns [`BackendError::Daemon`] when the root cannot be activated or the actor call
-    /// fails, or [`BackendError::Engine`] when status collection fails.
+    /// Returns [`BackendError::Daemon`] when the root is invalid, or
+    /// [`BackendError::Engine`] when status collection fails.
     pub async fn index_status(&self, root: &str) -> Result<DaemonIndexStatus, BackendError> {
-        let handle = self.manager.activate_for_index(root)?;
-        send_recv(&handle, |reply| RootCommand::Status { reply }).await?
+        // Read-only (#68): a live actor reports its cached state and live
+        // revisions; without one, read persisted state directly instead of
+        // activating an actor (watcher + catch-up rebuild) to answer.
+        let (key, live) = self.manager.resolve_live(root)?;
+        if let Some(handle) = live {
+            return send_recv(&handle, |reply| RootCommand::Status { reply }).await?;
+        }
+        let job = self.scheduler.get_by_root(key.as_str());
+        let service = self.manager.facade_service(&key);
+        let (status, info) = tokio::task::spawn_blocking(move || {
+            let status = service.index_status(None)?;
+            let info = service.workspace_info(None).ok();
+            Ok::<_, zg_core::error::EngineError>((status, info))
+        })
+        .await
+        .map_err(|error| join_backend_error(&error))?
+        .map_err(BackendError::Engine)?;
+        let completion = index_completion_for_job(
+            index_completion_from_status(Some(&status)),
+            job.as_ref().map(|job| job.state),
+            job.as_ref().and_then(|job| job.progress.as_ref()),
+        );
+        Ok(DaemonIndexStatus {
+            status,
+            job,
+            completion,
+            scan_diagnostics: None,
+            info,
+            dirty_revision: Generation::ZERO,
+            indexed_revision: Generation::ZERO,
+            watcher_active: false,
+        })
     }
 
     /// Daemon liveness snapshot.

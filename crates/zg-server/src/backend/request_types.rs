@@ -9,6 +9,7 @@
 use std::path::PathBuf;
 
 use zg_core::index_status::IndexCompletion;
+use zg_core::lexical::LexicalSearchOptions;
 use zg_core::service::types::ZvecGrepInfoResult;
 use zg_core::types::{FileScanDiagnostics, WorkspaceIndexStatus};
 
@@ -63,6 +64,38 @@ pub struct RgQuery {
     pub before_context: usize,
     /// Context lines after each match.
     pub after_context: usize,
+}
+
+impl RgQuery {
+    /// Converts into engine lexical options rooted at `root`.
+    #[must_use]
+    pub fn into_options(self, root: PathBuf) -> LexicalSearchOptions {
+        LexicalSearchOptions {
+            root,
+            patterns: self.patterns,
+            pattern_files: self.pattern_files.iter().map(PathBuf::from).collect(),
+            paths: self.paths,
+            limit: self.limit,
+            globs: self.globs,
+            insensitive_globs: self.insensitive_globs,
+            file_types: self.file_types,
+            excluded_file_types: self.excluded_file_types,
+            hidden: self.hidden,
+            no_ignore: self.no_ignore,
+            ignore_files: self.ignore_files.iter().map(PathBuf::from).collect(),
+            max_depth: self.max_depth,
+            max_file_size_bytes: self.max_file_size_bytes,
+            fixed_strings: self.fixed_strings,
+            ignore_case: self.ignore_case,
+            smart_case: self.smart_case,
+            word_regexp: self.word_regexp,
+            whole_line: self.whole_line,
+            before_context: self.before_context,
+            after_context: self.after_context,
+            max_count: self.max_count,
+            ..LexicalSearchOptions::default()
+        }
+    }
 }
 
 /// Owned index request.

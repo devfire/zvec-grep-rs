@@ -225,3 +225,89 @@ async fn search_without_index_reports_missing() {
     assert_eq!(error.code(), "INDEX_MISSING");
     backend.close().await;
 }
+
+#[tokio::test]
+async fn rg_and_status_do_not_activate_actor() {
+    // Regression (#68): `rg` and `index_status` are read-only; they must
+    // not spawn a root actor (watcher + catch-up rebuild) as a side effect.
+    let backend = backend();
+    let dir = fixture();
+    let root = root(&dir);
+    let rg = backend
+        .rg_search(
+            &root,
+            RgQuery {
+                patterns: vec!["fn alpha".to_owned()],
+                ..RgQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(!rg.items.is_empty());
+    assert_eq!(backend.server_status().runtimes, 0);
+    // Never-indexed status still reports the missing index, without
+    // activating an actor to do so.
+    let error = backend.index_status(&root).await.unwrap_err();
+    assert_eq!(
+        error.code(),
+        "ZVEC_GREP.ENGINE.CONTEXT.WORKSPACE_INDEX_NOT_FOUND"
+    );
+    assert_eq!(backend.server_status().runtimes, 0);
+    backend.close().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn rg_on_read_only_root_succeeds_without_actor() {
+    // Regression (#68): `rg` previously demanded a writable root via
+    // `activate_for_index`, so read-only workspaces failed outright.
+    use std::os::unix::fs::PermissionsExt;
+    let backend = backend();
+    let dir = fixture();
+    let root = root(&dir);
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+    let result = backend
+        .rg_search(
+            &root,
+            RgQuery {
+                patterns: vec!["fn alpha".to_owned()],
+                ..RgQuery::default()
+            },
+        )
+        .await;
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!result.unwrap().items.is_empty());
+    assert_eq!(backend.server_status().runtimes, 0);
+    backend.close().await;
+}
+
+#[tokio::test]
+async fn status_on_indexed_root_without_actor_reads_persisted_state() {
+    // Regression (#68): status on an indexed root with no live actor reads
+    // persisted state directly instead of activating (and rebuilding).
+    let dir = fixture();
+    let root = root(&dir);
+    let first = backend();
+    let submitted = first
+        .index(
+            &root,
+            IndexInput {
+                rebuild: true,
+                ..IndexInput::default()
+            },
+        )
+        .await
+        .unwrap();
+    first
+        .scheduler()
+        .wait(&submitted.job.id, None)
+        .await
+        .unwrap();
+    first.close().await;
+    let second = backend();
+    let status = second.index_status(&root).await.unwrap();
+    assert!(status.status.files_scanned >= 2, "{status:?}");
+    assert!(!status.watcher_active);
+    assert_eq!(second.server_status().runtimes, 0);
+    second.close().await;
+}

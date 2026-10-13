@@ -103,6 +103,32 @@ impl RuntimeManager {
         self.get_or_spawn(&canonical)
     }
 
+    /// Resolves a root for a read-only command: canonical key plus the
+    /// live actor handle when one already exists. Never spawns an actor
+    /// and never requires writability, so read-only queries cannot start
+    /// a watcher or trigger a catch-up rebuild (#68).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError::Daemon`] when the manager is closed or the
+    /// root is invalid or unreadable.
+    pub fn resolve_live(
+        &self,
+        requested_root: &str,
+    ) -> Result<(RootKey, Option<RootHandle>), BackendError> {
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(DaemonError::ShuttingDown.into());
+        }
+        let canonical = resolve_requested_root(requested_root, false)?;
+        let handle = self.get(&canonical);
+        Ok((canonical, handle))
+    }
+
+    /// Facade service bound to `key` (blocking IO: call off async workers).
+    pub(crate) fn facade_service(&self, key: &RootKey) -> ZvecGrepService {
+        ZvecGrepService::new(self.shared.service.facade_options(key.as_str(), None))
+    }
+
     /// Handle for a live actor, if any.
     #[must_use]
     pub fn get(&self, key: &RootKey) -> Option<RootHandle> {
@@ -262,9 +288,7 @@ impl RuntimeManager {
         &self,
         canonical: &RootKey,
     ) -> Result<zg_core::service::types::ZvecGrepInfoResult, BackendError> {
-        let service =
-            ZvecGrepService::new(self.shared.service.facade_options(canonical.as_str(), None));
-        Ok(service.workspace_info(None)?)
+        Ok(self.facade_service(canonical).workspace_info(None)?)
     }
 }
 

@@ -11,14 +11,13 @@ use std::path::PathBuf;
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, error::TryRecvError};
 use zg_core::index_status::{index_completion_for_job, index_completion_from_status};
-use zg_core::lexical::{LexicalSearchOptions, LexicalSearchResult, run_lexical_search};
 use zg_core::service::facade::ZvecGrepService;
 
 use super::actor::{CachedSession, FinishedIndex, IndexOutcome, RootCommand};
 use super::config::BackendShared;
 use super::error::BackendError;
 use super::index_run::build_index_run;
-use super::request_types::{DaemonIndexStatus, IndexInput, RgQuery};
+use super::request_types::{DaemonIndexStatus, IndexInput};
 use super::util::join_backend_error;
 use crate::change_set::ChangeSetSnapshot;
 use crate::index_coordinator::{CoordinatorReason, IndexCoordinator};
@@ -105,9 +104,6 @@ impl RootActor {
             }
             RootCommand::Status { reply } => {
                 let _ = reply.send(self.handle_status().await);
-            }
-            RootCommand::Rg { query, reply } => {
-                let _ = reply.send(self.handle_rg(query).await);
             }
             RootCommand::Drop { reply } => {
                 let _ = reply.send(self.handle_drop().await);
@@ -249,38 +245,6 @@ impl RootActor {
             indexed_revision: snapshot.indexed_revision,
             watcher_active: self.runtime.watcher_active(),
         })
-    }
-
-    async fn handle_rg(&mut self, query: RgQuery) -> Result<LexicalSearchResult, BackendError> {
-        let options = LexicalSearchOptions {
-            root: PathBuf::from(self.key.as_str()),
-            patterns: query.patterns,
-            pattern_files: query.pattern_files.iter().map(PathBuf::from).collect(),
-            paths: query.paths,
-            limit: query.limit,
-            globs: query.globs,
-            insensitive_globs: query.insensitive_globs,
-            file_types: query.file_types,
-            excluded_file_types: query.excluded_file_types,
-            hidden: query.hidden,
-            no_ignore: query.no_ignore,
-            ignore_files: query.ignore_files.iter().map(PathBuf::from).collect(),
-            max_depth: query.max_depth,
-            max_file_size_bytes: query.max_file_size_bytes,
-            fixed_strings: query.fixed_strings,
-            ignore_case: query.ignore_case,
-            smart_case: query.smart_case,
-            word_regexp: query.word_regexp,
-            whole_line: query.whole_line,
-            before_context: query.before_context,
-            after_context: query.after_context,
-            max_count: query.max_count,
-            ..LexicalSearchOptions::default()
-        };
-        tokio::task::spawn_blocking(move || run_lexical_search(&options))
-            .await
-            .map_err(|error| join_backend_error(&error))?
-            .map_err(BackendError::Engine)
     }
 
     async fn handle_drop(&mut self) -> Result<bool, BackendError> {
