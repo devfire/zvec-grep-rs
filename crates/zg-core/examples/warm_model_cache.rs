@@ -11,13 +11,12 @@
 //! Requires the `onnx` and `llama` features (see `required-features` in
 //! `crates/zg-core/Cargo.toml`); without them Cargo skips this target.
 
-// Stdout lines are the user-facing progress contract of this example, like
-// the `zg` binary's output.
-#![allow(clippy::print_stdout)]
+// Stdout/stderr lines are the user-facing progress/error contract of this
+// example, like the `zg` binary's output.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
 
 use std::process::ExitCode;
 
-use zg_core::models::EmbeddingModel;
 use zg_core::models::catalog::ModelReference;
 use zg_core::models::embeddings::CreateEmbeddingModelOptions;
 use zg_core::models::factory::create_embedding_model;

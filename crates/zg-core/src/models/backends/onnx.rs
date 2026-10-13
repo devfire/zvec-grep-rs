@@ -61,8 +61,7 @@ fn embed_failed(entry: &TransformersJsEntry, detail: impl std::fmt::Display) -> 
 fn remote_file_exists(url: &str) -> bool {
     ureq::head(url)
         .call()
-        .map(|response| (200..300).contains(&response.status().as_u16()))
-        .unwrap_or(false)
+        .is_ok_and(|response| (200..300).contains(&response.status().as_u16()))
 }
 
 /// Builds the typed `TRANSFORMERS_JS_TOKENIZATION_FAILED` error.
@@ -108,7 +107,7 @@ impl Drop for SessionLease<'_> {
                 .pool
                 .state
                 .lock()
-                .unwrap_or_else(|err| err.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             state.idle.push(session);
             self.pool.ready.notify_one();
         }
@@ -118,8 +117,7 @@ impl Drop for SessionLease<'_> {
 impl SessionPool {
     fn new(entry: TransformersJsEntry, model_path: PathBuf) -> Self {
         let cap = std::thread::available_parallelism()
-            .map(|cores| cores.get().clamp(1, MAX_SESSION_POOL_SIZE))
-            .unwrap_or(1);
+            .map_or(1, |cores| cores.get().clamp(1, MAX_SESSION_POOL_SIZE));
         Self {
             state: Mutex::new(PoolState {
                 idle: Vec::new(),
@@ -133,7 +131,10 @@ impl SessionPool {
     }
 
     fn acquire(&self) -> EngineResult<SessionLease<'_>> {
-        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         loop {
             if let Some(session) = state.idle.pop() {
                 return Ok(SessionLease {
@@ -148,7 +149,7 @@ impl SessionPool {
             state = self
                 .ready
                 .wait(state)
-                .unwrap_or_else(|err| err.into_inner());
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
         drop(state);
         match create_session(&self.model_path) {
@@ -157,7 +158,10 @@ impl SessionPool {
                 session: Some(session),
             }),
             Err(err) => {
-                let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+                let mut state = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 state.created = state.created.saturating_sub(1);
                 self.ready.notify_one();
                 Err(embed_failed(&self.entry, err))
@@ -379,64 +383,7 @@ impl OnnxEmbeddingModel {
         inputs: &[EmbeddingInput<'_>],
     ) -> EngineResult<EmbeddingResult> {
         let entry = &self.entry;
-        let mut texts = Vec::with_capacity(inputs.len());
-        for input in inputs {
-            match input {
-                EmbeddingInput::Text { text } => {
-                    let prefixed =
-                        match purpose_prefix(entry.query_prefix, entry.document_prefix, purpose) {
-                            Some(prefix) => format!("{prefix}{text}"),
-                            None => (*text).to_owned(),
-                        };
-                    texts.push(prefixed);
-                }
-                EmbeddingInput::Image { .. } => {
-                    return Err(EngineError::from(ModelError::UnsupportedImage {
-                        reference: entry.reference.to_owned(),
-                        index: None,
-                    }));
-                }
-            }
-        }
-        // Tokenize without truncation first so over-long inputs are flagged
-        // exactly like `findTruncatedInputIndexes` (encode at
-        // `max_input_tokens + 1`, flag past `max_input_tokens`).
-        let mut ids_batch = Vec::with_capacity(texts.len());
-        let mut truncated = Vec::new();
-        for (index, text) in texts.iter().enumerate() {
-            let encoding = loaded
-                .tokenizer
-                .encode(text.as_str(), true)
-                .map_err(|err| tokenize_failed(entry, err))?;
-            let raw_ids = encoding.get_ids();
-            if raw_ids.len() > entry.max_input_tokens {
-                truncated.push(index);
-            }
-            let ids: Vec<i64> = raw_ids
-                .iter()
-                .take(entry.max_input_tokens)
-                .map(|id| i64::from(*id))
-                .collect();
-            ids_batch.push(ids);
-        }
-        let sequence_len = ids_batch.iter().map(Vec::len).max().unwrap_or(0).max(1);
-        let batch_len = texts.len();
-        let mut input_ids = Vec::with_capacity(batch_len.saturating_mul(sequence_len));
-        let mut attention_mask = Vec::with_capacity(batch_len.saturating_mul(sequence_len));
-        for ids in &ids_batch {
-            for position in 0..sequence_len {
-                match ids.get(position) {
-                    Some(id) => {
-                        input_ids.push(*id);
-                        attention_mask.push(1_i64);
-                    }
-                    None => {
-                        input_ids.push(0);
-                        attention_mask.push(0);
-                    }
-                }
-            }
-        }
+        let prepared = prepare_batch(entry, loaded, purpose, inputs)?;
         // `Session::run` takes `&mut self`: the lease owns the only
         // reference, so each checkout is an exclusive run — exactly the
         // bound the pool exists to enforce.
@@ -449,15 +396,15 @@ impl OnnxEmbeddingModel {
             .inputs()
             .iter()
             .any(|input| input.name() == "token_type_ids");
-        let input_ids = ort::value::Tensor::from_array((vec![batch_len, sequence_len], input_ids))
+        let shape_dims = vec![prepared.batch_len, prepared.sequence_len];
+        let input_ids = ort::value::Tensor::from_array((shape_dims.clone(), prepared.input_ids))
             .map_err(|err| embed_failed(entry, format_args!("build input_ids: {err}")))?;
-        let attention_mask =
-            ort::value::Tensor::from_array((vec![batch_len, sequence_len], attention_mask))
-                .map_err(|err| embed_failed(entry, format_args!("build attention_mask: {err}")))?;
+        let attention_mask = ort::value::Tensor::from_array((shape_dims, prepared.attention_mask))
+            .map_err(|err| embed_failed(entry, format_args!("build attention_mask: {err}")))?;
         let mut outputs = if wants_token_types {
             let token_type_ids = ort::value::Tensor::from_array((
-                vec![batch_len, sequence_len],
-                vec![0_i64; batch_len.saturating_mul(sequence_len)],
+                vec![prepared.batch_len, prepared.sequence_len],
+                vec![0_i64; prepared.batch_len.saturating_mul(prepared.sequence_len)],
             ))
             .map_err(|err| embed_failed(entry, format_args!("build token_type_ids: {err}")))?;
             session
@@ -492,26 +439,126 @@ impl OnnxEmbeddingModel {
                 detail: format!("extract last_hidden_state: {err}"),
             })
         })?;
-        let dims: Vec<usize> = shape.iter().map(|dim| *dim as usize).collect();
+        let dims: Vec<usize> = shape
+            .iter()
+            .map(|dim| usize::try_from(*dim))
+            .collect::<Result<_, _>>()
+            .map_err(|_| {
+                EngineError::from(ModelError::TransformersJsInvalidTensor {
+                    reference: entry.reference.to_owned(),
+                    detail: format!("invalid last_hidden_state shape: {shape:?}"),
+                })
+            })?;
         match dims.as_slice() {
             [batch, sequence, dimension]
-                if *batch == batch_len
-                    && *sequence == sequence_len
+                if *batch == prepared.batch_len
+                    && *sequence == prepared.sequence_len
                     && *dimension == entry.dimension =>
             {
-                pool_hidden_states(entry, data, &ids_batch, sequence_len, *dimension)
-                    .map(|vectors| EmbeddingResult { vectors, truncated })
+                pool_hidden_states(
+                    entry,
+                    data,
+                    &prepared.ids_batch,
+                    prepared.sequence_len,
+                    *dimension,
+                )
+                .map(|vectors| EmbeddingResult {
+                    vectors,
+                    truncated: prepared.truncated,
+                })
             }
             _ => Err(EngineError::from(ModelError::TransformersJsInvalidTensor {
                 reference: entry.reference.to_owned(),
                 detail: format!(
                     "expected={batch_len}x{seq}x{dim} actual={dims:?}",
-                    seq = sequence_len,
+                    batch_len = prepared.batch_len,
+                    seq = prepared.sequence_len,
                     dim = entry.dimension
                 ),
             })),
         }
     }
+}
+
+/// Tokenized, padded batch ready for one ONNX session run.
+struct PreparedBatch {
+    ids_batch: Vec<Vec<i64>>,
+    truncated: Vec<usize>,
+    batch_len: usize,
+    sequence_len: usize,
+    input_ids: Vec<i64>,
+    attention_mask: Vec<i64>,
+}
+
+/// Applies purpose prefixes, tokenizes without truncation so over-long
+/// inputs are flagged exactly like `findTruncatedInputIndexes` (past
+/// `max_input_tokens`), then truncates and zero-pads to a rectangle.
+fn prepare_batch(
+    entry: &TransformersJsEntry,
+    loaded: &LoadedOnnx,
+    purpose: EmbeddingPurpose,
+    inputs: &[EmbeddingInput<'_>],
+) -> EngineResult<PreparedBatch> {
+    let mut texts = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        match input {
+            EmbeddingInput::Text { text } => {
+                let prefixed =
+                    match purpose_prefix(entry.query_prefix, entry.document_prefix, purpose) {
+                        Some(prefix) => format!("{prefix}{text}"),
+                        None => (*text).to_owned(),
+                    };
+                texts.push(prefixed);
+            }
+            EmbeddingInput::Image { .. } => {
+                return Err(EngineError::from(ModelError::UnsupportedImage {
+                    reference: entry.reference.to_owned(),
+                    index: None,
+                }));
+            }
+        }
+    }
+    let mut ids_batch = Vec::with_capacity(texts.len());
+    let mut truncated = Vec::new();
+    for (index, text) in texts.iter().enumerate() {
+        let encoding = loaded
+            .tokenizer
+            .encode(text.as_str(), true)
+            .map_err(|err| tokenize_failed(entry, err))?;
+        let raw_ids = encoding.get_ids();
+        if raw_ids.len() > entry.max_input_tokens {
+            truncated.push(index);
+        }
+        let ids: Vec<i64> = raw_ids
+            .iter()
+            .take(entry.max_input_tokens)
+            .map(|id| i64::from(*id))
+            .collect();
+        ids_batch.push(ids);
+    }
+    let sequence_len = ids_batch.iter().map(Vec::len).max().unwrap_or(0).max(1);
+    let batch_len = texts.len();
+    let mut input_ids = Vec::with_capacity(batch_len.saturating_mul(sequence_len));
+    let mut attention_mask = Vec::with_capacity(batch_len.saturating_mul(sequence_len));
+    for ids in &ids_batch {
+        for position in 0..sequence_len {
+            if let Some(id) = ids.get(position) {
+                input_ids.push(*id);
+                attention_mask.push(1_i64);
+            } else {
+                input_ids.push(0);
+                attention_mask.push(0);
+            }
+        }
+    }
+    Ok(PreparedBatch {
+        ids_batch,
+        truncated,
+        batch_len,
+        sequence_len,
+        input_ids,
+        attention_mask,
+    })
 }
 
 impl EmbeddingModel for OnnxEmbeddingModel {
@@ -594,8 +641,11 @@ fn pool_hidden_states(
                         *acc += *value;
                     }
                 }
+                // `real_len` is bounded by `max_input_tokens`; any f32
+                // rounding in the mean divisor is far below model noise.
+                #[allow(clippy::cast_precision_loss)]
                 let count = real_len as f32;
-                for value in vector.iter_mut() {
+                for value in &mut vector {
                     *value /= count;
                 }
             }
@@ -612,7 +662,7 @@ fn pool_hidden_states(
             let squared_norm: f32 = vector.iter().map(|value| value * value).sum();
             if squared_norm > 0.0 {
                 let inverse_norm = 1.0 / squared_norm.sqrt();
-                for value in vector.iter_mut() {
+                for value in &mut vector {
                     *value *= inverse_norm;
                 }
             }

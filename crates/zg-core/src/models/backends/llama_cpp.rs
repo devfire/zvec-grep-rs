@@ -299,7 +299,7 @@ fn spawn_worker(entry: &LlamaCppEntry, model_path: PathBuf) -> EngineResult<Load
     let worker_entry = *entry;
     std::thread::Builder::new()
         .name(format!("zg-llama-{}", entry.model))
-        .spawn(move || worker_main(worker_entry, model_path, job_rx, ready_tx, backend))
+        .spawn(move || worker_main(worker_entry, &model_path, job_rx, &ready_tx, backend))
         .map_err(|err| embed_failed(entry, format_args!("start embedding worker: {err}")))?;
     ready_rx
         .recv()
@@ -314,13 +314,13 @@ fn spawn_worker(entry: &LlamaCppEntry, model_path: PathBuf) -> EngineResult<Load
 /// life (`&'static` is `Send`).
 fn worker_main(
     entry: LlamaCppEntry,
-    model_path: PathBuf,
+    model_path: &Path,
     jobs: mpsc::Receiver<EmbedJob>,
-    ready: mpsc::Sender<EngineResult<()>>,
+    ready: &mpsc::Sender<EngineResult<()>>,
     backend: &'static LlamaBackend,
 ) {
     use llama_cpp_2::context::params::LlamaContextParams;
-    let model = match load_model_on_worker(backend, &model_path, &entry) {
+    let model = match load_model_on_worker(backend, model_path, &entry) {
         Ok(model) => model,
         Err(err) => {
             let _ = ready.send(Err(err));
@@ -333,7 +333,9 @@ fn worker_main(
     // cover the full context (decodes stream in `DECODE_CHUNK_TOKENS`
     // slices, but headroom costs nothing and keeps single-shot unit tests
     // well inside the limits).
-    let ctx_tokens = entry.context_size.max(1) as u32;
+    // Saturate: an oversized catalog context still requests the largest
+    // context llama.cpp can express rather than truncating/wrapping.
+    let ctx_tokens = u32::try_from(entry.context_size.max(1)).unwrap_or(u32::MAX);
     let params = LlamaContextParams::default()
         .with_n_ctx(NonZeroU32::new(ctx_tokens))
         .with_n_batch(ctx_tokens)
@@ -395,7 +397,13 @@ fn embed_texts(
     // TS `truncateToContextSize` reads the model's own training limit;
     // fall back to the catalog context size when the model reports none.
     let train_ctx = model.n_ctx_train().max(1);
-    let limit = (entry.context_size as u32).min(train_ctx).max(1) as usize;
+    let limit = usize::try_from(
+        u32::try_from(entry.context_size)
+            .unwrap_or(u32::MAX)
+            .min(train_ctx)
+            .max(1),
+    )
+    .unwrap_or(usize::MAX);
     let mut vectors = Vec::with_capacity(texts.len());
     let mut truncated = Vec::new();
     for (index, text) in texts.iter().enumerate() {
@@ -606,9 +614,7 @@ fn read_sniff(path: &Path, entry: &LlamaCppEntry) -> EngineResult<Vec<u8>> {
 
 /// Cached file size in KiB for invalid-GGUF diagnostics.
 fn file_size_kb(path: &Path) -> u64 {
-    fs::metadata(path)
-        .map(|meta| meta.len() / 1024)
-        .unwrap_or(0)
+    fs::metadata(path).map_or(0, |meta| meta.len() / 1024)
 }
 
 #[cfg(test)]
