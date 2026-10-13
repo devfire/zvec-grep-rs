@@ -149,6 +149,20 @@ async fn shutdown_stops_the_server() {
 }
 
 #[tokio::test]
+async fn start_after_close_is_rejected() {
+    let server = server(None);
+    server.start().await.unwrap();
+    server.close().await;
+    // `close` is terminal (it closes the backend), so a restart must fail
+    // loudly instead of reporting a bound address nothing listens on.
+    assert!(matches!(
+        server.start().await,
+        Err(DaemonError::ShuttingDown)
+    ));
+    assert!(server.bound_address().is_none());
+}
+
+#[tokio::test]
 async fn shutdown_rejects_foreign_origin_without_cancelling() {
     // Anonymous mode (no token): the Origin guard is the only thing standing
     // between a web page and a daemon shutdown.

@@ -99,6 +99,9 @@ impl AppState {
 ///
 /// `start` binds and serves in the background; `close` stops the listener
 /// and awaits it. Dropping without `close` leaks the task — prefer `close`.
+/// `close` is terminal: it closes the backend, so serving again requires a
+/// new `DaemonHttpServer`; `start` after `close` errors instead of
+/// reporting a bound address nothing listens on.
 pub struct DaemonHttpServer {
     state: Arc<AppState>,
     host: String,
@@ -158,11 +161,17 @@ impl DaemonHttpServer {
     ///
     /// # Errors
     ///
-    /// Returns [`DaemonError::AddressInUse`] when the port is taken, or
-    /// [`DaemonError::IndexFailed`] when binding or reading the bound address fails.
+    /// Returns [`DaemonError::AddressInUse`] when the port is taken,
+    /// [`DaemonError::IndexFailed`] when binding or reading the bound address
+    /// fails, or [`DaemonError::ShuttingDown`] after `close` (or a process
+    /// shutdown signal): the cancelled shutdown token and closed backend
+    /// make this instance unrestartable.
     pub async fn start(&self) -> Result<SocketAddr, DaemonError> {
         if let Some(address) = self.bound.lock_ignore_poison().as_ref().copied() {
             return Ok(address);
+        }
+        if self.state.shutdown.is_cancelled() {
+            return Err(DaemonError::ShuttingDown);
         }
         let listener = tokio::net::TcpListener::bind((self.host.as_str(), self.port))
             .await
@@ -212,7 +221,8 @@ impl DaemonHttpServer {
     }
 
     /// Stops the listener, closes the backend (actors, in-flight work,
-    /// models), and awaits the serve task. Idempotent.
+    /// models), and awaits the serve task. Idempotent and terminal: a later
+    /// `start` on this instance returns [`DaemonError::ShuttingDown`].
     pub async fn close(&self) {
         self.state.shutdown.cancel();
         self.state.backend.close().await;
