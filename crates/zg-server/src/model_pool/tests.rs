@@ -115,3 +115,34 @@ async fn close_evicts_idle_and_rejects_acquire() {
         Err(AcquireError::Closed)
     ));
 }
+
+#[tokio::test]
+async fn dropped_loader_future_does_not_brick_key_or_close() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let loads = Arc::new(AtomicUsize::new(0));
+    let loads_clone = loads.clone();
+    let pool = EmbeddingModelPool::new(EmbeddingModelPoolOptions {
+        create_model: Some(Arc::new(move |_: &ModelLoadRequest| {
+            loads_clone.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(100));
+            Ok(Arc::new(zg_core::models::stub::StubEmbeddingModel::new(8))
+                as Arc<dyn EmbeddingModel>)
+        })),
+        ..EmbeddingModelPoolOptions::default()
+    });
+    let request = stub_request();
+    // Drop the loader future mid-load (timeout cancels it).
+    let dropped = tokio::time::timeout(Duration::from_millis(10), pool.acquire(&request)).await;
+    assert!(dropped.is_err(), "first acquire should time out mid-load");
+    // The detached load must still publish: a later acquire succeeds and
+    // shares the single construction instead of parking forever.
+    let lease = tokio::time::timeout(Duration::from_secs(5), pool.acquire(&request))
+        .await
+        .expect("acquire after dropped loader must not hang")
+        .unwrap();
+    assert_eq!(loads.load(Ordering::SeqCst), 1);
+    drop(lease);
+    tokio::time::timeout(Duration::from_secs(5), pool.close())
+        .await
+        .expect("close must not hang after dropped loader");
+}

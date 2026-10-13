@@ -141,6 +141,13 @@ impl EmbeddingModelPool {
     /// Concurrent acquirers of a loading key share the load (and its
     /// failure) instead of re-running construction.
     ///
+    /// Cancellation safety: dropping this future never cancels the load.
+    /// A cache miss spawns a pool-owned task that runs construction to
+    /// completion and always publishes its outcome, so a timed-out or
+    /// aborted acquirer cannot strand the key in `loading` (which would
+    /// hang every later `acquire` and `close()`). The dropped caller
+    /// simply never checks out a lease; the loaded model stays cached.
+    ///
     /// # Errors
     ///
     /// Returns [`AcquireError::Closed`] when the pool is closed, or
@@ -151,6 +158,11 @@ impl EmbeddingModelPool {
         }
         let key = request.key();
         loop {
+            // Re-checked per iteration: a waiter woken by a load that
+            // finished as the pool closed must exit, not start a new load.
+            if self.shared.closed.load(Ordering::SeqCst) {
+                return Err(AcquireError::Closed);
+            }
             let action = {
                 let mut state = self.shared.state.lock_ignore_poison();
                 let entry = state
@@ -194,45 +206,68 @@ impl EmbeddingModelPool {
                     return Ok(ModelLease::new(model, key, self.shared.clone()));
                 }
                 NextAction::Load(loading) => {
-                    return self.finish_load(&key, request, &loading).await;
+                    // Pool-owned detached load: dropping this `acquire`
+                    // future (timeout/abort) must not drop publication.
+                    // The spawned task is never aborted via its handle
+                    // (the handle is dropped, which detaches), so the
+                    // outcome is always published and `loading` cleared.
+                    let pool = self.clone();
+                    let owned_key = key.clone();
+                    let owned_request = request.clone();
+                    let task_loading = loading.clone();
+                    tokio::spawn(async move {
+                        pool.run_load(&owned_key, &owned_request, &task_loading)
+                            .await;
+                    });
+                    self.wait_for_load(&loading, request).await?;
                 }
                 NextAction::Wait(loading) => {
-                    // Subscribe-before-check: `notify_waiters` wakes only
-                    // futures that are already registered, and stores no
-                    // permit, so the `Notified` future must be created (and
-                    // polled once via `enable`) BEFORE reading the published
-                    // result. Checking first and subscribing after would miss
-                    // a publish-then-notify landing in between and park
-                    // forever.
-                    loop {
-                        let notified = loading.notify.notified();
-                        tokio::pin!(notified);
-                        notified.as_mut().enable();
-                        let published = loading.lock_result().clone();
-                        match published {
-                            Some(Ok(())) => break,
-                            Some(Err(error)) => {
-                                return Err(AcquireError::Load {
-                                    reference: request.reference.as_str().to_owned(),
-                                    error: error.rehydrate(),
-                                });
-                            }
-                            None => notified.await,
-                        }
-                    }
+                    self.wait_for_load(&loading, request).await?;
                 }
             }
         }
     }
 
-    /// Runs construction on a blocking thread, publishes the outcome to
-    /// waiters, and either checks out the model or reports the failure.
-    async fn finish_load(
+    /// Parks until the in-flight load for a key publishes its outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns the shared (dehydrated/rehydrated) load failure.
+    async fn wait_for_load(
         &self,
-        key: &str,
+        loading: &Loading,
         request: &ModelLoadRequest,
-        loading: &Arc<Loading>,
-    ) -> Result<ModelLease, AcquireError> {
+    ) -> Result<(), AcquireError> {
+        // Subscribe-before-check: `notify_waiters` wakes only futures that
+        // are already registered, and stores no permit, so the `Notified`
+        // future must be created (and polled once via `enable`) BEFORE
+        // reading the published result. Checking first and subscribing
+        // after would miss a publish-then-notify landing in between and
+        // park forever.
+        loop {
+            let notified = loading.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let published = loading.lock_result().clone();
+            match published {
+                Some(Ok(())) => return Ok(()),
+                Some(Err(error)) => {
+                    return Err(AcquireError::Load {
+                        reference: request.reference.as_str().to_owned(),
+                        error: error.rehydrate(),
+                    });
+                }
+                None => notified.await,
+            }
+        }
+    }
+
+    /// Runs construction on a blocking thread and always publishes the
+    /// outcome. Executed only by the pool-owned task spawned on a cache
+    /// miss, never inside a caller's `acquire` future, so caller
+    /// cancellation cannot strand the entry. Grants no lease: acquirers
+    /// check out via the normal path once woken.
+    async fn run_load(&self, key: &str, request: &ModelLoadRequest, loading: &Arc<Loading>) {
         let create = Arc::clone(&self.shared.create);
         let owned = request.clone();
         let outcome: Result<Arc<dyn EmbeddingModel>, EngineError> =
@@ -246,41 +281,42 @@ impl EmbeddingModelPool {
                     .with_context(format!("detail={error}"))
                 })
                 .and_then(|result| result);
-        // Publish first so `close()` (which waits on these notifies) can
-        // never miss the outcome, even when our entry is already gone.
+        // Update the entry before publishing so woken waiters immediately
+        // observe the resident model (or a cleared key on failure) instead
+        // of spinning on the still-`loading` entry. `close()` cannot miss
+        // the outcome either way: it subscribes before re-checking the
+        // result, and an entry already updated here no longer appears in
+        // its pending-load snapshot because the load is done.
+        {
+            let mut state = self.shared.state.lock_ignore_poison();
+            // Only mutate the entry this load still owns; a stale task
+            // must never clear a newer load for the same key.
+            let ours = state.entries.get(key).is_some_and(|entry| {
+                entry
+                    .loading
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, loading))
+            });
+            if ours {
+                match &outcome {
+                    Ok(model) if !self.shared.closed.load(Ordering::SeqCst) => {
+                        if let Some(entry) = state.entries.get_mut(key) {
+                            entry.loading = None;
+                            entry.model = Some(model.clone());
+                            entry.touch();
+                        }
+                    }
+                    Ok(_) | Err(_) => {
+                        state.entries.remove(key);
+                    }
+                }
+            }
+        }
         *loading.lock_result() = Some(match &outcome {
             Ok(_) => Ok(()),
             Err(error) => Err(LoadError::dehydrate(error)),
         });
         loading.notify.notify_waiters();
-        let mut state = self.shared.state.lock_ignore_poison();
-        match outcome {
-            Ok(model) => {
-                if self.shared.closed.load(Ordering::SeqCst) {
-                    state.entries.remove(key);
-                    return Err(AcquireError::Closed);
-                }
-                if let Some(entry) = state.entries.get_mut(key) {
-                    entry.loading = None;
-                    entry.model = Some(model.clone());
-                    entry.leases += 1;
-                    entry.touch();
-                    drop(state);
-                    self.trim_idle(key);
-                    Ok(ModelLease::new(model, key.to_owned(), self.shared.clone()))
-                } else {
-                    // Only `close()` removes a loading entry; treat it as closed.
-                    Err(AcquireError::Closed)
-                }
-            }
-            Err(error) => {
-                state.entries.remove(key);
-                Err(AcquireError::Load {
-                    reference: request.reference.as_str().to_owned(),
-                    error,
-                })
-            }
-        }
     }
 
     /// Current load.
