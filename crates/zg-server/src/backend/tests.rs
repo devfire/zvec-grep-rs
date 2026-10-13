@@ -16,6 +16,53 @@ fn stub_service_config(dimension: usize) -> ServiceConfig {
     }
 }
 
+/// First-embed gate: blocks the (blocking) embedding call until the
+/// test releases it, so an index job is provably running — with its
+/// storage write lock held — when a drop is requested (#72).
+struct GatedStubModel {
+    inner: zg_core::models::stub::StubEmbeddingModel,
+    gate: Arc<(std::sync::Mutex<GateState>, std::sync::Condvar)>,
+}
+
+#[derive(Default)]
+struct GateState {
+    entered: bool,
+    released: bool,
+}
+
+impl zg_core::models::EmbeddingModel for GatedStubModel {
+    fn info(&self) -> &zg_core::models::EmbeddingModelInfo {
+        self.inner.info()
+    }
+
+    fn max_batch_size(&self) -> usize {
+        self.inner.max_batch_size()
+    }
+
+    fn embed(
+        &self,
+        purpose: zg_core::models::EmbeddingPurpose,
+        inputs: &[zg_core::models::EmbeddingInput<'_>],
+    ) -> zg_core::error::EngineResult<zg_core::models::embeddings::EmbeddingResult> {
+        {
+            let (lock, cvar) = &*self.gate;
+            let mut state = lock.lock().unwrap();
+            state.entered = true;
+            cvar.notify_all();
+            while !state.released {
+                state = cvar.wait(state).unwrap();
+            }
+        }
+        self.inner.embed(purpose, inputs)
+    }
+}
+
+fn release_gate(gate: &Arc<(std::sync::Mutex<GateState>, std::sync::Condvar)>) {
+    let (lock, cvar) = &**gate;
+    lock.lock().unwrap().released = true;
+    cvar.notify_all();
+}
+
 fn backend() -> DaemonBackend {
     DaemonBackend::new(DaemonBackendOptions {
         service: stub_service_config(16),
@@ -368,4 +415,149 @@ async fn status_on_indexed_root_without_actor_reads_persisted_state() {
     assert!(!status.watcher_active);
     assert_eq!(second.server_status().runtimes, 0);
     second.close().await;
+}
+
+#[tokio::test]
+async fn drop_during_running_job_waits_for_cancellation_and_drops() {
+    // Regression (#72): `handle_drop` cancelled the job request-only and
+    // immediately dropped storage, so the still-running blocking index
+    // held the write lock and the drop failed BUSY — yet the actor
+    // exited anyway, leaving the index on disk with no watcher. The drop
+    // must await the cancelled job before deleting storage.
+    let gate = Arc::new((
+        std::sync::Mutex::new(GateState::default()),
+        std::sync::Condvar::new(),
+    ));
+    let backend = DaemonBackend::new(DaemonBackendOptions {
+        service: ServiceConfig {
+            model_override: Some(Arc::new(GatedStubModel {
+                inner: zg_core::models::stub::StubEmbeddingModel::new(16),
+                gate: Arc::clone(&gate),
+            })),
+            ..ServiceConfig::default()
+        },
+        ..DaemonBackendOptions::default()
+    });
+    let dir = fixture();
+    let root = root(&dir);
+    let submitted = backend
+        .index(
+            &root,
+            IndexInput {
+                rebuild: true,
+                ..IndexInput::default()
+            },
+        )
+        .await
+        .unwrap();
+    // Wait until the job is inside `embed`: running, write lock held.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if gate.0.lock().unwrap().entered {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let drop_backend = backend.clone();
+    let drop_root = root.clone();
+    let mut drop_task =
+        tokio::spawn(async move { drop_backend.index_drop(&drop_root).await });
+    // Give the drop its chance to (incorrectly) race the running job,
+    // then let the embedding call return into the cancelled pipeline.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let raced = drop_task.is_finished();
+    // Release before asserting: a panicking test must not leave the
+    // gated blocking embed (and this test binary) parked forever.
+    release_gate(&gate);
+    assert!(!raced, "drop raced the running job");
+    let dropped = tokio::time::timeout(Duration::from_secs(10), &mut drop_task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(dropped);
+    let terminal = backend
+        .scheduler()
+        .wait(&submitted.job.id, None)
+        .await
+        .unwrap();
+    assert_eq!(terminal.state, IndexJobState::Cancelled);
+    assert_eq!(backend.server_status().runtimes, 0);
+    let error = backend.index_status(&root).await.unwrap_err();
+    assert_eq!(
+        error.code(),
+        "ZVEC_GREP.ENGINE.CONTEXT.WORKSPACE_INDEX_NOT_FOUND"
+    );
+    backend.close().await;
+    // Second phase (same test slot: two extra live backend actors in
+    // parallel measurably destabilize the lock-retry-sensitive backend
+    // suite, so the phases run sequentially here instead).
+    #[cfg(unix)]
+    assert_failed_drop_keeps_actor_alive().await;
+}
+
+#[cfg(unix)]
+async fn assert_failed_drop_keeps_actor_alive() {
+    // Regression (#72): a failed drop returned from `handle` as actor
+    // exit regardless of the error, stranding the on-disk index with no
+    // watcher. The actor must stay alive on failure and a retry must
+    // succeed once the failure cause is gone.
+    use std::os::unix::fs::PermissionsExt;
+    let backend = backend();
+    let dir = fixture();
+    let root = root(&dir);
+    let submitted = backend
+        .index(
+            &root,
+            IndexInput {
+                rebuild: true,
+                ..IndexInput::default()
+            },
+        )
+        .await
+        .unwrap();
+    backend
+        .scheduler()
+        .wait(&submitted.job.id, None)
+        .await
+        .unwrap();
+    assert_eq!(backend.server_status().runtimes, 1);
+    let home = dir.path().join(".zvec-grep-rs");
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let result = backend.index_drop(&root).await;
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(result.is_err(), "read-only state dir must fail the drop");
+    // Actor survived: still registered and still answering status.
+    // Poll: the chmod can trigger a watcher reconcile whose writer
+    // legitimately BUSYs a read open for a short window.
+    assert_eq!(backend.server_status().runtimes, 1);
+    let status = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Ok(status) = backend.index_status(&root).await {
+                break status;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(status.status.files_scanned >= 2, "{status:?}");
+    // Retry succeeds and only then does the actor exit. Poll: a
+    // transient read open (watcher roots refresh) can legitimately
+    // BUSY one attempt; the actor must survive those too.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if backend.index_drop(&root).await.unwrap_or(false) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(backend.server_status().runtimes, 0);
+    backend.close().await;
 }

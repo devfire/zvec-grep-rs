@@ -106,8 +106,13 @@ impl RootActor {
                 let _ = reply.send(self.handle_status().await);
             }
             RootCommand::Drop { reply } => {
-                let _ = reply.send(self.handle_drop().await);
-                return false;
+                let result = self.handle_drop().await;
+                // Only a completed drop exits: on failure the index is
+                // still on disk, so the actor (and its watcher) must
+                // stay alive to keep serving it (#72).
+                let completed = result.is_ok();
+                let _ = reply.send(result);
+                return !completed;
             }
             RootCommand::WatcherPending { pending } => {
                 self.runtime.set_watcher_pending(pending);
@@ -261,9 +266,22 @@ impl RootActor {
     }
 
     async fn handle_drop(&mut self) -> Result<bool, BackendError> {
+        // Cancel, then await the job's terminal state before touching
+        // storage: `cancel_root` is request-only, and the running
+        // blocking index holds the storage write lock until it unwinds,
+        // so an immediate drop fails LOCK.BUSY (#72). The job's
+        // `IndexFinished` queues in this actor's mailbox meanwhile;
+        // scheduler completion does not depend on consuming it.
         let _ = self.shared.scheduler.cancel_root(self.key.as_str());
-        self.watcher.close().await;
-        self.sessions.close().await;
+        self.shared
+            .scheduler
+            .wait_for_root_idle(self.key.as_str())
+            .await;
+        // Release the resident read session (its read lock would also
+        // fail the drop) without closing the cache or the watcher: if
+        // the drop fails, this actor stays alive and both must keep
+        // working. `teardown` closes them after a completed drop.
+        self.sessions.retire().await;
         let service = self.temp_service();
         let root = PathBuf::from(self.key.as_str());
         tokio::task::spawn_blocking(move || service.drop_index(Some(root.as_path())))
