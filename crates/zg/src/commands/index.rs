@@ -109,6 +109,31 @@ fn rootless_flag_conflict(args: &IndexArgs, existing_root_paths: &[RootPath]) ->
     ))
 }
 
+/// Builds the explicit-root [`RootPath`] from the CLI file-scope flags.
+fn build_root_path(args: &IndexArgs, absolute: &Path) -> Result<RootPath, CliError> {
+    Ok(RootPath {
+        absolute_path: absolute.to_string_lossy().into_owned(),
+        recursive: true,
+        include: Vec::new(),
+        exclude: Vec::new(),
+        globs: args.globs.clone(),
+        insensitive_globs: args.iglobs.clone(),
+        file_types: args.file_types.clone(),
+        excluded_file_types: args.excluded_file_types.clone(),
+        hidden: bool_flag(args.hidden),
+        no_ignore: bool_flag(args.no_ignore),
+        ignore_files: args.ignore_files.clone(),
+        max_depth: args.max_depth,
+        max_file_size_bytes: args
+            .max_filesize
+            .as_deref()
+            .map(parse_byte_size)
+            .transpose()?,
+        follow: bool_flag(args.follow),
+        include_nested_git: bool_flag(args.include_nested_git),
+    })
+}
+
 async fn run_index_direct(args: &IndexArgs, root: &PathBuf) -> Result<(), CliError> {
     let absolute = absolute_path(root)?;
     let explicit = !args.roots.is_empty();
@@ -145,27 +170,7 @@ async fn run_index_direct(args: &IndexArgs, root: &PathBuf) -> Result<(), CliErr
         return Err(error);
     }
     let permit = plan_index_permit(&info_before, args).await?;
-    let root_path = RootPath {
-        absolute_path: absolute.to_string_lossy().into_owned(),
-        recursive: true,
-        include: Vec::new(),
-        exclude: Vec::new(),
-        globs: args.globs.clone(),
-        insensitive_globs: args.iglobs.clone(),
-        file_types: args.file_types.clone(),
-        excluded_file_types: args.excluded_file_types.clone(),
-        hidden: bool_flag(args.hidden),
-        no_ignore: bool_flag(args.no_ignore),
-        ignore_files: args.ignore_files.clone(),
-        max_depth: args.max_depth,
-        max_file_size_bytes: args
-            .max_filesize
-            .as_deref()
-            .map(parse_byte_size)
-            .transpose()?,
-        follow: bool_flag(args.follow),
-        include_nested_git: bool_flag(args.include_nested_git),
-    };
+    let root_path = build_root_path(args, &absolute)?;
     let root_spec = if explicit {
         vec![RootPathSpec::Full(Box::new(root_path))]
     } else {
