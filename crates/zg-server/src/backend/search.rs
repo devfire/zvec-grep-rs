@@ -17,6 +17,7 @@ use zg_core::service::types::{ZvecGrepContextOptions, ZvecGrepContextResult};
 use zg_core::types::SearchPlanRoute;
 
 use super::error::BackendError;
+use super::util::join_backend_error;
 use super::index_run::{build_index_run, plan_search_permit};
 use super::root_actor::RootActor;
 use super::search_types::{
@@ -58,7 +59,12 @@ impl RootActor {
         &mut self,
         query: &SearchQuery,
     ) -> Result<ZvecGrepContextResult, BackendError> {
-        let info = self.temp_service().workspace_info(None)?;
+        // `workspace_info` opens the full index read-only and takes a read
+        // lock: blocking storage IO, never on this actor's async worker (#69).
+        let service = self.temp_service();
+        let info = tokio::task::spawn_blocking(move || service.workspace_info(None))
+            .await
+            .map_err(|error| join_backend_error(&error))??;
         let options = ZvecGrepContextOptions {
             query: query.query.clone(),
             queries: query.queries.clone(),

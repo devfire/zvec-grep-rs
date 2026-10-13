@@ -55,3 +55,4 @@ pub use search_types::{
 
 pub(crate) use actor::RootCommand;
 pub(crate) use runtime::spawn_root_actor;
+pub(crate) use util::join_backend_error;

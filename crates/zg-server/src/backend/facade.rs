@@ -87,7 +87,7 @@ impl DaemonBackend {
         root: &str,
         query: SearchQuery,
     ) -> Result<DaemonSearchResult, BackendError> {
-        let handle = self.manager.activate_for_search(root)?;
+        let handle = self.manager.activate_for_search(root).await?;
         send_recv(&handle, |reply| RootCommand::Search { query, reply }).await?
     }
 

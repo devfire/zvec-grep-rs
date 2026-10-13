@@ -19,7 +19,9 @@ use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
 use zg_core::service::facade::ZvecGrepService;
 
-use crate::backend::{BackendError, BackendShared, RootCommand, RootHandle, spawn_root_actor};
+use crate::backend::{
+    BackendError, BackendShared, RootCommand, RootHandle, join_backend_error, spawn_root_actor,
+};
 use crate::errors::DaemonError;
 use crate::root_runtime::{RootKey, resolve_requested_root};
 use crate::sync::MutexExt;
@@ -73,12 +75,23 @@ impl RuntimeManager {
     /// Returns [`BackendError::Daemon`] when the manager is closed, the root is invalid,
     /// or no built index with an embedding exists, or [`BackendError::Engine`] when
     /// workspace inspection fails.
-    pub fn activate_for_search(&self, requested_root: &str) -> Result<RootHandle, BackendError> {
+    pub async fn activate_for_search(
+        &self,
+        requested_root: &str,
+    ) -> Result<RootHandle, BackendError> {
         if self.closed.load(Ordering::SeqCst) {
             return Err(DaemonError::ShuttingDown.into());
         }
         let canonical = resolve_requested_root(requested_root, false)?;
-        let info = self.inspect(&canonical)?;
+        // A live actor already passed this validation at activation and
+        // exits when its index is dropped, so re-opening the index on
+        // every search would only add a blocking storage open (and read
+        // lock) per query (#69). Only cold activation inspects, and it
+        // does so on a blocking thread (see `inspect`).
+        if let Some(handle) = self.get(&canonical) {
+            return Ok(handle);
+        }
+        let info = self.inspect(&canonical).await?;
         if !info.indexed || info.embedding.is_none() {
             return Err(DaemonError::IndexMissing {
                 root: canonical.to_string(),
@@ -284,11 +297,17 @@ impl RuntimeManager {
         Ok(handle)
     }
 
-    fn inspect(
+    async fn inspect(
         &self,
         canonical: &RootKey,
     ) -> Result<zg_core::service::types::ZvecGrepInfoResult, BackendError> {
-        Ok(self.facade_service(canonical).workspace_info(None)?)
+        // `workspace_info` opens the full index read-only and takes a read
+        // lock: blocking storage IO, never on an async worker (#69).
+        let service = self.facade_service(canonical);
+        let info = tokio::task::spawn_blocking(move || service.workspace_info(None))
+            .await
+            .map_err(|error| join_backend_error(&error))??;
+        Ok(info)
     }
 }
 
@@ -375,6 +394,22 @@ mod tests {
             Err(BackendError::Daemon(DaemonError::ShuttingDown))
         ));
         // Duplicate close() calls coalesce instead of double-draining.
+        manager.close().await;
+    }
+
+    #[tokio::test]
+    async fn activate_for_search_unindexed_returns_index_missing_without_spawning() {
+        let manager = test_manager();
+        let (dir, _key) = test_key();
+        let root = dir.path().to_string_lossy().into_owned();
+        // Exercises the spawn_blocking inspect path (#69): an unindexed
+        // root is rejected before any actor (watcher) is spawned.
+        let result = manager.activate_for_search(&root).await;
+        assert!(matches!(
+            result,
+            Err(BackendError::Daemon(DaemonError::IndexMissing { .. }))
+        ));
+        assert_eq!(manager.actor_count(), 0);
         manager.close().await;
     }
 
