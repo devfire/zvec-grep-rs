@@ -1,5 +1,5 @@
-//! Signing-key files: per-workspace keys, legacy-global verification
-//! fallback, and race-safe first creation.
+//! Signing-key file: one global secret outside every workspace, with
+//! per-root keys derived from it, and race-safe first creation.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -45,47 +45,26 @@ impl RemoteEmbeddingAuthorizationStore {
         }
     }
 
-    /// Signing-key file inside one workspace root.
-    fn workspace_key_path(root: &str) -> PathBuf {
-        Path::new(root).join(STATE_DIR_NAME).join(SIGNING_KEY_FILE)
-    }
-
-    /// Candidate key paths for `root`, workspace key first and the legacy
-    /// global second (single-key mode uses the shared path only).
-    fn candidate_key_paths(&self, root: &str) -> Vec<PathBuf> {
-        if !self.per_workspace_keys {
-            return vec![self.signing_key_path.clone()];
-        }
-        let workspace = Self::workspace_key_path(root);
-        if workspace == self.signing_key_path {
-            vec![workspace]
-        } else {
-            vec![workspace, self.signing_key_path.clone()]
-        }
-    }
-
-    /// Usable keys for `root`: the workspace key when present, else the
-    /// legacy global fallback. Empty when no key file exists, so callers
-    /// fail closed.
+    /// Usable keys for `root`: the per-root key derived from the global
+    /// secret, plus the raw global secret itself so grants signed before
+    /// per-root derivation (including TS grants) still verify. A key file
+    /// inside the workspace is never consulted: it ships with a clone and
+    /// would let a repository forge its own grant. Empty when no global
+    /// key file exists, so callers fail closed.
     pub(super) fn candidate_keys(&self, root: &str) -> EngineResult<Vec<Vec<u8>>> {
-        let mut keys = Vec::with_capacity(2);
-        for path in self.candidate_key_paths(root) {
-            if let Some(key) = Self::read_key_file(&path)? {
-                keys.push(key);
-            }
-        }
-        Ok(keys)
+        let Some(global) = Self::read_key_file(&self.signing_key_path)? else {
+            return Ok(Vec::new());
+        };
+        let derived = super::crypto::derive_root_key(&global, root).map_err(EngineError::from)?;
+        Ok(vec![derived, global])
     }
 
-    /// Key new grants for `root` are signed with: the workspace key in
-    /// workspace-keys mode (created on demand, 0600), the shared key
-    /// otherwise.
+    /// Key new grants for `root` are signed with: derived from the global
+    /// secret (created on demand at the global path, 0600, never inside
+    /// the workspace), so each root gets a distinct signing key.
     pub(super) fn get_or_create_key_for_root(&self, root: &str) -> EngineResult<Vec<u8>> {
-        if self.per_workspace_keys {
-            Self::get_or_create_key_file(&Self::workspace_key_path(root))
-        } else {
-            self.get_or_create_signing_key()
-        }
+        let global = self.get_or_create_signing_key()?;
+        super::crypto::derive_root_key(&global, root).map_err(EngineError::from)
     }
 
     fn get_or_create_signing_key(&self) -> EngineResult<Vec<u8>> {

@@ -2,14 +2,15 @@
 //! `src/authorization/store.ts`.
 //!
 //! Grants live in `<root>/.zvec-grep-rs/authorization.json` (camelCase wire,
-//! 0700 dirs / 0600 files, atomic tmp-rename writes). Each workspace root
-//! holds its own 32-byte hex signing key at
-//! `<root>/.zvec-grep-rs/authorization-signing.key` (0600); the global
-//! `~/.zvec-grep-rs/authorization-signing.key` (`$ZVEC_GREP_AUTHORIZATION_KEY_FILE`
-//! override) is kept as a legacy fallback for verification only, so grants
-//! minted before per-workspace keys still verify. New grants are always
-//! signed with the workspace key, which (together with the fingerprints in
-//! every grant) keeps a grant for root A from ever authorizing root B.
+//! 0700 dirs / 0600 files, atomic tmp-rename writes). The 32-byte hex signing
+//! secret lives only outside every workspace, at
+//! `~/.zvec-grep-rs/authorization-signing.key`
+//! (`$ZVEC_GREP_AUTHORIZATION_KEY_FILE` override, 0600). Each root's signing
+//! key is derived from that secret (HMAC over the canonical root), so a key
+//! or grant shipped inside a cloned workspace can never verify, and (with
+//! the fingerprints in every grant) a grant for root A never authorizes
+//! root B. Verification also accepts the raw global secret so grants signed
+//! before per-root derivation (including TS grants) still verify.
 //! Every signature covers the stable (key-sorted) JSON of the unsigned
 //! grant, exactly like TS, so grants written by either implementation verify
 //! in the other.
@@ -41,23 +42,19 @@ use keys::default_signing_key_path;
 pub const DOCUMENT_VERSION: u32 = 1;
 /// Grant file name inside `<root>/.zvec-grep-rs/`.
 pub const GRANT_FILE: &str = "authorization.json";
-/// Per-workspace signing-key file name inside `<root>/.zvec-grep-rs/`
+/// Signing-key file name at the global (outside-workspace) key path.
 pub const SIGNING_KEY_FILE: &str = "authorization-signing.key";
 /// Env var overriding the signing-key path.
 pub const SIGNING_KEY_ENV_VAR: &str = "ZVEC_GREP_AUTHORIZATION_KEY_FILE";
 
 /// HMAC-signed workspace grant store.
 ///
-/// In workspace-keys mode ([`Self::new`] without the env override, or
-/// [`Self::with_workspace_keys`]) each workspace root signs with its own key
-/// at `<root>/.zvec-grep-rs/authorization-signing.key`, falling back to the
-/// legacy global key for verification only. With an explicit key path
-/// ([`Self::with_signing_key`], or the env override) that single key signs
-/// and verifies every root.
+/// The signing secret lives only at `signing_key_path`, outside every
+/// workspace; each root signs and verifies with a key derived from that
+/// secret for its canonical root path.
 #[derive(Debug, Clone)]
 pub struct RemoteEmbeddingAuthorizationStore {
     signing_key_path: PathBuf,
-    per_workspace_keys: bool,
 }
 
 impl Default for RemoteEmbeddingAuthorizationStore {
@@ -67,38 +64,22 @@ impl Default for RemoteEmbeddingAuthorizationStore {
 }
 
 impl RemoteEmbeddingAuthorizationStore {
-    /// Opens the store with per-workspace signing keys and the default
-    /// legacy-global fallback, unless `$ZVEC_GREP_AUTHORIZATION_KEY_FILE`
-    /// overrides the key path (single-key mode, as before).
+    /// Opens the store with the global signing secret at the default
+    /// path, or `$ZVEC_GREP_AUTHORIZATION_KEY_FILE` when set. The secret
+    /// is never read from or written to a workspace directory.
     #[must_use]
     pub fn new() -> Self {
-        let overridden =
-            std::env::var_os(SIGNING_KEY_ENV_VAR).is_some_and(|value| !value.is_empty());
         Self {
             signing_key_path: default_signing_key_path(),
-            per_workspace_keys: !overridden,
         }
     }
 
-    /// Opens the store with an explicit single signing-key path (tests).
-    /// Every root signs and verifies with this key.
+    /// Opens the store with an explicit global signing-key path (tests).
+    /// Every root signs and verifies with a key derived from the secret
+    /// at this path. Callers must keep the path outside workspace roots.
     #[must_use]
     pub fn with_signing_key(path: PathBuf) -> Self {
-        Self {
-            signing_key_path: path,
-            per_workspace_keys: false,
-        }
-    }
-
-    /// Opens the store with per-workspace signing keys and an explicit
-    /// legacy-global fallback path used for verification only (tests,
-    /// daemon wiring). New grants are always signed with the workspace key.
-    #[must_use]
-    pub fn with_workspace_keys(legacy_signing_key_path: PathBuf) -> Self {
-        Self {
-            signing_key_path: legacy_signing_key_path,
-            per_workspace_keys: true,
-        }
+        Self { signing_key_path: path }
     }
 
     /// Grant file for the target's first canonical workspace root.

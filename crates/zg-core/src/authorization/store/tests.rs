@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use super::crypto::stable_stringify;
 use super::{GRANT_FILE, RemoteEmbeddingAuthorizationStore, SIGNING_KEY_FILE};
 use crate::authorization::target::{canonicalize_workspace_roots, create_remote_embedding_target};
-use crate::authorization::types::{RemoteEmbeddingScope, RemoteEmbeddingTarget};
+use crate::authorization::types::{RemoteEmbeddingGrant, RemoteEmbeddingScope, RemoteEmbeddingTarget};
 use crate::paths::STATE_DIR_NAME;
 
 /// Canonical on-disk root: grant and key files live under the
@@ -109,7 +109,8 @@ fn truncated_signature_is_invalid() {
     let keys = store
         .candidate_keys(&root.to_string_lossy())
         .expect("read keys");
-    assert_eq!(keys.len(), 1);
+    // Derived per-root key first, raw global secret second (legacy grants).
+    assert_eq!(keys.len(), 2);
     let key = keys.into_iter().next().expect("key present");
     assert!(RemoteEmbeddingAuthorizationStore::verify_grant(
         &grant, &key
@@ -182,23 +183,25 @@ fn concurrent_key_creation_converges_on_persisted_key() {
 }
 
 #[test]
-fn workspace_keys_reject_cross_workspace_replay() {
+fn derived_keys_reject_cross_workspace_replay() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root_a = dir.path().join("a");
     let root_b = dir.path().join("b");
     fs::create_dir_all(&root_a).expect("mkdir a");
     fs::create_dir_all(&root_b).expect("mkdir b");
-    // Legacy fallback points nowhere, so only workspace keys verify.
-    let store =
-        RemoteEmbeddingAuthorizationStore::with_workspace_keys(dir.path().join("legacy.key"));
+    // Global secret lives outside both workspaces.
+    let global_key = dir.path().join("global.key");
+    let store = RemoteEmbeddingAuthorizationStore::with_signing_key(global_key.clone());
     let target_a = target_for(&root_a);
     store.grant(&target_a).expect("grant a");
     assert!(store.has_grant(&target_a).expect("has_grant a"));
-    // Each workspace mints its own key file.
+    // Granting mints only the global key file, never a workspace-local key.
     let canonical_a = canonical_path(&root_a);
     let canonical_b = canonical_path(&root_b);
     let key_a = canonical_a.join(STATE_DIR_NAME).join(SIGNING_KEY_FILE);
-    assert!(key_a.is_file());
+    assert!(!key_a.exists());
+    assert!(global_key.is_file());
+    let key_a = global_key;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -208,8 +211,7 @@ fn workspace_keys_reject_cross_workspace_replay() {
             .mode();
         assert_eq!(mode & 0o777, 0o600);
     }
-    // Replaying A's grant file into B verifies under neither B's
-    // workspace key nor the (absent) legacy key.
+    // Replaying A's grant file into B does not verify under B's derived key.
     let file_a = canonical_a.join(STATE_DIR_NAME).join(GRANT_FILE);
     let file_b = canonical_b.join(STATE_DIR_NAME).join(GRANT_FILE);
     if let Some(parent) = file_b.parent() {
@@ -279,4 +281,54 @@ fn revoke_all_on_missing_root_returns_zero_without_creating_files() {
     assert!(!missing.exists());
     assert!(!store.revoke(&target_for(&missing)).expect("revoke missing"));
     assert!(!missing.exists());
+}
+
+#[test]
+fn workspace_local_signing_key_cannot_forge_grant() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().join("repo");
+    fs::create_dir_all(&root).expect("mkdir");
+    let target = target_for(&root);
+    let canonical = canonical_path(&root);
+    let state_dir = canonical.join(STATE_DIR_NAME);
+    fs::create_dir_all(&state_dir).expect("mkdir state");
+    // Attacker ships a signing key inside the workspace plus a grant
+    // signed with it (both travel with a clone). The victim's global
+    // secret lives outside the workspace and is unrelated to that key.
+    let attacker_key = [0xABu8; 32];
+    fs::write(
+        state_dir.join(SIGNING_KEY_FILE),
+        crate::utils::hash::to_hex(&attacker_key),
+    )
+    .expect("plant workspace key");
+    let unsigned = RemoteEmbeddingGrant {
+        version: super::DOCUMENT_VERSION,
+        id: "forged".to_owned(),
+        capability: crate::authorization::types::REMOTE_EMBEDDING_CAPABILITY.to_owned(),
+        scope: RemoteEmbeddingScope::Workspace,
+        workspace_roots: vec![canonical.to_string_lossy().into_owned()],
+        workspace_fingerprint: target.workspace_fingerprint.to_string(),
+        provider: target.provider.clone(),
+        model: target.model.clone(),
+        endpoint: target.endpoint.clone(),
+        target_fingerprint: target.target_fingerprint.to_string(),
+        granted_at: 0,
+        signature: String::new(),
+    };
+    let signature = super::crypto::sign(&super::crypto::unsigned_grant(&unsigned), &attacker_key)
+        .expect("sign forged grant");
+    let forged = RemoteEmbeddingGrant { signature, ..unsigned };
+    let document = serde_json::json!({ "version": 1, "grants": [forged] });
+    fs::write(state_dir.join(GRANT_FILE), document.to_string()).expect("plant forged grant");
+    // Victim has no global secret yet, then creates a legitimate one by
+    // granting an unrelated root: neither state may accept the forgery.
+    let victim = store_in(dir.path());
+    assert!(!victim.has_grant(&target).expect("has_grant without global"));
+    let other = dir.path().join("other");
+    fs::create_dir_all(&other).expect("mkdir other");
+    victim.grant(&target_for(&other)).expect("legit grant");
+    assert!(!victim.has_grant(&target).expect("has_grant with global"));
+    let status = victim.status(&root.to_string_lossy()).expect("status");
+    assert_eq!(status.grants.len(), 1);
+    assert!(!status.grants[0].valid);
 }

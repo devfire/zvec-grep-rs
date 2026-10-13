@@ -56,8 +56,8 @@ impl RemoteEmbeddingAuthorizationStore {
     /// Signs and persists a workspace grant for every canonical root of the
     /// target, replacing any grant with the same target fingerprint.
     ///
-    /// Each root file's copy is signed with that root's own workspace key
-    /// (single-key mode signs every copy with the shared key), so a copied
+    /// Each root file's copy is signed with that root's derived key
+    /// (derived from the global secret outside the workspace), so a copied
     /// grant file never verifies elsewhere. Returns the grant written to
     /// the last canonical root.
     ///

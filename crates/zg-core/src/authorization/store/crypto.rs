@@ -69,6 +69,21 @@ pub(super) fn sign(unsigned: &serde_json::Value, key: &[u8]) -> Result<String, A
     Ok(to_hex(&mac.finalize().into_bytes()))
 }
 
+/// Per-root signing key derived from the global secret, which lives
+/// outside every workspace (`~/.zvec-grep-rs/` or
+/// `$ZVEC_GREP_AUTHORIZATION_KEY_FILE`). HMAC-SHA256 keyed by the global
+/// secret over a domain-separated canonical root, so a key/grant pair
+/// shipped inside a cloned workspace can never verify, while a grant for
+/// root A still cannot verify for root B.
+pub(super) fn derive_root_key(global_key: &[u8], root: &str) -> Result<Vec<u8>, AuthError> {
+    let mut mac = HmacSha256::new_from_slice(global_key).map_err(|_| AuthError::InvalidTarget {
+        detail: "authorization signing key was rejected".to_owned(),
+    })?;
+    mac.update(b"zvec-grep-rs:authorization-signing-key:v1\0");
+    mac.update(root.as_bytes());
+    Ok(mac.finalize().into_bytes().to_vec())
+}
+
 /// Unsigned grant object in TS field shape (signature excluded).
 pub(super) fn unsigned_grant(grant: &RemoteEmbeddingGrant) -> serde_json::Value {
     serde_json::json!({
