@@ -3,6 +3,12 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
+use crate::authorization::operation::{
+    create_remote_embedding_operation_permit, current_permit,
+    with_remote_embedding_operation_permit,
+};
+use crate::authorization::target::create_remote_embedding_target;
+use crate::authorization::types::RemoteEmbeddingScope;
 use crate::error::{EngineError, EngineErrorCode, EngineResult};
 use crate::ids::{EntityId, FileId, make_entity_id};
 use crate::models::embeddings::EmbeddingResult;
@@ -341,4 +347,140 @@ fn embed_failure_marks_file_failed_and_drops_stale_fragments() {
             .len(),
         1
     );
+}
+
+/// Remote-like model that fails closed like the Qwen guard when the worker
+/// thread carries no ambient permit (#82).
+struct PermitModel;
+impl EmbeddingModel for PermitModel {
+    fn info(&self) -> &EmbeddingModelInfo {
+        static INFO: std::sync::LazyLock<EmbeddingModelInfo> =
+            std::sync::LazyLock::new(|| EmbeddingModelInfo {
+                reference: "qwen/text-embedding-v4".to_owned(),
+                provider: "qwen".to_owned(),
+                model: "text-embedding-v4".to_owned(),
+                dimension: 4,
+                metric: SearchMetric::Cosine,
+                supports_images: false,
+                max_input_tokens: None,
+                input_kinds: vec![EmbeddingInputKind::Text],
+                endpoint: Some("https://example.invalid/embeddings".to_owned()),
+                default_concurrency: None,
+            });
+        &INFO
+    }
+    fn max_batch_size(&self) -> usize {
+        64
+    }
+    fn embed(
+        &self,
+        _purpose: EmbeddingPurpose,
+        inputs: &[EmbeddingInput<'_>],
+    ) -> EngineResult<EmbeddingResult> {
+        if current_permit().is_none() {
+            return Err(EngineError::new(
+                EngineErrorCode::AuthRemoteEmbeddingRequired,
+                "remote embedding authorization required",
+            ));
+        }
+        Ok(EmbeddingResult {
+            vectors: vec![vec![0.0; 4]; inputs.len()],
+            truncated: Vec::new(),
+        })
+    }
+}
+
+fn run_permit_wave(use_permit: bool) -> (EngineResult<()>, usize) {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let storage_path = dir.path().join("storage");
+    let root = dir.path().join("repo");
+    std::fs::create_dir_all(&root).expect("repo root");
+    let schema = WorkspaceIndexEmbeddingSchema {
+        provider: "qwen".to_owned(),
+        model: "text-embedding-v4".to_owned(),
+        dimension: 4,
+        metric: SearchMetric::Cosine,
+    };
+    let mut storage = create_workspace_index_storage(StorageOptions::ReadWrite {
+        storage_path: &storage_path,
+        embedding: &schema,
+    })
+    .expect("open read-write storage");
+    let file = test_file_info(&root, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "a.txt");
+    let prepared = PreparedFile {
+        file: file.clone(),
+        fragments: vec![prepared_fragment(&file.id, 0, "hello world")],
+    };
+    let model: Arc<dyn EmbeddingModel> = Arc::new(PermitModel);
+    let scheduler = Arc::new(EmbeddingScheduler::new(
+        resolve_embedding_concurrency_policy(None, &*model),
+    ));
+    let stats = Arc::new(Mutex::new(IndexStats::default()));
+    let mut timings = TimingCollector::new();
+    let mut embed_elapsed_ms = 0.0;
+    let info = WorkspaceIndexInfo {
+        id: "test".to_owned(),
+        name: "test".to_owned(),
+        path: storage_path.to_string_lossy().into_owned(),
+        root_paths: vec![RootPath {
+            absolute_path: root.to_string_lossy().into_owned(),
+            recursive: true,
+            ..RootPath::default()
+        }],
+        index_policy: None,
+        embedding: Some(Some(schema)),
+        index_version: Some(CURRENT_INDEX_VERSION),
+        created_time: UnixMillis::now(),
+        updated_time: UnixMillis::now(),
+    };
+    let mut ctx = IndexContext {
+        workspace_index: info,
+        storage: storage.as_mut(),
+        embedding_model: model,
+        embedding_concurrency: None,
+        on_progress: None,
+        cancel: None,
+    };
+    let run = |ctx: &mut IndexContext<'_>| {
+        embed_and_commit_wave(
+            vec![vec![prepared]],
+            ctx,
+            &stats,
+            &scheduler,
+            &AtomicBool::new(false),
+            &mut timings,
+            None,
+            1,
+            &mut embed_elapsed_ms,
+        )
+    };
+    let result = if use_permit {
+        let target = create_remote_embedding_target(
+            &[root.to_string_lossy().into_owned()],
+            "qwen",
+            "text-embedding-v4",
+            "https://example.invalid/embeddings",
+        )
+        .expect("target");
+        let permit = create_remote_embedding_operation_permit(target, RemoteEmbeddingScope::Once);
+        with_remote_embedding_operation_permit(Some(permit), || run(&mut ctx))
+    } else {
+        run(&mut ctx)
+    };
+    let count = ctx
+        .storage
+        .list_entities_by_file(&file.id, ListEntitiesOptions::default())
+        .len();
+    (result, count)
+}
+
+#[test]
+fn wave_propagates_permit_to_workers_and_auth_fails_fast() {
+    let (result, count) = run_permit_wave(true);
+    result.expect("authorized wave embeds on worker threads");
+    assert_eq!(count, 1);
+    let (result, count) = run_permit_wave(false);
+    let error = result.expect_err("unauthorized wave must fail, not mark files failed");
+    assert_eq!(*error.code(), EngineErrorCode::AuthRemoteEmbeddingRequired);
+    assert_eq!(count, 0);
 }

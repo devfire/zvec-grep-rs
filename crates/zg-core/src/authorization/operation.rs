@@ -56,9 +56,13 @@ pub fn with_remote_embedding_operation_permit<T>(
     operation()
 }
 
-/// Returns the ambient permit, if any (primarily for tests).
-#[cfg(test)]
-fn current_permit() -> Option<RemoteEmbeddingPermit> {
+/// Returns the ambient permit, if any. Callers that spawn worker threads
+/// (e.g. indexing embed waves) MUST capture this on the spawning thread and
+/// re-install the clone inside each worker via
+/// [`with_remote_embedding_operation_permit`]; thread-locals do not cross
+/// thread boundaries.
+#[must_use]
+pub(crate) fn current_permit() -> Option<RemoteEmbeddingPermit> {
     CURRENT_PERMIT.with(|cell| cell.borrow().clone())
 }
 

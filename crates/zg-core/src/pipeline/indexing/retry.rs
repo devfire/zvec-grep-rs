@@ -372,10 +372,14 @@ fn classify_embedding_retry(
     let permanent_remote = remote
         && (code == "ZVEC_GREP.ENGINE.MODELS.EMBEDDING_DIMENSION_MISMATCH"
             || (status == Some(400) && is_permanent_remote_model_bad_request(&text)));
+    // Missing/revoked remote-embedding authorization never heals by retrying
+    // per file: fail the whole index instead of marking every file failed.
+    let auth_required = code == "ZVEC_GREP.ENGINE.AUTH.REMOTE_EMBEDDING_REQUIRED";
     RetryClassification {
         retryable,
         rate_limited,
-        fail_fast: retryable
+        fail_fast: auth_required
+            || retryable
             || shared_local_failure
             || remote_configuration_failure
             || permanent_remote
@@ -583,6 +587,48 @@ mod tests {
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
             4
         );
+    }
+
+    #[test]
+    fn auth_required_is_fail_fast() {
+        struct AuthModel;
+        impl EmbeddingModel for AuthModel {
+            fn info(&self) -> &crate::models::EmbeddingModelInfo {
+                use std::sync::OnceLock;
+                static INFO: OnceLock<crate::models::EmbeddingModelInfo> = OnceLock::new();
+                INFO.get_or_init(|| crate::models::EmbeddingModelInfo {
+                    reference: "qwen/text-embedding-v4".to_owned(),
+                    provider: "qwen".to_owned(),
+                    model: "text-embedding-v4".to_owned(),
+                    dimension: 4,
+                    metric: crate::types::SearchMetric::Cosine,
+                    supports_images: false,
+                    max_input_tokens: None,
+                    endpoint: None,
+                    input_kinds: vec![crate::models::EmbeddingInputKind::Text],
+                    default_concurrency: None,
+                })
+            }
+            fn max_batch_size(&self) -> usize {
+                8
+            }
+            fn embed(
+                &self,
+                _purpose: EmbeddingPurpose,
+                _inputs: &[EmbeddingInput<'_>],
+            ) -> EngineResult<EmbeddingResult> {
+                Err(EngineError::new(
+                    EngineErrorCode::AuthRemoteEmbeddingRequired,
+                    "remote embedding authorization required",
+                ))
+            }
+        }
+        let model = AuthModel;
+        let error = EngineError::new(
+            EngineErrorCode::AuthRemoteEmbeddingRequired,
+            "remote embedding authorization required",
+        );
+        assert!(should_fail_fast_embedding_error(&error, &model));
     }
 
     #[test]

@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use crate::authorization::operation::{current_permit, with_remote_embedding_operation_permit};
 use crate::error::{EngineError, EngineErrorCode, EngineResult};
 use crate::storage::IndexedFragment;
 use crate::types::FileInfo;
@@ -75,6 +76,9 @@ pub(super) fn embed_and_commit_wave(
         .iter()
         .map(|root| root.absolute_path.clone())
         .collect();
+    // #82: the permit is thread-local, so capture it here and re-install a
+    // clone inside each scoped worker; otherwise remote workers fail closed.
+    let permit = current_permit();
     let outcomes: Vec<UnitOutcome> = std::thread::scope(|scope| {
         let mut handles = Vec::with_capacity(wave.len());
         for unit in &wave {
@@ -85,19 +89,22 @@ pub(super) fn embed_and_commit_wave(
             let cancel = ctx.cancel.clone();
             let stats = Arc::clone(stats);
             let workspace_roots = workspace_roots.clone();
+            let permit = permit.clone();
             handles.push(scope.spawn(move || {
-                embed_unit(
-                    unit,
-                    &*model,
-                    &workspace_roots,
-                    &scheduler,
-                    abort_ref,
-                    cancel.as_ref(),
-                    on_progress.as_ref(),
-                    &stats,
-                    progress_base,
-                    total,
-                )
+                with_remote_embedding_operation_permit(permit, || {
+                    embed_unit(
+                        unit,
+                        &*model,
+                        &workspace_roots,
+                        &scheduler,
+                        abort_ref,
+                        cancel.as_ref(),
+                        on_progress.as_ref(),
+                        &stats,
+                        progress_base,
+                        total,
+                    )
+                })
             }));
         }
         handles
