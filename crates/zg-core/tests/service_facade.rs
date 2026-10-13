@@ -146,6 +146,118 @@ fn drop_index_reports_existence() {
     assert!(!service.drop_index(None).expect("second drop"));
 }
 
+/// Issue #89: `Some(0)` must be rejected before any manifest/storage
+/// mutation, not persisted and silently indexing zero files.
+#[test]
+fn zero_max_file_size_is_rejected_before_any_mutation() {
+    let dir = fixture_workspace();
+    let service = stub_service(&dir);
+    let err = service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(dir.path()),
+            max_file_size_bytes: Some(0),
+            ..ZvecGrepIndexOptions::default()
+        })
+        .expect_err("zero cap must fail");
+    assert_eq!(
+        *err.code(),
+        zg_core::error::EngineErrorCode::LexicalSearchFailed
+    );
+    assert!(
+        !manifest_home(&dir).exists(),
+        "rejected run must not create index state"
+    );
+}
+
+/// Issue #89: a `Some(0)` cap carried by a full root spec (which bypasses
+/// the options field) or persisted in stored root paths must also fail.
+#[test]
+fn zero_max_file_size_in_root_specs_and_stored_paths_is_rejected() {
+    use zg_core::manifest::read_workspace_manifest;
+    use zg_core::service::types::RootPathSpec;
+
+    let dir = fixture_workspace();
+    let service = stub_service(&dir);
+    let mut root = zg_core::types::RootPath {
+        absolute_path: dir.path().to_string_lossy().into_owned(),
+        recursive: true,
+        max_file_size_bytes: Some(0),
+        ..zg_core::types::RootPath::default()
+    };
+    let err = service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(dir.path()),
+            root_paths: vec![RootPathSpec::Full(Box::new(root.clone()))],
+            ..ZvecGrepIndexOptions::default()
+        })
+        .expect_err("zero cap in full root spec must fail");
+    assert_eq!(
+        *err.code(),
+        zg_core::error::EngineErrorCode::LexicalSearchFailed
+    );
+
+    // Poison a previously-good manifest's stored cap; the next run reuses
+    // stored paths and must reject it instead of indexing zero files.
+    root.max_file_size_bytes = None;
+    service
+        .ensure_index(&ZvecGrepIndexOptions {
+            root: Some(dir.path()),
+            root_paths: vec![RootPathSpec::Full(Box::new(root))],
+            ..ZvecGrepIndexOptions::default()
+        })
+        .expect("index with valid cap");
+    let home = manifest_home(&dir);
+    let manifest = read_workspace_manifest(&home)
+        .expect("read")
+        .expect("manifest exists");
+    let mut value = serde_json::to_value(&manifest).expect("json");
+    value["rootPaths"][0]["maxFileSizeBytes"] = serde_json::json!(0);
+    std::fs::write(
+        home.join("manifest.json"),
+        serde_json::to_string_pretty(&value).expect("stringify"),
+    )
+    .expect("write poisoned manifest");
+    let err = service
+        .ensure_index(&index_options(&dir))
+        .expect_err("zero cap in stored paths must fail");
+    assert_eq!(
+        *err.code(),
+        zg_core::error::EngineErrorCode::LexicalSearchFailed
+    );
+}
+
+/// Issue #89: when `WorkspaceIndex::open` fails (here: a live read session
+/// holds the storage lock), the abort-poll thread must not outlive the call.
+#[test]
+fn failed_open_does_not_leak_signal_watch() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let dir = fixture_workspace();
+    let service = stub_service(&dir);
+    service.ensure_index(&index_options(&dir)).expect("index");
+    let session = service.open_read_session(None).expect("session");
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let probe = Arc::clone(&calls);
+    let result = service.ensure_index(&ZvecGrepIndexOptions {
+        root: Some(dir.path()),
+        signal: Some(Arc::new(move || {
+            probe.fetch_add(1, Ordering::Relaxed);
+            false
+        })),
+        ..ZvecGrepIndexOptions::default()
+    });
+    session.close();
+    result.expect_err("write open must fail while a read session is live");
+    let stopped_at = calls.load(Ordering::Relaxed);
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    assert_eq!(
+        calls.load(Ordering::Relaxed),
+        stopped_at,
+        "poll thread leaked past the failed open"
+    );
+}
+
 #[test]
 fn read_session_searches_then_fails_closed() {
     let dir = fixture_workspace();

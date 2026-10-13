@@ -29,6 +29,11 @@ pub fn normalize_root_path(root: &RootPath) -> RootPath {
 /// `SCANNER.UNSUPPORTED_ROOT_PATH` when a root is neither a file nor a directory, or
 /// `SCANNER.OVERLAPPING_ROOT_PATHS` when two roots overlap.
 pub fn validate_root_paths(roots: &[RootPath]) -> EngineResult<Vec<RootPath>> {
+    // Covers `RootPathSpec::Full` roots, whose cap bypasses the facade's
+    // options-level check.
+    for root in roots {
+        crate::file_size_policy::validate_max_file_size_bytes(root.max_file_size_bytes)?;
+    }
     let normalized: Vec<RootPath> = roots.iter().map(normalize_root_path).collect();
     let mut domains = Vec::with_capacity(normalized.len());
     for root in &normalized {

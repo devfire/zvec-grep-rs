@@ -6,9 +6,10 @@ use std::sync::Arc;
 
 use super::models::embedding_schema;
 use super::service::ZvecGrepService;
-use super::signal::{finish_signal_watch, spawn_signal_watch};
+use super::signal::spawn_signal_watch;
 use crate::config::EmbeddingRuntimeConfig;
 use crate::error::EngineResult;
+use crate::file_size_policy::validate_max_file_size_bytes;
 use crate::manifest::{
     CURRENT_MANIFEST_VERSION, WorkspaceManifest, delete_workspace_manifest,
     read_workspace_manifest, write_workspace_manifest,
@@ -41,6 +42,9 @@ impl ZvecGrepService {
         &self,
         options: &ZvecGrepIndexOptions<'_>,
     ) -> EngineResult<crate::types::IndexResult> {
+        // Reject before any manifest/storage mutation: `Some(0)` would
+        // otherwise be persisted into root paths and skip every file.
+        validate_max_file_size_bytes(options.max_file_size_bytes)?;
         let root = self.root_string(options.root);
         let location = self.location_for(&root, options.index_location)?;
         let home = PathBuf::from(&location.home);
@@ -159,7 +163,8 @@ impl ZvecGrepService {
             cancel: Some(cancel),
         });
         index.close();
-        finish_signal_watch(watcher);
+        // Explicit drop for clarity; the guard also joins on any `?` above.
+        drop(watcher);
 
         let result = result?;
         // Commit: a successful run stamps the current version, flipping a
@@ -209,6 +214,11 @@ impl ZvecGrepService {
             && let Some(manifest) = existing
             && !manifest.info.root_paths.is_empty()
         {
+            // Stored paths bypass `validate_root_paths`; a cap persisted
+            // by an older build (`Some(0)`) must not poison this run.
+            for root in &manifest.info.root_paths {
+                validate_max_file_size_bytes(root.max_file_size_bytes)?;
+            }
             return Ok(manifest.info.root_paths.clone());
         }
         crate::pipeline::indexing::root_paths::validate_root_paths(&[RootPath {
