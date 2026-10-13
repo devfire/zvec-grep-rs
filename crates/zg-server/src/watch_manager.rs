@@ -1,24 +1,23 @@
-//! Filesystem watching: notify-based recursive watch coalesced to `ChangeSet`s.
+//! Filesystem watching: per-directory notify watches coalesced to `ChangeSet`s.
 //!
 //! Mirrors `../zvec-grep/src/daemon/watch-manager.ts` (debounced flush,
 //! max-wait backstop, `.gitignore` widening via [`ChangeSet`],
 //! fail-open path filtering, full-reconcile on watcher errors). Two
 //! divergences (see `docs/ts-divergence.md`):
 //!
-//! - TS walks the tree with per-directory watchers on Linux (Node's
-//!   recursive watch ignores exclusions and exhausts inotify quotas).
-//!   `notify`'s inotify backend registers recursive watches natively with
-//!   exclusion filtering applied before recording, so one recursive watch
-//!   suffices — no per-directory bookkeeping, no resume timers.
+//! - Like TS on Linux, directories are watched one by one
+//!   (`NonRecursive`): `notify`'s recursive inotify watch registers
+//!   every subdirectory including ignored trees and exhausts inotify
+//!   quotas (#71). Registration pruning lives in `register`.
 //! - `WatchManager` is owned by exactly one root actor task (never shared),
 //!   so callbacks are plain `Arc<dyn Fn>` values, not negotiated factories.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher, recommended_watcher};
+use notify::{EventKind, RecommendedWatcher, recommended_watcher};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
 use zg_core::types::RootPath;
@@ -31,6 +30,7 @@ use crate::errors::DaemonError;
 mod classify;
 mod flush;
 mod record;
+mod register;
 
 #[cfg(test)]
 mod tests;
@@ -38,6 +38,7 @@ mod tests;
 use classify::{classify_loop, coalesce_overflow};
 use flush::{flush_loop, flush_snapshot};
 use record::{load_roots, record_raw, refresh_roots_blocking};
+use register::{clear_watches, register_initial};
 
 /// Debounce before a quiet batch flushes; mirrors TS `debounceMs`.
 pub const DEFAULT_WATCH_DEBOUNCE: Duration = Duration::from_millis(750);
@@ -131,6 +132,12 @@ struct Shared {
     on_active: Option<WatchActive>,
     get_root_paths: Option<RootPathsSource>,
     flush_poke: Sender<()>,
+    /// Live notify watcher, shared so the blocking classify thread
+    /// can register newly created directories (#71). `None` until
+    /// `start`.
+    watcher: Mutex<Option<RecommendedWatcher>>,
+    /// Directories with a live `NonRecursive` registration (#71).
+    watched: Mutex<HashSet<PathBuf>>,
 }
 
 impl Shared {
@@ -154,7 +161,6 @@ pub struct WatchManager {
     event_tx: Sender<RawEvent>,
     debounce: Duration,
     max_wait: Duration,
-    watcher: Option<RecommendedWatcher>,
     tasks: Vec<JoinHandle<()>>,
 }
 
@@ -187,6 +193,8 @@ impl WatchManager {
             on_active: options.on_active,
             get_root_paths: options.get_root_paths,
             flush_poke,
+            watcher: Mutex::new(None),
+            watched: Mutex::new(HashSet::new()),
         });
         let debounce = options.debounce.unwrap_or(DEFAULT_WATCH_DEBOUNCE);
         let max_wait = options.max_wait.unwrap_or(DEFAULT_WATCH_MAX_WAIT);
@@ -195,85 +203,95 @@ impl WatchManager {
             event_tx,
             debounce,
             max_wait,
-            watcher: None,
             tasks: Vec::new(),
         };
         manager.spawn(event_rx, flush_rx);
         manager
     }
 
-    /// Starts the recursive notify watcher. Watching `.git` / `.zvec-grep-rs`
+    /// Starts per-directory notify watches (see `register`).
     ///
     /// # Errors
     ///
     /// Returns [`DaemonError::IndexFailed`] when the watcher fails to start or watch the root.
     pub fn start(&mut self) -> Result<(), DaemonError> {
-        if self.watcher.is_some() || self.shared.is_closed() {
+        if self
+            .shared
+            .watcher
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+            || self.shared.is_closed()
+        {
             return Ok(());
         }
         let sender = self.event_tx.clone();
         let shared = Arc::clone(&self.shared);
-        let mut watcher =
-            recommended_watcher(move |result: Result<notify::Event, notify::Error>| {
-                if let Ok(event) = result {
-                    // Reads never change content: queueing access events
-                    // would let indexing's own file reads re-derive as
-                    // `Changed` in classification and self-trigger a
-                    // pending batch (and a spurious re-index).
-                    if matches!(event.kind, EventKind::Access(_)) {
+        let watcher = recommended_watcher(move |result: Result<notify::Event, notify::Error>| {
+            if let Ok(event) = result {
+                // Reads never change content: queueing access events
+                // would let indexing's own file reads re-derive as
+                // `Changed` in classification and self-trigger a
+                // pending batch (and a spurious re-index).
+                if matches!(event.kind, EventKind::Access(_)) {
+                    return;
+                }
+                let kind = match event.kind {
+                    EventKind::Create(_) => Some(ChangeKind::Created),
+                    EventKind::Modify(_) => Some(ChangeKind::Changed),
+                    EventKind::Remove(_) => Some(ChangeKind::Deleted),
+                    EventKind::Any | EventKind::Access(_) | EventKind::Other => None,
+                };
+                for path in event.paths {
+                    if shared.is_closed() {
                         return;
                     }
-                    let kind = match event.kind {
-                        EventKind::Create(_) => Some(ChangeKind::Created),
-                        EventKind::Modify(_) => Some(ChangeKind::Changed),
-                        EventKind::Remove(_) => Some(ChangeKind::Deleted),
-                        EventKind::Any | EventKind::Access(_) | EventKind::Other => None,
-                    };
-                    for path in event.paths {
-                        if shared.is_closed() {
+                    // Bounded queue: a full queue conflates into the
+                    // overflow map (same-path events merge) instead
+                    // of growing memory without bound.
+                    match sender.try_send(RawEvent { path, kind }) {
+                        Ok(()) => {}
+                        Err(tokio::sync::mpsc::error::TrySendError::Full(event)) => {
+                            coalesce_overflow(&shared, event);
+                        }
+                        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                             return;
                         }
-                        // Bounded queue: a full queue conflates into the
-                        // overflow map (same-path events merge) instead
-                        // of growing memory without bound.
-                        match sender.try_send(RawEvent { path, kind }) {
-                            Ok(()) => {}
-                            Err(tokio::sync::mpsc::error::TrySendError::Full(event)) => {
-                                coalesce_overflow(&shared, event);
-                            }
-                            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                                return;
-                            }
-                        }
                     }
-                } else {
-                    // A dead watcher cannot be trusted: reconcile everything.
-                    set_active(&shared, false);
-                    shared
-                        .changes
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .require_full_reconcile();
-                    shared
-                        .reconcile_requested
-                        .store(true, std::sync::atomic::Ordering::SeqCst);
-                    set_pending(&shared, true);
-                    shared.poke();
                 }
-            })
-            .map_err(|error| {
-                set_active(&self.shared, false);
-                DaemonError::IndexFailed {
-                    message: format!("failed to start filesystem watcher: {error}"),
-                }
-            })?;
-        if let Err(error) = watcher.watch(Path::new(&self.shared.root), RecursiveMode::Recursive) {
+            } else {
+                // A dead watcher cannot be trusted: reconcile everything.
+                set_active(&shared, false);
+                shared
+                    .changes
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .require_full_reconcile();
+                shared
+                    .reconcile_requested
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                set_pending(&shared, true);
+                shared.poke();
+            }
+        })
+        .map_err(|error| {
+            set_active(&self.shared, false);
+            DaemonError::IndexFailed {
+                message: format!("failed to start filesystem watcher: {error}"),
+            }
+        })?;
+        *self
+            .shared
+            .watcher
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(watcher);
+        if let Err(error) = register_initial(&self.shared) {
+            clear_watches(&self.shared);
             set_active(&self.shared, false);
             return Err(DaemonError::IndexFailed {
                 message: format!("failed to watch {}: {error}", self.shared.root),
             });
         }
-        self.watcher = Some(watcher);
         set_active(&self.shared, true);
         Ok(())
     }
@@ -349,7 +367,7 @@ impl WatchManager {
     /// Stops the watcher and background tasks. Pending changes are
     /// dropped, mirroring TS `close`.
     pub async fn close(&mut self) {
-        self.watcher = None;
+        clear_watches(&self.shared);
         self.shared
             .closed
             .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -391,7 +409,7 @@ impl Drop for WatchManager {
         self.shared
             .closed
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        self.watcher = None;
+        clear_watches(&self.shared);
         for task in self.tasks.drain(..) {
             task.abort();
         }

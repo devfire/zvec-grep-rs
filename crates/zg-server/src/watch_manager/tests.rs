@@ -372,3 +372,89 @@ async fn nested_git_policy_gates_watcher_batches() {
         ".git, .zvec-grep-rs and legacy .zvec-grep changes stay untracked"
     );
 }
+
+#[tokio::test]
+async fn live_watch_skips_ignored_dirs_and_tracks_new_dirs() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().to_string_lossy().into_owned();
+    std::fs::create_dir_all(dir.path().join("node_modules/pkg")).expect("mkdir ignored");
+    std::fs::create_dir_all(dir.path().join("custom-ignored")).expect("mkdir gitignored");
+    std::fs::create_dir_all(dir.path().join("src")).expect("mkdir src");
+    std::fs::write(dir.path().join(".gitignore"), "custom-ignored/\n").expect("gitignore");
+    std::fs::write(dir.path().join("node_modules/pkg/a.txt"), "a\n").expect("ignored file");
+    std::fs::write(dir.path().join("custom-ignored/a.txt"), "a\n").expect("gitignored file");
+    std::fs::write(dir.path().join("src/kept.txt"), "a\n").expect("kept file");
+    let batches: RecordedBatches = Arc::new(StdMutex::new(Vec::new()));
+    let batches_clone = Arc::clone(&batches);
+    let mut manager = WatchManager::new(WatchManagerOptions {
+        root: root.clone(),
+        debounce: Some(Duration::from_secs(3600)),
+        max_wait: Some(Duration::from_secs(3600)),
+        max_changed_paths: None,
+        on_changes: Arc::new(move |snapshot, reason| {
+            batches_clone.lock().unwrap().push((snapshot, reason));
+        }),
+        get_root_paths: None,
+        initial_roots: None,
+        on_pending: None,
+        on_active: None,
+    });
+    manager.start().unwrap();
+    // Registration itself is pruned (#71): only the root and `src`
+    // hold watches; ignored trees consume none.
+    {
+        let watched = manager.shared.watched.lock().unwrap();
+        let watched: Vec<String> = watched
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(watched.len(), 2, "{watched:?}");
+        assert!(watched.iter().any(|path| path == &root), "{watched:?}");
+        assert!(
+            watched.iter().any(|path| path.ends_with("src")),
+            "{watched:?}"
+        );
+    }
+    std::fs::write(dir.path().join("node_modules/pkg/a.txt"), "b\n").expect("modify ignored");
+    std::fs::write(dir.path().join("custom-ignored/a.txt"), "b\n").expect("modify gitignored");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    manager.flush_now();
+    assert!(
+        batches.lock().unwrap().is_empty(),
+        "ignored directories must not deliver batches: {:?}",
+        batches.lock().unwrap()
+    );
+    std::fs::create_dir_all(dir.path().join("src/newdir")).expect("mkdir new");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        manager
+            .shared
+            .watched
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|path| path.ends_with("src/newdir")),
+        "new directory must gain a watch"
+    );
+    std::fs::write(dir.path().join("src/newdir/new.txt"), "n\n").expect("new file");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    manager.flush_now();
+    // The new file is reported directly or covered by a rescan of its
+    // (newly watched) parent directory.
+    let covered = batches.lock().unwrap().iter().any(|(snapshot, _)| {
+        snapshot
+            .touched_files
+            .iter()
+            .any(|path| path.ends_with("src/newdir/new.txt"))
+            || snapshot
+                .rescan_directories
+                .iter()
+                .any(|path| path.ends_with("src/newdir"))
+    });
+    assert!(
+        covered,
+        "newly created directory must be watched: {:?}",
+        batches.lock().unwrap()
+    );
+    manager.close().await;
+}

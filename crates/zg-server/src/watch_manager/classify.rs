@@ -12,6 +12,7 @@ use crate::change_set::ChangeKind;
 use super::record::{
     is_internal_path, is_workspace_signal_lossy, refresh_roots_blocking, should_track_roots,
 };
+use super::register::reconcile_event_path;
 use super::{EVENT_QUEUE_CAPACITY, OVERFLOW_CONFLATED_CAPACITY, RawEvent, Shared, set_pending};
 
 /// Merges a same-path repeat into the conflated kind. `None` (unknown)
@@ -189,6 +190,12 @@ pub(super) fn classify_batch(
         if is_internal_path(&shared.root, &absolute) {
             continue;
         }
+        // Per-directory watch upkeep (#71) on this blocking thread:
+        // new directories gain watches, deleted ones lose them. A file
+        // created inside a just-created directory before its watch
+        // lands is still covered: the directory event itself lands in
+        // the change set as a rescan directory below.
+        reconcile_event_path(shared, path);
         let metadata = std::fs::symlink_metadata(path).ok();
         let is_directory = metadata.as_ref().is_some_and(std::fs::Metadata::is_dir);
         let kind = kind_hint.unwrap_or_else(|| {

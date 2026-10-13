@@ -151,10 +151,12 @@ Remaining CLI divergences and choices:
   refused shutdown surfaces as `SHUTDOWN_FAILED`. The lock machine name
   reads `$HOSTNAME` (falling back to `/proc/sys/kernel/hostname`)
   instead of `os.hostname()`.
-- **Watching uses one native recursive `notify` watch** per root with
-  exclusion filtering before recording, instead of TS's per-directory
-  Linux watchers (which ignore exclusions and exhaust inotify quotas);
-  the watch manager is owned by exactly one root actor.
+- **Watching uses per-directory `notify` watches** like TS on Linux
+  (#71): a recursive watch registers ignored trees (`node_modules`,
+  `target`) and exhausts inotify quotas, so each indexable directory
+  gets a `NonRecursive` watch pruned by the scanner predicate, with
+  registration upkeep on the blocking classify thread; the watch
+  manager is owned by exactly one root actor.
 - **MCP managed-rg surface is reduced**: the real-rg `extraArgs`
   (invert, multiline, engines, threads, encodings) are rejected because
   search runs in-process and cannot forward raw ripgrep flags.

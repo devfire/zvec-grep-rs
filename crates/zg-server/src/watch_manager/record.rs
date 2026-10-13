@@ -13,6 +13,7 @@ use zg_core::types::RootPath;
 use crate::change_set::ChangeKind;
 use crate::errors::DaemonError;
 
+use super::register::sync_watch_tree;
 use super::{RootPathsSource, Shared, set_pending};
 
 /// Classifies one raw event and folds it into the pending set. Synchronous
@@ -181,4 +182,8 @@ pub(super) fn refresh_roots_blocking(shared: &Shared) {
     shared
         .roots_stale
         .store(false, std::sync::atomic::Ordering::SeqCst);
+    // Registration follows the refreshed roots: directories that
+    // became (un)indexable gain or lose their watch (#71). No-op
+    // before `start` (no watcher installed).
+    sync_watch_tree(shared);
 }
