@@ -252,6 +252,7 @@ impl JobScheduler {
             {
                 let mut guard = self.shared.state.lock_ignore_poison();
                 activate(&mut guard, &next);
+                Self::sort_queue(&mut guard);
             }
             self.pump();
         }

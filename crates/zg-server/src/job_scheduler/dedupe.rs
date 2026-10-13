@@ -100,6 +100,7 @@ impl JobScheduler {
     pub(crate) fn enqueue(state: &mut Inner, input: SubmitIndexJob) -> JobId {
         let id = create_job(state, input);
         activate(state, &id);
+        Self::sort_queue(state);
         id
     }
 

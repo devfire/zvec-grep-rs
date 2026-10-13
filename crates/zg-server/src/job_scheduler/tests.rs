@@ -208,3 +208,117 @@ async fn close_cancels_and_awaits_in_flight_work() {
         Err(DaemonError::ShuttingDown)
     ));
 }
+
+fn recording_run(label: &str, order: &Arc<std::sync::Mutex<Vec<String>>>) -> JobRun {
+    let label = label.to_owned();
+    let order = order.clone();
+    Arc::new(move |_, _| {
+        let label = label.clone();
+        let order = order.clone();
+        Box::pin(async move {
+            order.lock().unwrap().push(label);
+            Ok(())
+        }) as BoxFuture<'static, JobOutcome>
+    })
+}
+
+fn gated_recording_run(
+    label: &str,
+    order: &Arc<std::sync::Mutex<Vec<String>>>,
+    gate: &Arc<tokio::sync::Notify>,
+) -> JobRun {
+    let label = label.to_owned();
+    let order = order.clone();
+    let gate = gate.clone();
+    Arc::new(move |_, cancel| {
+        let label = label.clone();
+        let order = order.clone();
+        let gate = gate.clone();
+        Box::pin(async move {
+            order.lock().unwrap().push(label);
+            tokio::select! {
+                () = gate.notified() => Ok(()),
+                () = cancel.cancelled() => Err(JobFailure::Cancelled),
+            }
+        }) as BoxFuture<'static, JobOutcome>
+    })
+}
+
+#[tokio::test]
+async fn queued_jobs_dispatch_by_priority_not_submission_order() {
+    let scheduler = JobScheduler::new(JobSchedulerOptions {
+        concurrency: Some(1),
+        ..JobSchedulerOptions::default()
+    });
+    let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let running = submit(
+        &scheduler,
+        "/a",
+        JobReason::Manual,
+        gated_recording_run("a", &order, &gate),
+    );
+    let watch = submit(
+        &scheduler,
+        "/b",
+        JobReason::Watch,
+        recording_run("b-watch", &order),
+    );
+    let manual = submit(
+        &scheduler,
+        "/c",
+        JobReason::Manual,
+        recording_run("c-manual", &order),
+    );
+    gate.notify_one();
+    scheduler.wait(&running.job.id, None).await.unwrap();
+    scheduler.wait(&watch.job.id, None).await.unwrap();
+    scheduler.wait(&manual.job.id, None).await.unwrap();
+    assert_eq!(
+        order.lock().unwrap().as_slice(),
+        ["a", "c-manual", "b-watch"],
+        "higher-priority queued job must dispatch before lower-priority FIFO head"
+    );
+}
+
+#[tokio::test]
+async fn followup_activation_dispatches_by_priority_not_queue_age() {
+    let scheduler = JobScheduler::new(JobSchedulerOptions {
+        concurrency: Some(1),
+        ..JobSchedulerOptions::default()
+    });
+    let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let running = submit(
+        &scheduler,
+        "/a",
+        JobReason::Manual,
+        gated_recording_run("a", &order, &gate),
+    );
+    // Chain a high-priority followup behind the running job; it is not
+    // queued until that job finishes and activates it.
+    let followup = scheduler
+        .submit(SubmitIndexJob {
+            canonical_root: "/a".to_owned(),
+            reason: JobReason::Manual,
+            run: recording_run("a-followup", &order),
+            followup_if_running: true,
+        })
+        .unwrap();
+    assert!(followup.reused);
+    assert_ne!(running.job.id, followup.job.id);
+    let watch = submit(
+        &scheduler,
+        "/b",
+        JobReason::Watch,
+        recording_run("b-watch", &order),
+    );
+    gate.notify_one();
+    scheduler.wait(&followup.job.id, None).await.unwrap();
+    scheduler.wait(&watch.job.id, None).await.unwrap();
+    assert_eq!(
+        order.lock().unwrap().as_slice(),
+        ["a", "a-followup", "b-watch"],
+        "activated followup must outrank an older lower-priority queued job"
+    );
+}
