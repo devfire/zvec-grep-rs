@@ -8,6 +8,9 @@ use super::values::{ClientModeArg, ColorMode, DeviceArg};
 
 /// `zg index` flags.
 #[derive(Debug, Args)]
+// Independent clap `SetTrue` flags map 1:1 onto CLI switches; grouping
+// them into enums would break the clap derive and the flag surface.
+#[allow(clippy::struct_excessive_bools)]
 pub struct IndexArgs {
     /// Workspace root to index (default: current directory).
     pub roots: Vec<PathBuf>,
