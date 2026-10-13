@@ -65,6 +65,6 @@ dist/
 *.tgz
 =======
 /target
-.zvec-grep/
+.zvec-grep-rs/
 .env
 >>>>>>> 48c73b1 (agents + ignore)
