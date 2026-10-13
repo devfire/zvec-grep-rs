@@ -4,15 +4,18 @@
 //! `GET /healthz`, `POST /control/shutdown`, `POST /mcp`, `POST
 //! /mcp/admin`, loopback-host guard, bearer token, 1 MB body cap). The
 //! axum port keeps every guard's status code and error body:
-//! healthz is unauthenticated; shutdown demands loopback Host plus token
-//! (401 otherwise); MCP routes additionally demand a loopback Origin
-//! (403) and answer 401 with `WWW-Authenticate: Bearer`.
+//! healthz is unauthenticated; shutdown and MCP routes demand a loopback
+//! Host carrying the actual bound port plus, when present, a loopback
+//! Origin (403 otherwise; a missing Origin is allowed for non-browser
+//! clients), then the bearer token (401 otherwise, with
+//! `WWW-Authenticate: Bearer` on the MCP routes).
 //!
 //! `/mcp` serves `options.mcp_toolset` (default `agent`: search only); `/mcp/admin`
 //! always serves the `full` toolset (search plus index lifecycle, rg, status)
 //! behind the same loopback/auth guards, mirroring the TS admin endpoint.
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::body::{Body, to_bytes};
@@ -21,7 +24,6 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use serde_json::{Value, json};
-use subtle::ConstantTimeEq;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -31,6 +33,12 @@ use crate::errors::DaemonError;
 use crate::mcp::http_transport::{McpHttpEndpoint, McpHttpEndpointOptions};
 use crate::mcp::toolset::McpToolset;
 use crate::sync::MutexExt;
+
+mod guard;
+#[cfg(test)]
+mod tests;
+
+use guard::{loopback_guard, mcp_guard, valid_token};
 
 /// Maximum MCP request body: 1 MiB, mirroring TS `MAX_REQUEST_BYTES`.
 pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
@@ -76,6 +84,15 @@ struct AppState {
     mcp: McpHttpEndpoint,
     mcp_admin: McpHttpEndpoint,
     shutdown: CancellationToken,
+    /// Port the listener is actually bound to (0 until `start` binds).
+    /// Guards bind the Host header to it, so it is set before serving.
+    bound_port: AtomicU16,
+}
+
+impl AppState {
+    fn bound_port(&self) -> u16 {
+        self.bound_port.load(Ordering::SeqCst)
+    }
 }
 
 /// Axum loopback daemon server.
@@ -127,6 +144,7 @@ impl DaemonHttpServer {
                 mcp,
                 mcp_admin,
                 shutdown: CancellationToken::new(),
+                bound_port: AtomicU16::new(0),
             }),
             host: options.host,
             port: options.port,
@@ -164,6 +182,9 @@ impl DaemonHttpServer {
             .map_err(|error| DaemonError::IndexFailed {
                 message: format!("failed to read bound address: {error}"),
             })?;
+        self.state
+            .bound_port
+            .store(address.port(), Ordering::SeqCst);
         let router = router(Arc::clone(&self.state));
         let shutdown = self.state.shutdown.clone();
         let task = tokio::spawn(async move {
@@ -242,9 +263,12 @@ async fn not_found() -> impl IntoResponse {
 }
 
 async fn shutdown(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
-    if !valid_host(headers.get("host"))
-        || !valid_token(headers.get("authorization"), state.token.as_deref())
-    {
+    // Origin/Host guard first (403): a cross-site page must not reach the
+    // token check, let alone the shutdown side effect below.
+    if let Some(denied) = loopback_guard(&headers, state.bound_port()) {
+        return denied;
+    }
+    if !valid_token(headers.get("authorization"), state.token.as_deref()) {
         return (
             StatusCode::UNAUTHORIZED,
             axum::Json(json!({ "error": "unauthorized" })),
@@ -268,7 +292,7 @@ async fn mcp_session_request(
     method: axum::http::Method,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if let Some(denied) = mcp_guard(&headers, state.token.as_deref()) {
+    if let Some(denied) = mcp_guard(&headers, state.token.as_deref(), state.bound_port()) {
         return denied;
     }
     state.mcp.handle_session_request(&method, &headers).await
@@ -279,7 +303,7 @@ async fn mcp_admin_session_request(
     method: axum::http::Method,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if let Some(denied) = mcp_guard(&headers, state.token.as_deref()) {
+    if let Some(denied) = mcp_guard(&headers, state.token.as_deref(), state.bound_port()) {
         return denied;
     }
     state
@@ -293,7 +317,7 @@ async fn mcp_post(
     headers: HeaderMap,
     body: Body,
 ) -> impl IntoResponse {
-    if let Some(denied) = mcp_guard(&headers, state.token.as_deref()) {
+    if let Some(denied) = mcp_guard(&headers, state.token.as_deref(), state.bound_port()) {
         return denied;
     }
     let body = match read_mcp_body(body).await {
@@ -308,7 +332,7 @@ async fn mcp_admin_post(
     headers: HeaderMap,
     body: Body,
 ) -> impl IntoResponse {
-    if let Some(denied) = mcp_guard(&headers, state.token.as_deref()) {
+    if let Some(denied) = mcp_guard(&headers, state.token.as_deref(), state.bound_port()) {
         return denied;
     }
     let body = match read_mcp_body(body).await {
@@ -316,31 +340,6 @@ async fn mcp_admin_post(
         Err(response) => return response,
     };
     state.mcp_admin.handle_post(&headers, &body).await
-}
-
-/// Shared loopback/auth guard for both MCP routes. `Some` is the denial
-/// response; `None` means the request may proceed to the endpoint.
-fn mcp_guard(headers: &HeaderMap, token: Option<&str>) -> Option<axum::response::Response> {
-    if !valid_host(headers.get("host")) || !valid_origin(headers.get("origin")) {
-        return Some(
-            (
-                StatusCode::FORBIDDEN,
-                axum::Json(json!({ "error": "forbidden_origin" })),
-            )
-                .into_response(),
-        );
-    }
-    if !valid_token(headers.get("authorization"), token) {
-        return Some(
-            (
-                StatusCode::UNAUTHORIZED,
-                [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
-                axum::Json(json!({ "error": "unauthorized" })),
-            )
-                .into_response(),
-        );
-    }
-    None
 }
 
 /// Reads and validates one MCP body, preserving the pre-split status
@@ -368,203 +367,4 @@ async fn read_mcp_body(body: Body) -> Result<bytes::Bytes, axum::response::Respo
 
 fn rpc_error(status: StatusCode, code: i32, message: &str) -> axum::response::Response {
     (status, axum::Json(json!({ "jsonrpc": "2.0", "error": { "code": code, "message": message }, "id": Value::Null }))).into_response()
-}
-
-/// Missing Host fails closed; otherwise the hostname must be loopback.
-fn valid_host(header: Option<&axum::http::HeaderValue>) -> bool {
-    let Some(value) = header.and_then(|header| header.to_str().ok()) else {
-        return false;
-    };
-    url::Url::parse(&format!("http://{value}"))
-        .ok()
-        .map(|url| {
-            url.host_str()
-                .unwrap_or("")
-                .trim_matches(&['[', ']'] as &[_])
-                .to_owned()
-        })
-        .is_some_and(|host| is_loopback_host(&host))
-}
-
-/// Missing Origin is allowed (non-browser clients); a present one must be
-/// `http:` with a loopback host.
-fn valid_origin(header: Option<&axum::http::HeaderValue>) -> bool {
-    let Some(value) = header.and_then(|header| header.to_str().ok()) else {
-        return true;
-    };
-    url::Url::parse(value).ok().is_some_and(|url| {
-        url.scheme() == "http"
-            && is_loopback_host(
-                url.host_str()
-                    .unwrap_or("")
-                    .trim_matches(&['[', ']'] as &[_]),
-            )
-    })
-}
-
-/// Anonymous mode (`None` expected) allows everything; otherwise
-/// constant-time `Bearer` comparison (mirrors TS `timingSafeEqual`).
-fn valid_token(header: Option<&axum::http::HeaderValue>, expected: Option<&str>) -> bool {
-    let Some(expected) = expected else {
-        return true;
-    };
-    let Some(actual) = header.and_then(|header| header.to_str().ok()) else {
-        return false;
-    };
-    let Some(presented) = actual.strip_prefix("Bearer ") else {
-        return false;
-    };
-    // Length is not secret: early exit, then constant-time content
-    // comparison via `subtle` (same policy as the grant-signature check in
-    // `zg_core::authorization`).
-    if presented.len() != expected.len() {
-        return false;
-    }
-    presented.as_bytes().ct_eq(expected.as_bytes()).into()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::backend::{DaemonBackend, DaemonBackendOptions};
-
-    fn server(token: Option<&str>) -> DaemonHttpServer {
-        DaemonHttpServer::new(DaemonHttpServerOptions {
-            host: "127.0.0.1".to_owned(),
-            port: 0,
-            token: token.map(str::to_owned),
-            backend: DaemonBackend::new(DaemonBackendOptions::default()),
-            ..DaemonHttpServerOptions::default()
-        })
-        .unwrap()
-    }
-
-    fn client() -> reqwest::Client {
-        reqwest::Client::new()
-    }
-
-    #[test]
-    fn rejects_non_loopback_listen() {
-        assert!(matches!(
-            DaemonHttpServer::new(DaemonHttpServerOptions {
-                host: "0.0.0.0".to_owned(),
-                port: 0,
-                token: None,
-                backend: DaemonBackend::new(DaemonBackendOptions::default()),
-                ..DaemonHttpServerOptions::default()
-            }),
-            Err(DaemonError::LoopbackRequired { .. })
-        ));
-    }
-
-    #[test]
-    fn host_and_origin_guards() {
-        use axum::http::HeaderValue;
-        let loopback = HeaderValue::from_static("127.0.0.1:7999");
-        let remote = HeaderValue::from_static("example.com");
-        assert!(valid_host(Some(&loopback)));
-        assert!(!valid_host(Some(&remote)));
-        assert!(!valid_host(None));
-        assert!(valid_origin(None));
-        assert!(valid_origin(Some(&HeaderValue::from_static(
-            "http://127.0.0.1:3000"
-        ))));
-        assert!(!valid_origin(Some(&HeaderValue::from_static(
-            "http://example.com"
-        ))));
-        assert!(!valid_origin(Some(&HeaderValue::from_static(
-            "https://127.0.0.1:3000"
-        ))));
-        assert!(valid_token(None, None));
-        assert!(!valid_token(None, Some("secret")));
-        assert!(valid_token(
-            Some(&HeaderValue::from_static("Bearer secret")),
-            Some("secret")
-        ));
-        assert!(!valid_token(
-            Some(&HeaderValue::from_static("Bearer wrong")),
-            Some("secret")
-        ));
-        assert!(!valid_token(
-            Some(&HeaderValue::from_static("Bearer secert")),
-            Some("secret")
-        ));
-        assert!(!valid_token(
-            Some(&HeaderValue::from_static("Bearer sec")),
-            Some("secret")
-        ));
-    }
-
-    #[tokio::test]
-    async fn healthz_is_public_and_shutdown_needs_token() {
-        let server = server(Some(&"t".repeat(32)));
-        let address = server.start().await.unwrap();
-        let base = format!("http://{address}");
-        let health: Value = client()
-            .get(format!("{base}/healthz"))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        assert_eq!(health, json!({ "status": "ok" }));
-        // No token: 401.
-        let denied = client()
-            .post(format!("{base}/control/shutdown"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
-        // Wrong token: 401.
-        let denied = client()
-            .post(format!("{base}/control/shutdown"))
-            .header("authorization", "Bearer wrong")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
-        server.close().await;
-    }
-
-    #[tokio::test]
-    async fn oversized_mcp_bodies_are_rejected() {
-        let server = server(None);
-        let address = server.start().await.unwrap();
-        let base = format!("http://{address}");
-        let big = vec![b'x'; MAX_REQUEST_BYTES + 1];
-        let response = client()
-            .post(format!("{base}/mcp"))
-            .header("content-type", "application/json")
-            .body(big)
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
-        // Small invalid JSON is a 400, proving the route is otherwise live.
-        let response = client()
-            .post(format!("{base}/mcp"))
-            .header("content-type", "application/json")
-            .body("not json")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        server.close().await;
-    }
-
-    #[tokio::test]
-    async fn shutdown_stops_the_server() {
-        let server = server(None);
-        let address = server.start().await.unwrap();
-        let base = format!("http://{address}");
-        let accepted = client()
-            .post(format!("{base}/control/shutdown"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(accepted.status(), StatusCode::ACCEPTED);
-        server.close().await;
-        assert!(server.bound_address().is_none());
-    }
 }
