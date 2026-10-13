@@ -8,7 +8,8 @@ use std::fmt::Write as _;
 use zg_core::service::types::{ContentStatus, ContextItem, ZvecGrepContextResult};
 use zg_core::types::Content;
 
-use super::context_shared::empty_detail_lines;
+use super::context_shared::{empty_detail_lines, preview_window};
+use crate::cli::PreviewMode;
 use super::range::range_label;
 use super::text::{format_score, one_line, truncate};
 
@@ -17,7 +18,7 @@ use super::text::{format_score, one_line, truncate};
 /// Ranked <file:range> headers with score/provenance, then content
 /// previews; empty results name the query and the reason.
 #[must_use]
-pub fn format_context_agent(result: &ZvecGrepContextResult) -> String {
+pub fn format_context_agent(result: &ZvecGrepContextResult, preview: PreviewMode) -> String {
     let mut lines = Vec::new();
     if result.items.is_empty() {
         lines.push(format!("No results for \"{}\".", result.query));
@@ -33,7 +34,7 @@ pub fn format_context_agent(result: &ZvecGrepContextResult) -> String {
     for item in &result.items {
         lines.push(String::new());
         lines.push(agent_item_header(item));
-        lines.extend(agent_item_body(item));
+        lines.extend(agent_item_body(item, preview));
     }
     lines.join("\n")
 }
@@ -61,12 +62,12 @@ fn agent_item_header(item: &ContextItem) -> String {
     header
 }
 
-fn agent_item_body(item: &ContextItem) -> Vec<String> {
+fn agent_item_body(item: &ContextItem, preview: PreviewMode) -> Vec<String> {
     let mut lines = Vec::new();
     if let Some(symbol) = agent_symbol_line(item) {
         lines.push(symbol);
     }
-    lines.extend(agent_preview_lines(item));
+    lines.extend(agent_preview_lines(item, preview));
     lines
 }
 
@@ -76,12 +77,16 @@ fn agent_symbol_line(item: &ContextItem) -> Option<String> {
     Some(format!("symbol: {}", one_line(&debug)))
 }
 
-fn agent_preview_lines(item: &ContextItem) -> Vec<String> {
+fn agent_preview_lines(item: &ContextItem, preview: PreviewMode) -> Vec<String> {
+    let (max_lines, max_chars) = preview_window(preview);
+    if max_lines == 0 {
+        return Vec::new();
+    }
     match &item.content {
         Content::Text { text } => text
             .lines()
-            .take(10)
-            .map(|line| truncate(line.trim_end(), 160))
+            .take(max_lines)
+            .map(|line| truncate(line.trim_end(), max_chars))
             .collect(),
         Content::Image { .. } => vec!["[image content]".to_owned()],
     }

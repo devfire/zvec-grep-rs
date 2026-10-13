@@ -5,6 +5,19 @@
 
 use zg_core::service::types::{ContextCoverage, ContextSource, ZvecGrepContextResult};
 
+use crate::cli::PreviewMode;
+
+/// `(max lines, max chars per line)` for a preview mode: `none` renders no
+/// content lines, `short` a small window, `full` the historical window.
+#[must_use]
+pub(crate) fn preview_window(preview: PreviewMode) -> (usize, usize) {
+    match preview {
+        PreviewMode::None => (0, 0),
+        PreviewMode::Short => (3, 80),
+        PreviewMode::Full => (10, 160),
+    }
+}
+
 /// Empty-result detail lines: the engine reason plus the `--rg` fallback tip.
 pub(crate) fn empty_detail_lines(result: &ZvecGrepContextResult) -> Vec<String> {
     let mut lines = Vec::new();

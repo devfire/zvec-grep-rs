@@ -16,6 +16,7 @@ use super::progress::{
 use super::range::range_label;
 use super::text::{format_score, one_line, truncate};
 use super::workspace::{WorkspaceState, format_workspace_info, workspace_state};
+use crate::cli::PreviewMode;
 use crate::error::CliError;
 use zg_core::ids::EntityId;
 use zg_core::service::types::{
@@ -73,7 +74,7 @@ fn result() -> ZvecGrepContextResult {
 
 #[test]
 fn agent_golden() {
-    let text = format_context_agent(&result());
+    let text = format_context_agent(&result(), PreviewMode::Full);
     assert!(text.contains("# 1 result for \"alpha\""), "{text}");
     assert!(
         text.contains("## 1. a.rs:1-3 (score 0.5000, via vector)"),
@@ -86,17 +87,35 @@ fn agent_golden() {
 fn agent_empty_names_the_query() {
     let mut empty = result();
     empty.items.clear();
-    let text = format_context_agent(&empty);
+    let text = format_context_agent(&empty, PreviewMode::Full);
     assert!(text.contains("No results for \"alpha\"."), "{text}");
     assert!(text.contains("--rg"), "{text}");
 }
 
 #[test]
 fn human_golden_without_color() {
-    let text = format_context_human(&result(), false);
+    let text = format_context_human(&result(), false, PreviewMode::Full);
     assert!(text.contains("query: alpha"), "{text}");
     assert!(text.contains("file: a.rs:1-3"), "{text}");
     assert!(!text.contains("\x1b["), "{text}");
+}
+
+#[test]
+fn preview_modes_bound_content_lines() {
+    let mut many = result();
+    many.items = vec![item(1, "a.rs", "l1\nl2\nl3\nl4\nl5\n")];
+    let none_agent = format_context_agent(&many, PreviewMode::None);
+    assert!(!none_agent.contains("l1"), "{none_agent}");
+    assert!(none_agent.contains("## 1. a.rs"), "{none_agent}");
+    let none_human = format_context_human(&many, false, PreviewMode::None);
+    assert!(!none_human.contains("l1"), "{none_human}");
+    let short_agent = format_context_agent(&many, PreviewMode::Short);
+    assert!(short_agent.contains("l3"), "{short_agent}");
+    assert!(!short_agent.contains("l4"), "{short_agent}");
+    let short_human = format_context_human(&many, false, PreviewMode::Short);
+    assert!(!short_human.contains("l4"), "{short_human}");
+    let full_agent = format_context_agent(&many, PreviewMode::Full);
+    assert!(full_agent.contains("l5"), "{full_agent}");
 }
 
 #[test]

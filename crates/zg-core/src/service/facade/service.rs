@@ -10,6 +10,7 @@ use crate::lexical::{LexicalSearchOptions, LexicalSearchResult, run_lexical_sear
 use crate::manifest::{WorkspaceManifest, read_workspace_manifest};
 use crate::models::EmbeddingModel;
 use crate::models::catalog::ModelReference;
+use crate::models::embeddings::DeviceKind;
 use crate::paths::to_display_path;
 use crate::service::root::{
     WorkspaceIndexLocation, find_nearest_workspace_index, resolve_zvec_grep_root,
@@ -45,6 +46,8 @@ pub struct CreateZvecGrepOptions {
     pub endpoint: Option<String>,
     /// Local model cache directory override.
     pub model_cache_dir: Option<PathBuf>,
+    /// Device placement for local models (`None` = automatic).
+    pub device: Option<DeviceKind>,
     /// Index storage directory override, winning over
     /// `$ZVEC_GREP_INDEX_LOCATION` and the default in-tree home. Per-call
     /// `index_location` fields win over this binding.
@@ -69,6 +72,7 @@ pub struct ZvecGrepService {
     pub(super) api_key: Option<String>,
     pub(super) endpoint: Option<String>,
     pub(super) model_cache_dir: Option<PathBuf>,
+    pub(super) device: Option<DeviceKind>,
     pub(super) index_location: Option<PathBuf>,
 }
 
@@ -88,6 +92,7 @@ impl ZvecGrepService {
             api_key: options.api_key,
             endpoint: options.endpoint,
             model_cache_dir: options.model_cache_dir,
+            device: options.device,
             index_location: options.index_location,
         }
     }
@@ -182,6 +187,7 @@ impl std::fmt::Debug for ZvecGrepService {
             .field("api_key", &self.api_key.as_deref().map(|_| "[REDACTED]"))
             .field("endpoint", &self.endpoint)
             .field("model_cache_dir", &self.model_cache_dir)
+            .field("device", &self.device)
             .field("index_location", &self.index_location)
             .finish()
     }

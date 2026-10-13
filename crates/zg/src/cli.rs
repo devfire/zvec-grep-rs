@@ -47,7 +47,8 @@ pub use status::StatusArgs;
 pub use translate::translate_argv;
 pub use validate::validate;
 pub use values::{
-    ClientModeArg, ColorMode, DeviceArg, McpToolsetArg, McpTransportArg, RefreshMode, SymbolType,
+    ClientModeArg, ColorMode, DeviceArg, McpToolsetArg, McpTransportArg, PreviewMode, RefreshMode,
+    SymbolType,
 };
 
 use clap::{Parser, Subcommand};

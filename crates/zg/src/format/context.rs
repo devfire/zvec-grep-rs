@@ -10,6 +10,7 @@ use super::color::Color;
 use super::context_agent::format_context_agent;
 use super::context_human::format_context_human;
 use super::context_shared::empty_detail_lines;
+use crate::cli::PreviewMode;
 
 /// Output layout for [`print_context_result`]: `--human` selects `Human`.
 /// A distinct type (not `bool`) so the layout flag cannot be transposed
@@ -31,11 +32,16 @@ impl From<bool> for Rendering {
 
 /// Prints the CLI query layout: [`Rendering::Human`] for `--human`,
 /// [`Rendering::Agent`] otherwise.
-pub fn print_context_result(result: &ZvecGrepContextResult, rendering: Rendering, color: Color) {
+pub fn print_context_result(
+    result: &ZvecGrepContextResult,
+    rendering: Rendering,
+    color: Color,
+    preview: PreviewMode,
+) {
     if rendering == Rendering::Human {
-        println!("{}", format_context_human(result, color.enabled()));
+        println!("{}", format_context_human(result, color.enabled(), preview));
     } else {
-        println!("{}", format_context_agent(result));
+        println!("{}", format_context_agent(result, preview));
     }
 }
 

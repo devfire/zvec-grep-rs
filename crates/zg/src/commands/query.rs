@@ -3,7 +3,7 @@
 use serde_json::json;
 
 use zg_core::authorization::{PlanSearchInput, plan_remote_search_authorization};
-use zg_core::models::embeddings::{CreateEmbeddingModelOptions, DeviceKind};
+use zg_core::models::embeddings::CreateEmbeddingModelOptions;
 use zg_core::models::factory::create_embedding_model;
 use zg_core::service::facade::create_zvec_grep;
 use zg_core::service::types::{ContextSource, ZvecGrepContextOptions};
@@ -12,10 +12,10 @@ use zg_core::types::{CodeSymbolType, SearchPlanRoute, SearchPlanRouteMode, UnixM
 use super::authz::{SearchPermit, authorize_plan};
 use super::catalog::catalog_reference_for;
 use super::support::{
-    absolute_cwd, cancel_flag, map_modified_time, map_symbol_types, server_available,
-    service_options,
+    absolute_cwd, cancel_flag, map_device_kind, map_modified_time, map_symbol_types,
+    server_available, service_options,
 };
-use crate::cli::{QueryArgs, RefreshMode};
+use crate::cli::{PreviewMode, QueryArgs, RefreshMode};
 use crate::client::{
     DaemonClient, ServerSearchBody, parse_server_search_response, resolve_client_mode,
     resolve_direct_search_policy, resolve_server_search_policy, resolve_server_url, route_by_mode,
@@ -184,7 +184,12 @@ async fn run_query_direct(args: &QueryArgs, queries: &[String]) -> Result<(), Cl
         let fallback = direct_context_options(args, queries, true)?;
         result = service.context(&fallback)?;
     }
-    print_context_result(&result, Rendering::from(args.human), color);
+    print_context_result(
+        &result,
+        Rendering::from(args.human),
+        color,
+        args.preview.unwrap_or(PreviewMode::Full),
+    );
     print_context_warnings(&result);
     if result.source == ContextSource::Index && !result.items.is_empty() && args.debug {
         eprintln!(
@@ -233,7 +238,7 @@ async fn plan_search_permit(
             api_key,
             endpoint: None,
             model_cache_dir: args.model_cache.clone(),
-            device: DeviceKind::Auto,
+            device: args.device.map(map_device_kind).unwrap_or_default(),
         },
     )?;
     let plan = plan_remote_search_authorization(&PlanSearchInput {

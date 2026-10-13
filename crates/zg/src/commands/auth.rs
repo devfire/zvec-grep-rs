@@ -6,12 +6,12 @@ use zg_core::authorization::{
     RemoteEmbeddingAuthorizationManager, RemoteEmbeddingAuthorizationStore, RemoteEmbeddingScope,
     create_remote_embedding_target,
 };
-use zg_core::models::embeddings::{CreateEmbeddingModelOptions, DeviceKind};
+use zg_core::models::embeddings::CreateEmbeddingModelOptions;
 use zg_core::models::factory::create_embedding_model;
 use zg_core::service::facade::create_zvec_grep;
 
 use super::catalog::{catalog_entry, catalog_identity, catalog_reference, catalog_reference_for};
-use super::support::{absolute_path, service_options, single_root_or_cwd};
+use super::support::{absolute_path, map_device_kind, service_options, single_root_or_cwd};
 use crate::cli::{AuthAction, AuthArgs, AuthGrantArgs, AuthRootArgs};
 use crate::error::CliError;
 
@@ -100,7 +100,7 @@ fn run_auth_grant(args: &AuthArgs, grant: &AuthGrantArgs) -> Result<(), CliError
             api_key: args.api_key.clone(),
             endpoint: args.endpoint.clone(),
             model_cache_dir: args.model_cache.clone(),
-            device: DeviceKind::Auto,
+            device: args.device.map(map_device_kind).unwrap_or_default(),
         },
     )?;
     let endpoint = model_info.info().endpoint.clone().ok_or_else(|| {

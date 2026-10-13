@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use zg_core::config::EmbeddingDevice;
 use zg_core::models::catalog::ModelReference;
+use zg_core::models::embeddings::DeviceKind;
 use zg_core::service::facade::CreateZvecGrepOptions;
 use zg_core::types::{CodeSymbolType, UnixMillis};
 
@@ -24,7 +25,6 @@ pub(crate) fn service_options(
     device: Option<DeviceArg>,
     index_location: Option<PathBuf>,
 ) -> CreateZvecGrepOptions {
-    let _ = device;
     CreateZvecGrepOptions {
         root,
         embedding: embedding.map(ModelReference::new),
@@ -32,6 +32,7 @@ pub(crate) fn service_options(
         api_key,
         endpoint,
         model_cache_dir: model_cache,
+        device: device.map(map_device_kind),
         index_location,
     }
 }
@@ -45,6 +46,24 @@ pub(crate) fn map_device(device: DeviceArg) -> EmbeddingDevice {
         DeviceArg::Vulkan => EmbeddingDevice::Vulkan,
         DeviceArg::Cuda => EmbeddingDevice::Cuda,
     }
+}
+
+/// Maps a CLI device flag onto the engine device kind.
+#[must_use]
+pub(crate) fn map_device_kind(device: DeviceArg) -> DeviceKind {
+    match device {
+        DeviceArg::Auto => DeviceKind::Auto,
+        DeviceArg::Cpu => DeviceKind::Cpu,
+        DeviceArg::Metal => DeviceKind::Metal,
+        DeviceArg::Vulkan => DeviceKind::Vulkan,
+        DeviceArg::Cuda => DeviceKind::Cuda,
+    }
+}
+
+/// Wire name for a CLI device flag (daemon spawn argv).
+#[must_use]
+pub(crate) fn device_wire_name(device: DeviceArg) -> &'static str {
+    map_device_kind(device).as_str()
 }
 
 /// Maps CLI symbol types onto indexed symbol types.
@@ -141,4 +160,17 @@ pub(crate) fn cancel_flag() -> CancelLatch {
         }
     });
     latch
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_options_carries_device() {
+        let options = service_options(None, None, None, None, None, Some(DeviceArg::Cpu), None);
+        assert_eq!(options.device, Some(DeviceKind::Cpu));
+        let unset = service_options(None, None, None, None, None, None, None);
+        assert_eq!(unset.device, None);
+    }
 }

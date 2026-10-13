@@ -1,21 +1,25 @@
 //! Human renderer: labeled fields with optional ANSI color.
 //!
-//! The single-variant `PreviewLines` switch from the monolith is gone:
-//! the window was always `Full` and the parameter ignored, so the preview
-//! helper takes just the item and the color flag.
+//! Preview width comes from `--preview` via
+//! [`preview_window`](super::context_shared::preview_window).
 
 use zg_core::service::types::{ContextItem, ZvecGrepContextResult};
 use zg_core::types::Content;
 
 use super::color::{DIM, RESET};
-use super::context_shared::{empty_detail_lines, source_label};
+use super::context_shared::{empty_detail_lines, preview_window, source_label};
+use crate::cli::PreviewMode;
 use super::fields::human_field;
 use super::range::range_label;
 use super::text::format_score;
 
 /// Renders a context result for humans: labeled fields, optional color.
 #[must_use]
-pub fn format_context_human(result: &ZvecGrepContextResult, color: bool) -> String {
+pub fn format_context_human(
+    result: &ZvecGrepContextResult,
+    color: bool,
+    preview: PreviewMode,
+) -> String {
     let mut lines = Vec::new();
     if result.items.is_empty() {
         lines.push(human_field("query", &result.query, color));
@@ -40,13 +44,17 @@ pub fn format_context_human(result: &ZvecGrepContextResult, color: bool) -> Stri
         if let Some(score) = item.score {
             lines.push(human_field("score", &format_score(score), color));
         }
-        lines.extend(human_preview_lines(item, color));
+        lines.extend(human_preview_lines(item, color, preview));
     }
     lines.join("\n")
 }
 
-/// Dimmed content preview (up to 10 lines).
-fn human_preview_lines(item: &ContextItem, color: bool) -> Vec<String> {
+/// Dimmed content preview, bounded by the preview mode.
+fn human_preview_lines(item: &ContextItem, color: bool, preview: PreviewMode) -> Vec<String> {
+    let (max_lines, _) = preview_window(preview);
+    if max_lines == 0 {
+        return Vec::new();
+    }
     let paint = |line: &str| {
         if color {
             format!("{DIM}{line}{RESET}")
@@ -55,7 +63,7 @@ fn human_preview_lines(item: &ContextItem, color: bool) -> Vec<String> {
         }
     };
     match &item.content {
-        Content::Text { text } => text.lines().take(10).map(paint).collect(),
+        Content::Text { text } => text.lines().take(max_lines).map(paint).collect(),
         Content::Image { .. } => vec![paint("[image content]")],
     }
 }

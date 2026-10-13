@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use zg_core::models::catalog::ModelReference;
 use zg_server::backend::{DaemonBackend, DaemonBackendOptions, ServiceConfig};
 
+use super::support::{device_wire_name, map_device_kind};
 use crate::cli::{McpToolsetArg, ServerAction, ServerArgs, ServerStatusArgs};
 use crate::error::CliError;
 use crate::format::print_control_status;
@@ -61,6 +62,7 @@ fn daemon_service(args: &ServerArgs) -> ServiceConfig {
         api_key: args.api_key.clone(),
         endpoint: args.endpoint.clone(),
         model_cache_dir: args.model_cache.clone(),
+        device: args.device.map(map_device_kind).unwrap_or_default(),
         model_override: None,
     }
 }
@@ -82,11 +84,40 @@ async fn run_server_on(args: ServerArgs) -> Result<(), CliError> {
     let home = daemon_home(&args);
     let status = zg_server::server_controller::server_status(home.as_deref()).await;
     if status.ready {
+        if has_model_options(&args) {
+            return Err(CliError::usage(
+                "zvec-grep server is already running; --embedding/--api-key/--endpoint/--model-cache/--device cannot be applied without restarting it (run `zg server off` first)",
+            ));
+        }
         print_control_status(&status);
         return Ok(());
     }
     let program =
         std::env::current_exe().map_err(|error| CliError::io(Path::new("<exe>"), error))?;
+    let spawn = server_on_spawn_args(&args);
+    let status = zg_server::server_controller::start_server(
+        &program.to_string_lossy(),
+        &spawn,
+        home.as_deref(),
+        std::time::Duration::from_secs(30),
+    )
+    .await?;
+    print_control_status(&status);
+    Ok(())
+}
+
+/// True when any model-selection flag was passed to `server on`.
+fn has_model_options(args: &ServerArgs) -> bool {
+    args.embedding.is_some()
+        || args.api_key.is_some()
+        || args.endpoint.is_some()
+        || args.model_cache.is_some()
+        || args.device.is_some()
+}
+
+/// Child argv for `server run`: every `on` flag the daemon consumes is
+/// forwarded, so the spawned daemon runs with the requested model setup.
+fn server_on_spawn_args(args: &ServerArgs) -> Vec<String> {
     let mut spawn = vec!["server".to_owned(), "run".to_owned()];
     if let Some(listen) = &args.listen {
         spawn.push("--listen".to_owned());
@@ -110,15 +141,27 @@ async fn run_server_on(args: ServerArgs) -> Result<(), CliError> {
         spawn.push("--home".to_owned());
         spawn.push(home.to_string_lossy().into_owned());
     }
-    let status = zg_server::server_controller::start_server(
-        &program.to_string_lossy(),
-        &spawn,
-        home.as_deref(),
-        std::time::Duration::from_secs(30),
-    )
-    .await?;
-    print_control_status(&status);
-    Ok(())
+    if let Some(embedding) = &args.embedding {
+        spawn.push("--embedding".to_owned());
+        spawn.push(embedding.clone());
+    }
+    if let Some(api_key) = &args.api_key {
+        spawn.push("--api-key".to_owned());
+        spawn.push(api_key.clone());
+    }
+    if let Some(endpoint) = &args.endpoint {
+        spawn.push("--endpoint".to_owned());
+        spawn.push(endpoint.clone());
+    }
+    if let Some(model_cache) = &args.model_cache {
+        spawn.push("--model-cache".to_owned());
+        spawn.push(model_cache.to_string_lossy().into_owned());
+    }
+    if let Some(device) = args.device {
+        spawn.push("--device".to_owned());
+        spawn.push(device_wire_name(device).to_owned());
+    }
+    spawn
 }
 
 async fn run_server_off(args: ServerArgs) -> Result<(), CliError> {
@@ -206,4 +249,43 @@ async fn run_server_stdio(args: ServerArgs) -> Result<(), CliError> {
     .await
     .map_err(|error| CliError::daemon_unavailable(error.to_string()))?;
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::cli::DeviceArg;
+
+    fn args() -> ServerArgs {
+        ServerArgs {
+            action: Some(ServerAction::On),
+            stdio: false,
+            listen: None,
+            token_file: None,
+            mcp_toolset: None,
+            home: None,
+            embedding: Some("qwen/text-embedding-v4".to_owned()),
+            model_cache: Some(PathBuf::from("/tmp/cache")),
+            device: Some(DeviceArg::Cpu),
+            api_key: Some("secret".to_owned()),
+            endpoint: Some("https://example.test/v1".to_owned()),
+        }
+    }
+
+    #[test]
+    fn server_on_forwards_model_options() {
+        let spawn = server_on_spawn_args(&args());
+        for (flag, value) in [
+            ("--embedding", "qwen/text-embedding-v4"),
+            ("--api-key", "secret"),
+            ("--endpoint", "https://example.test/v1"),
+            ("--model-cache", "/tmp/cache"),
+            ("--device", "cpu"),
+        ] {
+            let position = spawn.iter().position(|item| item == flag).unwrap();
+            assert_eq!(spawn.get(position + 1).map(String::as_str), Some(value));
+        }
+        assert!(has_model_options(&args()));
+    }
 }

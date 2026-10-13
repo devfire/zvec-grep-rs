@@ -11,7 +11,7 @@ use zg_core::service::facade::ZvecGrepService;
 use zg_core::service::types::{ContextDiagnostics, ContextSource, ZvecGrepContextResult};
 
 use super::support::service_options;
-use crate::cli::{QueryArgs, parse_byte_size, parse_modified_time};
+use crate::cli::{PreviewMode, QueryArgs, parse_byte_size, parse_modified_time};
 use crate::error::CliError;
 use crate::format::{Rendering, print_context_result, use_color};
 
@@ -110,7 +110,7 @@ pub(crate) fn run_rg_direct(args: &QueryArgs, queries: &[String]) -> Result<(), 
             timings: None,
         },
     };
-    print_context_result(&result, Rendering::from(args.human), color);
+    print_context_result(&result, Rendering::from(args.human), color, PreviewMode::Full);
     if let Some(missing) = searched.diagnostics.missing_paths {
         for path in missing {
             eprintln!("warning: path not found: {path}");

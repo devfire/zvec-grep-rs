@@ -7,7 +7,7 @@ use super::service::ZvecGrepService;
 use crate::error::{EngineError, EngineResult, codes};
 use crate::manifest::WorkspaceManifest;
 use crate::models::catalog::{EmbeddingCatalogEntry, ModelReference};
-use crate::models::embeddings::{CreateEmbeddingModelOptions, DeviceKind};
+use crate::models::embeddings::CreateEmbeddingModelOptions;
 use crate::models::factory::create_embedding_model;
 use crate::models::resolution::{ResolveEmbeddingReferenceOptions, resolve_embedding_reference};
 use crate::models::{EmbeddingModel, EmbeddingModelInfo};
@@ -43,7 +43,7 @@ impl ZvecGrepService {
             api_key: self.api_key.clone(),
             endpoint: self.endpoint.clone(),
             model_cache_dir: self.model_cache_dir.clone(),
-            device: DeviceKind::Auto,
+            device: self.device.unwrap_or_default(),
         };
         create_embedding_model(&reference, &options).map_err(EngineError::from)
     }
