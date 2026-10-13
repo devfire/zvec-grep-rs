@@ -66,7 +66,13 @@ impl ZvecGrepService {
         } else {
             None
         };
-        let existing = if options.rebuild { None } else { existing };
+        // A rebuild wipes storage, not configuration: the prior manifest
+        // still supplies the workspace id, creation time, embedding
+        // runtime, and — via `resolve_root_paths` — the stored root paths
+        // (nested-git policy included) unless the caller replaces or
+        // resets them. Discarding it here made every default-options
+        // rebuild (e.g. the daemon catch-up reconcile) silently revert
+        // the index to a bare default root.
         // #50: incremental runs carry the existing stamp through the
         // pre-run write; only fresh builds run versionless. No `unwrap`:
         // a missing stamp degrades to the fresh-build shape, never a panic.
