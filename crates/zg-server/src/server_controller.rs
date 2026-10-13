@@ -88,10 +88,17 @@ impl DaemonInstanceLock {
     /// three attempts. A live same-host holder fails with
     /// [`DaemonError::AlreadyRunning`].
     ///
+    /// The record is published atomically: a fully written temp file is
+    /// hard-linked into place, so the lock path never holds an empty or
+    /// partial record (#91). A lock that exists but does not parse is
+    /// treated as live (a concurrent acquirer may be mid-publish on an
+    /// older build) and is never removed here.
+    ///
     /// # Errors
     ///
     /// Returns [`DaemonError::AlreadyRunning`] when a live holder owns the lock, or
-    /// [`DaemonError::IndexFailed`] when the lock directory or file cannot be created.
+    /// [`DaemonError::IndexFailed`] when the lock directory or file cannot be created,
+    /// or when an existing lock is unreadable.
     pub async fn acquire(home: Option<&Path>, server_url: &str) -> Result<Self, DaemonError> {
         let dir = daemon_dir(home);
         tokio::fs::create_dir_all(&dir)
@@ -100,39 +107,23 @@ impl DaemonInstanceLock {
                 message: format!("failed to create daemon directory: {error}"),
             })?;
         let path = dir.join("instance.lock");
+        // One identity for the whole attempt sequence: retrying with a
+        // fresh token per attempt would orphan the previous token's claim.
+        let record = InstanceRecordBody {
+            pid: std::process::id(),
+            hostname: machine_name(),
+            instance_token: Uuid::new_v4().to_string(),
+            // Clock-unavailable direction: metadata only — liveness is
+            // PID-based, so a `0` stamp is inert.
+            started_at_ms: UnixMillis::now_ms_or(0),
+            updated_at_ms: UnixMillis::now_ms_or(0),
+            server_url: server_url.to_owned(),
+            ready: false,
+        };
+        let body = record_body(&record);
         for _ in 0..3 {
-            let record = InstanceRecordBody {
-                pid: std::process::id(),
-                hostname: machine_name(),
-                instance_token: Uuid::new_v4().to_string(),
-                // Clock-unavailable direction: metadata only — liveness is
-                // PID-based, so a `0` stamp is inert.
-                started_at_ms: UnixMillis::now_ms_or(0),
-                updated_at_ms: UnixMillis::now_ms_or(0),
-                server_url: server_url.to_owned(),
-                ready: false,
-            };
-            match tokio::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-                .await
-            {
-                Ok(mut file) => {
-                    use tokio::io::AsyncWriteExt;
-                    let body = format!("{}\n", serde_json::to_string(&record).unwrap_or_default());
-                    file.write_all(body.as_bytes()).await.map_err(|error| {
-                        DaemonError::IndexFailed {
-                            message: format!("failed to write instance lock: {error}"),
-                        }
-                    })?;
-                    file.flush()
-                        .await
-                        .map_err(|error| DaemonError::IndexFailed {
-                            message: format!("failed to write instance lock: {error}"),
-                        })?;
-                    drop(file);
-                    chmod_owner_only(&path);
+            match publish_new_lock(&path, &body).await {
+                Ok(()) => {
                     return Ok(Self {
                         path,
                         record,
@@ -146,13 +137,25 @@ impl DaemonInstanceLock {
                     });
                 }
             }
-            if let Some(existing) = read_record(&path).await
-                && existing.hostname == machine_name()
-                && process_alive(existing.pid)
-            {
-                return Err(DaemonError::AlreadyRunning { pid: existing.pid });
+            match read_lock_state(&path).await {
+                LockState::Record(existing)
+                    if existing.hostname == machine_name() && process_alive(existing.pid) =>
+                {
+                    return Err(DaemonError::AlreadyRunning { pid: existing.pid });
+                }
+                LockState::Record(existing) => {
+                    // Stale: remove only if the file still names that exact
+                    // instance (re-read immediately before removal, #91).
+                    remove_lock_if(&path, existing.pid, &existing.instance_token).await;
+                }
+                LockState::Unparseable => {
+                    return Err(DaemonError::IndexFailed {
+                        message: "existing instance lock is unreadable; treating it as held by a live daemon and refusing takeover".to_owned(),
+                    });
+                }
+                // Raced a release/removal: retry the exclusive publish.
+                LockState::Missing => {}
             }
-            let _ = tokio::fs::remove_file(&path).await;
         }
         Err(DaemonError::IndexFailed {
             message: "could not acquire the zvec-grep server instance lock".to_owned(),
@@ -172,13 +175,10 @@ impl DaemonInstanceLock {
                     tokio::time::sleep(LOCK_HEARTBEAT_INTERVAL).await;
                     // Same direction: heartbeat stamp is metadata; PID decides.
                     record.updated_at_ms = UnixMillis::now_ms_or(0);
-                    if read_record(&path).await.is_some_and(|current| {
-                        current.instance_token == record.instance_token && current.pid == record.pid
-                    }) {
-                        let body =
-                            format!("{}\n", serde_json::to_string(&record).unwrap_or_default());
-                        let _ = tokio::fs::write(&path, body).await;
-                    } else {
+                    // Atomic republish only while the lock still names this
+                    // instance; a replaced/unreadable lock ends the heartbeat
+                    // instead of being clobbered (#91).
+                    if !publish_owned_lock(&path, &record).await {
                         return;
                     }
                 }
@@ -203,27 +203,13 @@ impl DaemonInstanceLock {
         if let Some(heartbeat) = self.heartbeat.take() {
             heartbeat.abort();
         }
-        if read_record(&self.path).await.is_some_and(|current| {
-            current.instance_token == self.record.instance_token && current.pid == self.record.pid
-        }) {
-            let _ = tokio::fs::remove_file(&self.path).await;
-        }
+        remove_lock_if(&self.path, self.record.pid, &self.record.instance_token).await;
     }
 
     async fn write(&mut self) {
         // Same direction: heartbeat stamp is metadata; PID decides.
         self.record.updated_at_ms = UnixMillis::now_ms_or(0);
-        let current = read_record(&self.path).await;
-        if current.is_some_and(|current| {
-            current.instance_token != self.record.instance_token || current.pid != self.record.pid
-        }) {
-            return;
-        }
-        let body = format!(
-            "{}\n",
-            serde_json::to_string(&self.record).unwrap_or_default()
-        );
-        let _ = tokio::fs::write(&self.path, body).await;
+        let _ = publish_owned_lock(&self.path, &self.record).await;
     }
 }
 
@@ -372,11 +358,26 @@ fn lock_path(home: Option<&Path>) -> PathBuf {
     daemon_dir(home).join("instance.lock")
 }
 
-/// Lenient lock read: required `pid/hostname/server_url`, everything else
-/// defaulted, unknown fields ignored (TS-written locks stay readable).
-async fn read_record(path: &Path) -> Option<DaemonInstanceRecord> {
-    let body = tokio::fs::read_to_string(path).await.ok()?;
-    let value: serde_json::Value = serde_json::from_str(&body).ok()?;
+/// On-disk lock state. `Unparseable` (exists but not a readable record)
+/// must stay distinguishable from `Missing`: a mid-publish or corrupt
+/// lock is treated as held, never as stale/removable (#91).
+enum LockState {
+    Missing,
+    Unparseable,
+    Record(DaemonInstanceRecord),
+}
+
+async fn read_lock_state(path: &Path) -> LockState {
+    let body = match tokio::fs::read_to_string(path).await {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return LockState::Missing,
+        Err(_) => return LockState::Unparseable,
+    };
+    parse_record(&body).map_or(LockState::Unparseable, LockState::Record)
+}
+
+fn parse_record(body: &str) -> Option<DaemonInstanceRecord> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
     Some(DaemonInstanceRecord {
         pid: u32::try_from(value.get("pid")?.as_u64()?).ok()?,
         hostname: value.get("hostname")?.as_str()?.to_owned(),
@@ -387,6 +388,101 @@ async fn read_record(path: &Path) -> Option<DaemonInstanceRecord> {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false),
     })
+}
+
+fn record_body(record: &InstanceRecordBody) -> String {
+    format!("{}\n", serde_json::to_string(record).unwrap_or_default())
+}
+
+/// Writes `body` to a fresh unique temp file next to `path` (mode `0600`
+/// before it becomes visible at any lock path) and returns its path.
+async fn write_temp_lock(path: &Path, body: &str) -> Result<PathBuf, std::io::Error> {
+    use tokio::io::AsyncWriteExt;
+    let dir = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "lock path has no parent")
+    })?;
+    let temp = dir.join(format!(
+        "instance.lock.tmp-{}-{}",
+        std::process::id(),
+        Uuid::new_v4()
+    ));
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .await?;
+    if let Err(error) = file.write_all(body.as_bytes()).await {
+        let _ = tokio::fs::remove_file(&temp).await;
+        return Err(error);
+    }
+    if let Err(error) = file.flush().await {
+        let _ = tokio::fs::remove_file(&temp).await;
+        return Err(error);
+    }
+    drop(file);
+    chmod_owner_only(&temp);
+    Ok(temp)
+}
+
+/// Exclusive atomic publish: hard-links a fully written temp file to
+/// `path`, failing with `AlreadyExists` if any lock is already there.
+/// The lock path therefore never exposes an empty/partial record (#91).
+async fn publish_new_lock(path: &Path, body: &str) -> Result<(), std::io::Error> {
+    let temp = write_temp_lock(path, body).await?;
+    let result = tokio::fs::hard_link(&temp, path).await;
+    let _ = tokio::fs::remove_file(&temp).await;
+    result
+}
+
+/// Atomic replace: renames a fully written temp file over `path`, so
+/// readers only ever see the old or the new complete record (#91).
+async fn publish_replace_lock(path: &Path, body: &str) -> Result<(), std::io::Error> {
+    let temp = write_temp_lock(path, body).await?;
+    let result = tokio::fs::rename(&temp, path).await;
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&temp).await;
+    }
+    result
+}
+
+/// Atomically republishes `record` iff the lock still names the same
+/// instance (PID + token). Returns `false` — publishing nothing — when
+/// the lock was replaced or is unreadable; a vanished lock is recreated
+/// exclusively, never by clobbering a concurrent winner (#91).
+async fn publish_owned_lock(path: &Path, record: &InstanceRecordBody) -> bool {
+    let body = record_body(record);
+    match read_lock_state(path).await {
+        LockState::Record(current)
+            if current.pid == record.pid && current.instance_token == record.instance_token =>
+        {
+            publish_replace_lock(path, &body).await.is_ok()
+        }
+        LockState::Missing => publish_new_lock(path, &body).await.is_ok(),
+        LockState::Record(_) | LockState::Unparseable => false,
+    }
+}
+
+/// Removes the lock only if it still names `(pid, instance_token)`.
+/// The record is re-read immediately before the removal (#91); a file
+/// replaced in the meantime (or unreadable) is left untouched.
+async fn remove_lock_if(path: &Path, pid: u32, instance_token: &str) {
+    if read_record(path)
+        .await
+        .is_some_and(|current| current.pid == pid && current.instance_token == instance_token)
+    {
+        let _ = tokio::fs::remove_file(path).await;
+    }
+}
+
+/// Lenient lock read: required `pid/hostname/server_url`, everything else
+/// defaulted, unknown fields ignored (TS-written locks stay readable).
+/// Missing and unreadable locks both yield `None`; callers that remove
+/// or take over the lock must use [`read_lock_state`] instead (#91).
+async fn read_record(path: &Path) -> Option<DaemonInstanceRecord> {
+    match read_lock_state(path).await {
+        LockState::Record(record) => Some(record),
+        LockState::Missing | LockState::Unparseable => None,
+    }
 }
 
 fn machine_name() -> String {
@@ -453,12 +549,7 @@ async fn wait_for_exit(pid: u32, timeout: Duration) -> bool {
 }
 
 async fn remove_record_if(home: Option<&Path>, stopped: &DaemonInstanceRecord) {
-    let path = lock_path(home);
-    if read_record(&path).await.is_some_and(|current| {
-        current.pid == stopped.pid && current.instance_token == stopped.instance_token
-    }) {
-        let _ = tokio::fs::remove_file(&path).await;
-    }
+    remove_lock_if(&lock_path(home), stopped.pid, &stopped.instance_token).await;
 }
 
 /// Re-reads the lock and confirms it still names the same instance
@@ -608,6 +699,88 @@ mod tests {
             .unwrap();
         assert_ne!(lock.record().instance_token, "stale");
         lock.release().await;
+    }
+
+    /// Regression (#91): a lock file that exists but does not parse yet
+    /// (a concurrent acquirer caught between create and write, or a
+    /// heartbeat caught mid-truncate) is a live holder, not a stale one.
+    /// It must not be removed or taken over.
+    #[tokio::test]
+    async fn unparseable_lock_is_treated_as_live() {
+        for contents in ["", "not json\n"] {
+            let home = home();
+            tokio::fs::write(home.path().join("instance.lock"), contents)
+                .await
+                .unwrap();
+            let result =
+                DaemonInstanceLock::acquire(Some(home.path()), "http://127.0.0.1:18099").await;
+            assert!(result.is_err(), "unparseable lock must refuse acquire");
+            let kept = tokio::fs::read_to_string(home.path().join("instance.lock"))
+                .await
+                .unwrap();
+            assert_eq!(kept, contents, "unparseable lock must be left in place");
+        }
+    }
+
+    /// Regression (#91): an update (heartbeat/`mark_ready` write) must not
+    /// overwrite a lock that no longer parses as ours; with non-atomic
+    /// writes that window clobbered the concurrent holder's record.
+    #[tokio::test]
+    async fn write_does_not_overwrite_unparseable_lock() {
+        let home = home();
+        let mut lock = DaemonInstanceLock::acquire(Some(home.path()), "http://127.0.0.1:18099")
+            .await
+            .unwrap();
+        tokio::fs::write(home.path().join("instance.lock"), "")
+            .await
+            .unwrap();
+        lock.write().await;
+        let kept = tokio::fs::read_to_string(home.path().join("instance.lock"))
+            .await
+            .unwrap();
+        assert_eq!(kept, "", "update must not clobber an unparseable lock");
+        // The file no longer names us, so release must also leave it alone.
+        lock.release().await;
+        assert!(home.path().join("instance.lock").exists());
+        tokio::fs::remove_file(home.path().join("instance.lock"))
+            .await
+            .unwrap();
+    }
+
+    /// Regression (#91): exactly one of many concurrent acquirers wins,
+    /// and the published lock is complete (parseable) from the start.
+    #[tokio::test]
+    async fn concurrent_acquirers_have_a_single_winner() {
+        let home = home();
+        let dir = home.path().to_owned();
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let dir = dir.clone();
+            handles.push(tokio::spawn(async move {
+                DaemonInstanceLock::acquire(Some(dir.as_path()), "http://127.0.0.1:18099").await
+            }));
+        }
+        let mut winners = Vec::new();
+        for handle in handles {
+            if let Ok(lock) = handle.await.unwrap() {
+                winners.push(lock);
+            }
+        }
+        assert_eq!(winners.len(), 1, "exactly one acquirer may hold the lock");
+        assert!(
+            read_record(&lock_path(Some(dir.as_path()))).await.is_some(),
+            "published lock must be complete and parseable"
+        );
+        // Publishing must not leave temp files behind.
+        let mut entries = tokio::fs::read_dir(&dir).await.unwrap();
+        let mut names = Vec::new();
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            names.push(entry.file_name().to_string_lossy().into_owned());
+        }
+        assert_eq!(names, ["instance.lock".to_owned()]);
+        for lock in winners {
+            lock.release().await;
+        }
     }
 
     #[cfg(unix)]
