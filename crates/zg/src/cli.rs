@@ -1,11 +1,14 @@
 //! `zg` command surface: clap-derive tree mirroring `cli/args.ts`.
 //!
 //! The TypeScript CLI hand-rolls `parseArgs` over `process.argv`; the port
-//! uses clap derive (see `docs/ts-divergence.md`). Frozen: subcommand
-//! names, flag spellings (`--model-cache`, `--type-not`, `--mcp-toolset`,
-//! …), and every user-facing validation message, which stays byte-identical
-//! to `validateCliShape` / `parseCommand`. Clap owns `--help` rendering
-//! and generic unknown-flag errors instead.
+//! uses clap derive (see `docs/ts-divergence.md`), fronted by the
+//! search-first translation in [`translate`](mod@translate): upstream
+//! `zg <query>` / `zg --index` / `zg --server --stdio` spellings are
+//! rewritten onto the subcommands below before clap sees them. Frozen:
+//! subcommand names, flag spellings (`--model-cache`, `--type-not`,
+//! `--mcp-toolset`, …), and every user-facing validation message, which
+//! stays byte-identical to `validateCliShape` / `parseCommand`. Clap owns
+//! `--help` rendering and generic unknown-flag errors instead.
 //!
 //! Layout: [`Cli`] and [`Command`] live here. Per-command args live in
 //! sibling modules (`query`, `index`, `status`, `integrate`, `config`,
@@ -25,6 +28,7 @@ mod status;
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests;
+mod translate;
 mod validate;
 mod values;
 
@@ -40,6 +44,7 @@ pub use parse::{parse_byte_size, parse_environment_variable, parse_modified_time
 pub use query::QueryArgs;
 pub use server::{ServerAction, ServerArgs, ServerStatusArgs};
 pub use status::StatusArgs;
+pub use translate::translate_argv;
 pub use validate::validate;
 pub use values::{
     ClientModeArg, ColorMode, DeviceArg, McpToolsetArg, McpTransportArg, RefreshMode, SymbolType,
@@ -66,6 +71,8 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Search the workspace index (or exhaustively with `--rg`).
+    /// `search` is the upstream/legacy spelling of the same command.
+    #[command(visible_alias = "search")]
     Query(Box<QueryArgs>),
     /// Create, update, rebuild, or drop the workspace index.
     Index(Box<IndexArgs>),

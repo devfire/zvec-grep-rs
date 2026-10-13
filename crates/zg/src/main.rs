@@ -27,7 +27,14 @@ use crate::error::CliError;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
-    let cli = match Cli::try_parse() {
+    // Upstream search-first spellings (`zg <query>`, `zg --index`,
+    // `zg --server --stdio`, …) are rewritten onto the canonical
+    // subcommands before clap parses; see `cli::translate`.
+    let translated = cli::translate_argv(std::env::args_os().collect());
+    if let Some(warning) = &translated.warning {
+        eprintln!("{warning}");
+    }
+    let cli = match Cli::try_parse_from(translated.argv) {
         Ok(cli) => cli,
         Err(error) => {
             // Clap exits 0 for help/version and 2 for usage errors; the

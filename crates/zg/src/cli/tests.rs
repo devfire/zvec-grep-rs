@@ -1,10 +1,21 @@
 //! CLI shape tests: clap parsing snapshots and `args.ts`-verbatim messages.
 
+use std::ffi::OsString;
+
+use super::translate::TranslatedArgv;
 use super::*;
 use clap::Parser;
 
 fn parse(argv: &[&str]) -> Result<Cli, clap::Error> {
-    Cli::try_parse_from(argv)
+    Cli::try_parse_from(translate_argv(os_argv(argv)).argv)
+}
+
+fn os_argv(argv: &[&str]) -> Vec<OsString> {
+    argv.iter().map(OsString::from).collect()
+}
+
+fn translated(argv: &[&str]) -> TranslatedArgv {
+    translate_argv(os_argv(argv))
 }
 
 #[test]
@@ -197,4 +208,144 @@ fn target_splitting() {
         split_targets(&["claude, codex".to_owned(), "qwen".to_owned()]),
         vec!["claude", "codex", "qwen"]
     );
+}
+
+#[test]
+fn search_first_bare_query_searches() {
+    let translated = translated(&["zg", "hello", "world"]);
+    assert_eq!(translated.warning, None);
+    assert_eq!(translated.argv, os_argv(&["zg", "query", "hello", "world"]));
+    let cli = parse(&["zg", "hello", "world"]).unwrap();
+    let Command::Query(args) = cli.command.unwrap() else {
+        panic!("expected query");
+    };
+    assert_eq!(args.queries, vec!["hello", "world"]);
+}
+
+#[test]
+fn search_first_preserves_flags_after_query() {
+    let cli = parse(&["zg", "hello", "--limit", "5", "--mode", "direct"]).unwrap();
+    let Command::Query(args) = cli.command.unwrap() else {
+        panic!("expected query");
+    };
+    assert_eq!(args.queries, vec!["hello"]);
+    assert_eq!(args.limit, Some(5));
+    assert_eq!(args.mode, Some(ClientModeArg::Direct));
+}
+
+#[test]
+fn flag_index_and_status_route_to_subcommands() {
+    let cli = parse(&["zg", "--index"]).unwrap();
+    assert!(matches!(cli.command, Some(Command::Index(_))));
+    let cli = parse(&["zg", "--index", "some/root", "--rebuild"]).unwrap();
+    let Command::Index(args) = cli.command.unwrap() else {
+        panic!("expected index");
+    };
+    assert_eq!(args.roots.len(), 1);
+    assert!(args.rebuild);
+
+    let cli = parse(&["zg", "--status", "--check-ready"]).unwrap();
+    let Command::Status(args) = cli.command.unwrap() else {
+        panic!("expected status");
+    };
+    assert!(args.check_ready);
+    validate(&Cli {
+        command: Some(Command::Status(args)),
+    })
+    .unwrap();
+}
+
+#[test]
+fn flag_install_config_auth_route_to_subcommands() {
+    let cli = parse(&["zg", "--install", "--target", "claude"]).unwrap();
+    let Command::Install(args) = cli.command.unwrap() else {
+        panic!("expected install");
+    };
+    assert_eq!(args.target, vec!["claude"]);
+
+    let cli = parse(&[
+        "zg",
+        "--config",
+        "provider",
+        "set",
+        "qwen",
+        "--api-key",
+        "secret",
+    ])
+    .unwrap();
+    assert!(matches!(cli.command, Some(Command::Config(_))));
+    validate(&cli).unwrap();
+
+    let cli = parse(&["zg", "--auth", "status"]).unwrap();
+    assert!(matches!(cli.command, Some(Command::Auth(_))));
+    validate(&cli).unwrap();
+}
+
+#[test]
+fn flag_server_stdio_and_status_route_to_server() {
+    // The upstream MCP-config spelling.
+    let cli = parse(&["zg", "--server", "--stdio"]).unwrap();
+    let Command::Server(args) = cli.command.unwrap() else {
+        panic!("expected server");
+    };
+    assert!(args.stdio);
+    assert!(args.action.is_none());
+    validate(&Cli {
+        command: Some(Command::Server(args)),
+    })
+    .unwrap();
+
+    let cli = parse(&["zg", "--server", "status"]).unwrap();
+    let Command::Server(args) = cli.command.unwrap() else {
+        panic!("expected server");
+    };
+    assert!(matches!(args.action, Some(ServerAction::Status(_))));
+
+    let translated = translated(&["zg", "--server=run"]);
+    assert_eq!(translated.argv, os_argv(&["zg", "server", "run"]));
+}
+
+#[test]
+fn legacy_subcommands_still_work() {
+    let cli = parse(&["zg", "search", "hello"]).unwrap();
+    let Command::Query(args) = cli.command.unwrap() else {
+        panic!("expected query via search alias");
+    };
+    assert_eq!(args.queries, vec!["hello"]);
+
+    let cli = parse(&["zg", "server", "--stdio"]).unwrap();
+    let Command::Server(args) = cli.command.unwrap() else {
+        panic!("expected server");
+    };
+    assert!(args.stdio);
+
+    // Known subcommands are never rewritten.
+    let translated = translated(&["zg", "index", "--rebuild"]);
+    assert_eq!(translated.argv, os_argv(&["zg", "index", "--rebuild"]));
+    assert_eq!(translated.warning, None);
+}
+
+#[test]
+fn bare_zg_stays_help() {
+    let cli = parse(&["zg"]).unwrap();
+    assert!(cli.command.is_none());
+}
+
+#[test]
+fn command_lookalike_search_warns_but_still_searches() {
+    let outcome = translated(&["zg", "quer", "hello"]);
+    let warning = outcome.warning.clone().unwrap();
+    assert!(warning.contains("'quer'"));
+    assert!(warning.contains("'query'"));
+    assert_eq!(outcome.argv, os_argv(&["zg", "query", "quer", "hello"]));
+    let cli = Cli::try_parse_from(outcome.argv).unwrap();
+    let Command::Query(args) = cli.command.unwrap() else {
+        panic!("expected query");
+    };
+    assert_eq!(args.queries, vec!["quer", "hello"]);
+
+    // Genuine searches do not warn: no prefix match, or too short.
+    assert_eq!(translated(&["zg", "hello"]).warning, None);
+    assert_eq!(translated(&["zg", "in"]).warning, None);
+    assert_eq!(translated(&["zg", "statistics"]).warning, None);
 }

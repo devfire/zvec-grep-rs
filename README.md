@@ -26,7 +26,7 @@ It all goes through the same daemon and the same index as the command line, so y
 
 - `zg-core` — engine: scan → tree-sitter extract → embed → index → hybrid search, exposed through the sync `ZvecGrepService` facade (`create_zvec_grep`). Typed errors (`ModelError`, `StorageError`, …) with golden-tested `ZVEC_GREP.ENGINE.*` wire codes; newtypes for domain concepts (`ModelReference`, `RootKey`, `Generation`, …).
 - `zg-server` — loopback daemon: one actor task per workspace root over a shared job scheduler and LRU embedding-model pool, filesystem watchers with debounced change sets, read-session cache with idle TTL, HTTP endpoint (loopback-only, bearer-token, body-cap guards) plus MCP over stdio and StreamableHTTP.
-- `zg` — CLI at parity with the TS surface: `query` (incl. `--rg`, `--hybrid`, `--fuse`, path filters, `--refresh`, `--mode direct|server|auto`), `index` (`--drop`/`--rebuild` + `--yes`), `status` (`--check-ready`), `config model|provider set`, `auth grant|status|revoke`, `server on|off|status|run|--stdio`, `install`/`uninstall` (IDE MCP configs), `help`, `version`, `completions`.
+- `zg` — CLI with two equivalent spellings of the same commands (remaining TS divergences are recorded in `docs/ts-divergence.md`, not claimed as full parity). Canonical subcommands: `query` (incl. `--rg`, `--hybrid`, `--fuse`, path filters, `--refresh`, `--mode direct|server|auto`; `search` is its alias), `index` (`--drop`/`--rebuild` + `--yes`), `status` (`--check-ready`), `config model|provider set`, `auth grant|status|revoke`, `server on|off|status|run|--stdio`, `install`/`uninstall` (IDE MCP configs), `help`, `version`, `completions`. Upstream search-first flag forms are translated onto those subcommands before parsing: `zg <query words…>`, `zg --index`, `zg --status`, `zg --install`, `zg --config`, `zg --auth`, `zg --server on|off|status|run|--stdio` (so upstream MCP configs such as `zg --server --stdio` work verbatim).
 
 ## What works
 
@@ -64,6 +64,11 @@ Run the full suite with `cargo test --workspace --all-features`; default-feature
 # Index and query through the daemon (default: auto spawns/uses it)
 zg index /path/to/repo
 zg query "where is retry logic implemented" --refresh wait
+
+# The upstream search-first spellings run the same commands:
+zg where is retry logic implemented --refresh wait
+zg --index /path/to/repo
+zg --server --stdio  # MCP over stdio, as in upstream editor configs
 
 # In-process engine, no daemon
 zg query "hello" --mode direct
