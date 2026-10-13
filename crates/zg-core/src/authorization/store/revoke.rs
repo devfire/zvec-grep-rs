@@ -9,6 +9,7 @@ use super::super::target::canonicalize_workspace_roots;
 use super::super::types::{RemoteEmbeddingGrant, RemoteEmbeddingTarget};
 use super::{GRANT_FILE, RemoteEmbeddingAuthorizationStore};
 use crate::error::EngineResult;
+use crate::paths::STATE_DIR_NAME;
 
 impl RemoteEmbeddingAuthorizationStore {
     /// Removes the target's grant from every canonical root file; true when
@@ -34,7 +35,7 @@ impl RemoteEmbeddingAuthorizationStore {
             if !Path::new(root).is_dir() {
                 continue;
             }
-            let path = Path::new(root).join(".zvec-grep").join(GRANT_FILE);
+            let path = Path::new(root).join(STATE_DIR_NAME).join(GRANT_FILE);
             let changed = Self::with_document_write(&path, |document| {
                 let before = document.grants.len();
                 document
@@ -73,7 +74,7 @@ impl RemoteEmbeddingAuthorizationStore {
         if !Path::new(&boundary).is_dir() {
             return Ok(0);
         }
-        let path = Path::new(&boundary).join(".zvec-grep").join(GRANT_FILE);
+        let path = Path::new(&boundary).join(STATE_DIR_NAME).join(GRANT_FILE);
         let keys = self.candidate_keys(&boundary)?;
         let mut revoked = 0usize;
         let mut valid: Vec<RemoteEmbeddingGrant> = Vec::new();
@@ -112,7 +113,7 @@ impl RemoteEmbeddingAuthorizationStore {
                 if !Path::new(&canonical).is_dir() {
                     continue;
                 }
-                let sibling = Path::new(&canonical).join(".zvec-grep").join(GRANT_FILE);
+                let sibling = Path::new(&canonical).join(STATE_DIR_NAME).join(GRANT_FILE);
                 if sibling == path {
                     continue;
                 }

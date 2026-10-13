@@ -16,14 +16,13 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use zg_core::config::ClientMode;
+use zg_server::config::DEFAULT_SERVER_PORT;
 
 use crate::cli::{ClientModeArg, RefreshMode};
 use crate::error::CliError;
 
 /// Default daemon URL, mirroring `configuredServerUrl`.
-///
-/// `process.env.ZVEC_GREP_SERVER_URL` wins, else the global-config
-/// server section, else loopback:7999.
+/// `ZVEC_GREP_SERVER_URL` wins, else global-config server section, else loopback on [`DEFAULT_SERVER_PORT`].
 pub const SERVER_URL_ENV: &str = "ZVEC_GREP_SERVER_URL";
 
 /// Environment variable selecting the client mode.
@@ -96,11 +95,11 @@ pub fn resolve_server_url() -> String {
         }
         if let Some(server) = config.server {
             let host = server.host.as_deref().unwrap_or("127.0.0.1");
-            let port = server.port.unwrap_or(7999);
+            let port = server.port.unwrap_or(DEFAULT_SERVER_PORT);
             return format!("http://{host}:{port}");
         }
     }
-    "http://127.0.0.1:7999".to_owned()
+    format!("http://127.0.0.1:{DEFAULT_SERVER_PORT}")
 }
 
 /// Routes one operation by mode, mirroring `routeByMode`: direct and

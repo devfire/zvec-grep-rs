@@ -457,7 +457,7 @@ async fn index_rejects_nested_git_override_per_request() {
         assert_eq!(rejected["error"]["code"], -32602, "{rejected}");
     }
     assert!(
-        !dir.path().join(".zvec-grep").exists(),
+        !dir.path().join(zg_core::paths::STATE_DIR_NAME).exists(),
         "rejected overrides must not create an index"
     );
     server.close().await;

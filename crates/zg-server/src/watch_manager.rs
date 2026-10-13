@@ -194,7 +194,7 @@ impl WatchManager {
         manager
     }
 
-    /// Starts the recursive notify watcher. Watching `.git` / `.zvec-grep`
+    /// Starts the recursive notify watcher. Watching `.git` / `.zvec-grep-rs`
     ///
     /// # Errors
     ///

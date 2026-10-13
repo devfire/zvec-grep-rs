@@ -1,4 +1,4 @@
-//! Global config (`~/.zvec-grep/config.json`): schema, IO, and runtime resolution.
+//! Global config (`~/.zvec-grep-rs/config.json`): schema, IO, and runtime resolution.
 //!
 //! Ports `engine/config.ts`. JSON field names stay camelCase for
 //! byte-compatibility with configs written by the TypeScript implementation.
@@ -210,8 +210,8 @@ pub struct GlobalConfigUpdate {
 
 /// Location of the global config file.
 ///
-/// The TypeScript implementation resolves `~/.zvec-grep/config.json` from the
-/// OS home directory; the Rust port routes through
+/// This project resolves `~/.zvec-grep-rs/config.json` from the OS home
+/// directory; it routes through
 /// [`crate::paths::default_home`] so `$ZVEC_GREP_HOME` overrides keep working.
 #[must_use]
 pub fn global_config_path() -> PathBuf {

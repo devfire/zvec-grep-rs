@@ -11,6 +11,7 @@ use super::super::types::{
 use super::crypto::{sign, unsigned_grant};
 use super::{DOCUMENT_VERSION, GRANT_FILE, RemoteEmbeddingAuthorizationStore};
 use crate::error::{EngineError, EngineResult};
+use crate::paths::STATE_DIR_NAME;
 use crate::types::UnixMillis;
 
 impl RemoteEmbeddingAuthorizationStore {
@@ -38,7 +39,7 @@ impl RemoteEmbeddingAuthorizationStore {
             if keys.is_empty() {
                 return Ok(false);
             }
-            let path = Path::new(root).join(".zvec-grep").join(GRANT_FILE);
+            let path = Path::new(root).join(STATE_DIR_NAME).join(GRANT_FILE);
             let document = Self::read_document(&path)?;
             let covered = document.grants.iter().any(|grant| {
                 grant.target_fingerprint == target.target_fingerprint.as_str()
@@ -92,7 +93,7 @@ impl RemoteEmbeddingAuthorizationStore {
                 signature,
                 ..unsigned
             };
-            let path = Path::new(root).join(".zvec-grep").join(GRANT_FILE);
+            let path = Path::new(root).join(STATE_DIR_NAME).join(GRANT_FILE);
             let stored = grant.clone();
             Self::with_document_write(&path, |document| {
                 document
@@ -123,7 +124,7 @@ impl RemoteEmbeddingAuthorizationStore {
             .into_iter()
             .next()
             .unwrap_or_else(|| root.to_owned());
-        let path = Path::new(&canonical).join(".zvec-grep").join(GRANT_FILE);
+        let path = Path::new(&canonical).join(STATE_DIR_NAME).join(GRANT_FILE);
         let document = Self::read_document(&path)?;
         let keys = self.candidate_keys(&canonical)?;
         let grants = document

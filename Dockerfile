@@ -15,14 +15,14 @@
 #
 # Notes:
 # - `--mode direct` (in-process engine) is the recommended container mode:
-#   index state lives next to the workspace (`.zvec-grep/`), so it persists
+#   index state lives next to the workspace (`.zvec-grep-rs/`), so it persists
 #   through the volume mount.
-# - `zg server run` binds loopback-only (default `127.0.0.1:7999`), which is
-#   unreachable through published ports (`-p 7999:7999`) from outside the
+# - `zg server run` binds loopback-only (default `127.0.0.1:18099`), which is
+#   unreachable through published ports (`-p 18099:18099`) from outside the
 #   container. For daemon/MCP use either stdio over `docker run -i`
 #   (`zg server --stdio`), commands in the same container network, or
-#   `--network host` on Linux. Daemon home (`~/.zvec-grep`) is ephemeral
-#   unless mounted (e.g. `-v zg-home:/root/.zvec-grep`).
+#   `--network host` on Linux. Daemon home (`~/.zvec-grep-rs`) is ephemeral
+#   unless mounted (e.g. `-v zg-home:/root/.zvec-grep-rs`).
 
 # syntax=docker/dockerfile:1
 
@@ -48,6 +48,6 @@ COPY --from=builder /app/target/release/zg /usr/local/bin/zg
 COPY --from=builder /tmp/libzvec_c_api.so /usr/local/lib/libzvec_c_api.so
 RUN ldconfig && ldd /usr/local/bin/zg
 WORKDIR /work
-EXPOSE 7999
+EXPOSE 18099
 ENTRYPOINT ["zg"]
 CMD ["--help"]

@@ -809,6 +809,10 @@ mod tests {
             &dir.path().join("repo-a/.zvec-grep/internal.txt"),
             "internal\n",
         );
+        write(
+            &dir.path().join("repo-a/.zvec-grep-rs/internal.txt"),
+            "internal\n",
+        );
         let scanned = full_scan_relative(&dir, &base_root(&dir, Some(true)));
         assert!(scanned.contains("top.txt"));
         assert!(scanned.contains("repo-a/a.txt"));
@@ -819,6 +823,10 @@ mod tests {
             !scanned.contains("repo-a/.zvec-grep/internal.txt"),
             "{scanned:?}"
         );
+        assert!(
+            !scanned.contains("repo-a/.zvec-grep-rs/internal.txt"),
+            "{scanned:?}"
+        );
     }
 
     #[test]
@@ -827,6 +835,14 @@ mod tests {
         write(&dir.path().join(".gitignore"), "blocked/\n");
         write(&dir.path().join("blocked/blocked.txt"), "blocked\n");
         write(&dir.path().join("repo-a/.secret.txt"), "secret\n");
+        write(
+            &dir.path().join("repo-a/.zvec-grep-rs/internal.txt"),
+            "internal\n",
+        );
+        write(
+            &dir.path().join("repo-a/.zvec-grep/internal.txt"),
+            "internal\n",
+        );
         let mut root = base_root(&dir, Some(true));
         root.hidden = Some(true);
         root.no_ignore = Some(true);
@@ -842,7 +858,11 @@ mod tests {
             "{scanned:?}"
         );
         assert!(
-            !scanned.iter().any(|path| path.contains(".zvec-grep")),
+            !scanned.iter().any(|path| path.contains(".zvec-grep-rs")),
+            "{scanned:?}"
+        );
+        assert!(
+            !scanned.iter().any(|path| path.contains(".zvec-grep/")),
             "{scanned:?}"
         );
     }

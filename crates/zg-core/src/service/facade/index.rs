@@ -90,7 +90,7 @@ impl ZvecGrepService {
                     |manifest| manifest.info.name.clone(),
                 ),
                 // Storage resolves against `info.path`, so it must be the
-                // `.zvec-grep` home, not the workspace root (mirrors
+                // `.zvec-grep-rs` home, not the workspace root (mirrors
                 // `prepareWorkspaceManifest`: `path: location.home`).
                 path: location.home.clone(),
                 root_paths,

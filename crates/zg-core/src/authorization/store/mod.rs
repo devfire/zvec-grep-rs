@@ -1,11 +1,11 @@
 //! HMAC-signed workspace grant store, mirroring
 //! `src/authorization/store.ts`.
 //!
-//! Grants live in `<root>/.zvec-grep/authorization.json` (camelCase wire,
+//! Grants live in `<root>/.zvec-grep-rs/authorization.json` (camelCase wire,
 //! 0700 dirs / 0600 files, atomic tmp-rename writes). Each workspace root
 //! holds its own 32-byte hex signing key at
-//! `<root>/.zvec-grep/authorization-signing.key` (0600); the global
-//! `~/.zvec-grep/authorization-signing.key` (`$ZVEC_GREP_AUTHORIZATION_KEY_FILE`
+//! `<root>/.zvec-grep-rs/authorization-signing.key` (0600); the global
+//! `~/.zvec-grep-rs/authorization-signing.key` (`$ZVEC_GREP_AUTHORIZATION_KEY_FILE`
 //! override) is kept as a legacy fallback for verification only, so grants
 //! minted before per-workspace keys still verify. New grants are always
 //! signed with the workspace key, which (together with the fingerprints in
@@ -34,14 +34,14 @@ use std::path::{Path, PathBuf};
 use super::error::AuthError;
 use super::target::canonicalize_workspace_roots;
 use super::types::RemoteEmbeddingTarget;
+use crate::paths::STATE_DIR_NAME;
 use keys::default_signing_key_path;
 
 /// On-disk document version (wire contract).
 pub const DOCUMENT_VERSION: u32 = 1;
-/// Grant file name inside `<root>/.zvec-grep/`.
+/// Grant file name inside `<root>/.zvec-grep-rs/`.
 pub const GRANT_FILE: &str = "authorization.json";
-/// Per-workspace signing-key file name inside `<root>/.zvec-grep/`
-/// (0600; parent dirs 0700).
+/// Per-workspace signing-key file name inside `<root>/.zvec-grep-rs/`
 pub const SIGNING_KEY_FILE: &str = "authorization-signing.key";
 /// Env var overriding the signing-key path.
 pub const SIGNING_KEY_ENV_VAR: &str = "ZVEC_GREP_AUTHORIZATION_KEY_FILE";
@@ -50,7 +50,7 @@ pub const SIGNING_KEY_ENV_VAR: &str = "ZVEC_GREP_AUTHORIZATION_KEY_FILE";
 ///
 /// In workspace-keys mode ([`Self::new`] without the env override, or
 /// [`Self::with_workspace_keys`]) each workspace root signs with its own key
-/// at `<root>/.zvec-grep/authorization-signing.key`, falling back to the
+/// at `<root>/.zvec-grep-rs/authorization-signing.key`, falling back to the
 /// legacy global key for verification only. With an explicit key path
 /// ([`Self::with_signing_key`], or the env override) that single key signs
 /// and verifies every root.
@@ -118,6 +118,6 @@ impl RemoteEmbeddingAuthorizationStore {
                 detail: "Remote Embedding target has no workspace roots.".to_owned(),
             });
         };
-        Ok(Path::new(&root).join(".zvec-grep").join(GRANT_FILE))
+        Ok(Path::new(&root).join(STATE_DIR_NAME).join(GRANT_FILE))
     }
 }

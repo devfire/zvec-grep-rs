@@ -6,7 +6,7 @@ members = ["crates/zg-core", "crates/zg-server", "crates/zg"]
 version = "0.2.1"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/zvec-ai/zvec-grep"
+repository = "https://github.com/devfire/zvec-grep-rs"
 # Bumped 1.85 -> 1.88 by phases C/D: `ort =2.0.0-rc.13` declares
 # `rust-version = "1.88"` (verified via `cargo info`), and the plan
 # mandates bumping deliberately rather than holding a false MSRV.

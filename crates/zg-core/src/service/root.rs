@@ -1,4 +1,4 @@
-//! Workspace root locations: `.zvec-grep` home, manifest, index paths.
+//! Workspace root locations: `.zvec-grep-rs` home, manifest, index paths.
 //!
 //! Port of `engine/service/root.ts`: root resolution, index locations,
 //! reset, and nearest-workspace discovery.
@@ -7,15 +7,16 @@ use std::path::{Path, PathBuf};
 
 use crate::error::EngineResult;
 use crate::manifest::{delete_workspace_manifest, workspace_manifest_path};
-use crate::paths::to_display_path;
+use crate::paths::{STATE_DIR_NAME, to_display_path};
 use crate::storage::layout::{
     delete_workspace_index_storage, has_workspace_index_storage,
     resolve_workspace_index_storage_paths, workspace_index_path,
 };
 use crate::utils::lock::{Guard, LockMode, LockOptions, acquire_read_write_lock};
 
-/// Directory holding the manifest and index storage.
-pub const ZVEC_GREP_DIR: &str = ".zvec-grep";
+/// Directory holding the manifest and index storage (canonical spelling
+/// lives in [`crate::paths::STATE_DIR_NAME`]).
+pub const ZVEC_GREP_DIR: &str = STATE_DIR_NAME;
 
 /// Resolved workspace locations (mirrors `WorkspaceIndexLocation`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,7 +54,7 @@ pub fn resolve_zvec_grep_root(root: Option<&str>) -> EngineResult<String> {
     Ok(to_display_path(&crate::paths::normalize_path(&absolute)))
 }
 
-/// `.zvec-grep` home under `root` (mirrors `workspaceHome`).
+/// `.zvec-grep-rs` home under `root` (mirrors `workspaceHome`).
 #[must_use]
 pub fn workspace_home(root: &str) -> String {
     to_display_path(&Path::new(root).join(ZVEC_GREP_DIR))
@@ -74,7 +75,7 @@ pub fn index_location_from_env() -> Option<PathBuf> {
 
 /// Effective index storage override: an explicit per-call path wins over the
 /// service binding, which wins over `$ZVEC_GREP_INDEX_LOCATION`. `None`
-/// keeps the default in-tree home (`<root>/.zvec-grep`).
+/// keeps the default in-tree home (`<root>/.zvec-grep-rs`).
 #[must_use]
 pub fn effective_index_location(
     explicit: Option<&Path>,
@@ -96,7 +97,7 @@ pub fn workspace_index_location(root: &str) -> EngineResult<WorkspaceIndexLocati
 }
 
 /// Full locations for `root`, storing the manifest and index storage under
-/// `index_location` instead of `<root>/.zvec-grep`.
+/// `index_location` instead of `<root>/.zvec-grep-rs`.
 ///
 /// Use this for read-only checkouts (e.g. read-only NFS mounts): the source
 /// `root` is only read, while all writes (manifest, `files.json`,
@@ -135,7 +136,7 @@ pub fn workspace_index_location_with_override(
     Ok(location_with_home(resolved, &home))
 }
 
-/// Default locations: home is `<root>/.zvec-grep`, root re-derives from the
+/// Default locations: home is `<root>/.zvec-grep-rs`, root re-derives from the
 /// canonicalized home so symlinked checkouts report stable paths.
 fn location_in_default_home(resolved: &str) -> WorkspaceIndexLocation {
     let requested_home = workspace_home(resolved);
@@ -275,7 +276,7 @@ mod tests {
     #[test]
     fn reset_fails_busy_under_live_writer() {
         let dir = tempfile::TempDir::new().expect("tempdir");
-        let home = dir.path().join(".zvec-grep");
+        let home = dir.path().join(STATE_DIR_NAME);
         std::fs::create_dir_all(&home).expect("mkdir");
         let location = test_location(&home);
         let schema = dummy_schema();
@@ -327,9 +328,13 @@ mod tests {
     fn default_location_stays_in_tree() {
         let location = workspace_index_location("/repo").expect("location");
         assert_eq!(location.root, "/repo");
-        assert_eq!(location.home, "/repo/.zvec-grep");
-        assert_eq!(location.manifest_path, "/repo/.zvec-grep/manifest.json");
-        assert!(location.index_path.ends_with("/repo/.zvec-grep/index.zvec"));
+        assert_eq!(location.home, "/repo/.zvec-grep-rs");
+        assert_eq!(location.manifest_path, "/repo/.zvec-grep-rs/manifest.json");
+        assert!(
+            location
+                .index_path
+                .ends_with("/repo/.zvec-grep-rs/index.zvec")
+        );
     }
 
     #[test]

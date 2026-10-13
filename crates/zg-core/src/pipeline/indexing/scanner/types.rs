@@ -82,7 +82,11 @@ pub(crate) const DEFAULT_IGNORED_FILE_PATTERNS: &[&str] = &[
     "*.webp",
 ];
 
-pub(crate) const HARD_SKIP_HIDDEN_NAMES: &[&str] = &[".git", ".zvec-grep"];
+pub(crate) const HARD_SKIP_HIDDEN_NAMES: &[&str] = &[
+    ".git",
+    crate::paths::STATE_DIR_NAME,
+    crate::paths::LEGACY_STATE_DIR_NAME,
+];
 
 /// Path shape used by scanner policy checks.
 ///

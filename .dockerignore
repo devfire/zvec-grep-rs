@@ -1,4 +1,5 @@
 /target
 .git
+.zvec-grep-rs
 .zvec-grep
 **/*.log

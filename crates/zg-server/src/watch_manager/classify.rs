@@ -161,7 +161,7 @@ pub(super) fn classify_batch(
 ) -> Vec<ClassifiedEntry> {
     // Refresh only on signals that survive filtering: the roots source is a
     // blocking manifest read (storage open), and internal writes
-    // (`.zvec-grep` storage, lock files, the per-run manifest rewrite) must
+    // (`.zvec-grep-rs` storage, lock files, the per-run manifest rewrite) must
     // never trigger it — the index's own writes would re-open storage on
     // every batch and hold read locks across maintenance (drop/reset).
     // Mirrors `record_raw`, which returns before the refresh for internals.

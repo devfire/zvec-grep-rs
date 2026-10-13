@@ -547,12 +547,12 @@ mod tests {
     async fn lock_round_trip_and_status() {
         let home = home();
         let dir = home.path().to_owned();
-        let mut lock = DaemonInstanceLock::acquire(Some(dir.as_path()), "http://127.0.0.1:7999")
+        let mut lock = DaemonInstanceLock::acquire(Some(dir.as_path()), "http://127.0.0.1:18099")
             .await
             .unwrap();
         // Second acquire sees a live holder (our own process).
         assert!(matches!(
-            DaemonInstanceLock::acquire(Some(dir.as_path()), "http://127.0.0.1:7999").await,
+            DaemonInstanceLock::acquire(Some(dir.as_path()), "http://127.0.0.1:18099").await,
             Err(DaemonError::AlreadyRunning { .. })
         ));
         // No server answers `/healthz`: running but not ready.
@@ -577,14 +577,14 @@ mod tests {
             "instanceToken": "stale",
             "startedAt": 0,
             "updatedAt": 0,
-            "serverUrl": "http://127.0.0.1:7999",
+            "serverUrl": "http://127.0.0.1:18099",
             "ready": false,
             "mcpToolset": "agent",
         });
         tokio::fs::write(dir.join("instance.lock"), format!("{body}\n"))
             .await
             .unwrap();
-        let lock = DaemonInstanceLock::acquire(Some(home.path()), "http://127.0.0.1:7999")
+        let lock = DaemonInstanceLock::acquire(Some(home.path()), "http://127.0.0.1:18099")
             .await
             .unwrap();
         assert_ne!(lock.record().instance_token, "stale");

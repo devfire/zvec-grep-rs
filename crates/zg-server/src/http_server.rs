@@ -368,3 +368,4 @@ async fn read_mcp_body(body: Body) -> Result<bytes::Bytes, axum::response::Respo
 fn rpc_error(status: StatusCode, code: i32, message: &str) -> axum::response::Response {
     (status, axum::Json(json!({ "jsonrpc": "2.0", "error": { "code": code, "message": message }, "id": Value::Null }))).into_response()
 }
+

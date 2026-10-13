@@ -11,9 +11,14 @@ use std::path::{Path, PathBuf};
 
 use crate::error::EngineResult;
 
-/// Directories that are always excluded, mirroring
-/// `HARD_IGNORED_HIDDEN_DIRECTORIES` in the TS implementation.
-pub const HARD_IGNORED_DIRECTORIES: &[&str] = &[".git", ".zvec-grep"];
+/// Directories that are always excluded: `.git`, this project's own
+/// state directory, and the legacy/upstream state directory (never index
+/// foreign state). Spellings come from [`crate::paths`].
+pub const HARD_IGNORED_DIRECTORIES: &[&str] = &[
+    ".git",
+    crate::paths::STATE_DIR_NAME,
+    crate::paths::LEGACY_STATE_DIR_NAME,
+];
 
 /// Expands one include/exclude path pattern the way `expandRipgrepPathGlob`
 /// does: `./`-prefixed patterns are stripped, `**/`-prefixed and absolute
@@ -142,16 +147,19 @@ pub(crate) fn build_ignore_matcher(
 }
 
 pub(crate) fn is_hard_ignored_name(file_name: &std::ffi::OsStr) -> bool {
-    file_name == ".git" || file_name == ".zvec-grep"
+    HARD_IGNORED_DIRECTORIES
+        .iter()
+        .any(|name| file_name == std::ffi::OsStr::new(name))
 }
 
 /// True when the candidate lives under a hard-ignored directory, mirroring
-/// `--glob '!**/.git/**'` / `--glob '!**/.zvec-grep/**'`.
+/// `--glob '!**/.git/**'` / `--glob '!**/.zvec-grep-rs/**'` (and the legacy
+/// `--glob '!**/.zvec-grep/**'`).
 pub(crate) fn is_hard_ignored_path(root: &Path, path: &Path) -> bool {
     let relative = path.strip_prefix(root).unwrap_or(path);
     relative
         .components()
-        .any(|component| component.as_os_str() == ".git" || component.as_os_str() == ".zvec-grep")
+        .any(|component| is_hard_ignored_name(component.as_os_str()))
 }
 
 pub(crate) fn is_searchable_file(

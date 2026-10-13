@@ -65,7 +65,7 @@ impl From<bool> for LogField {
     }
 }
 
-/// Daemon home: `$ZVEC_GREP_HOME/daemon`, else `~/.zvec-grep/daemon`
+/// Daemon home: `$ZVEC_GREP_HOME/daemon`, else `~/.zvec-grep-rs/daemon`
 /// (mirrors TS `daemonHome` over `defaultHome`).
 #[must_use]
 pub fn daemon_home() -> PathBuf {

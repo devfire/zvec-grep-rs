@@ -377,7 +377,7 @@ mod tests {
         assert!(!result.diagnostics.truncated);
         assert_eq!(
             result.diagnostics.ignored_directories,
-            vec![".git", ".zvec-grep"]
+            vec![".git", ".zvec-grep-rs", ".zvec-grep"]
         );
     }
 

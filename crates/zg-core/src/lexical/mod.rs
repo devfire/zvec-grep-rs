@@ -9,7 +9,7 @@
 //! Preserved TS semantics:
 //! - multiple `--regexp` patterns (OR) plus `--file` pattern files,
 //! - include/exclude path globs with `**/` expansion, `--glob`/`--iglob`
-//!   filters, ripgrep file-type selection, hard-ignored `.git`/`.zvec-grep`,
+//!   filters, ripgrep file-type selection, hard-ignored `.git`/`.zvec-grep-rs` (plus legacy `.zvec-grep`),
 //! - hidden/no-ignore/ignore-file/max-depth/max-filesize/follow options,
 //! - `modifiedAfter`/`modifiedBefore` mtime post-filtering,
 //! - `limit` + truncation reporting, missing-path diagnostics,

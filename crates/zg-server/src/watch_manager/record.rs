@@ -72,13 +72,17 @@ pub(super) fn record_raw(
     Ok(())
 }
 
-/// True for paths under `.git` / `.zvec-grep`: never indexed. Pure string
-/// prefix check, safe on any thread.
+/// True for paths under `.git` / `.zvec-grep-rs` (own state) or the legacy
+/// upstream `.zvec-grep`: never indexed. Pure string prefix check, safe on
+/// any thread.
 pub(super) fn is_internal_path(root: &str, absolute: &str) -> bool {
     if let Ok(relative) = Path::new(absolute).strip_prefix(Path::new(root))
-        && relative
-            .components()
-            .any(|component| matches!(component.as_os_str().to_str(), Some(".git" | ".zvec-grep")))
+        && relative.components().any(|component| {
+            let name = component.as_os_str();
+            name == ".git"
+                || name == zg_core::paths::STATE_DIR_NAME
+                || name == zg_core::paths::LEGACY_STATE_DIR_NAME
+        })
     {
         return true;
     }

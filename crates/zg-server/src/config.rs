@@ -14,8 +14,11 @@ use crate::errors::DaemonError;
 /// Default listen host: loopback only (mirrors TS `DEFAULT_SERVER_HOST`).
 pub const DEFAULT_SERVER_HOST: &str = "127.0.0.1";
 
-/// Default listen port (mirrors TS `DEFAULT_SERVER_PORT`).
-pub const DEFAULT_SERVER_PORT: u16 = 7999;
+/// Default listen port. Deliberately not the upstream default port: this
+/// is the ONE canonical default (client URL construction imports it),
+/// chosen so this daemon can run alongside the upstream TypeScript / Rust
+/// daemons without lock or port contention.
+pub const DEFAULT_SERVER_PORT: u16 = 18099;
 
 /// Minimum server token length in chars (mirrors TS `validateToken`).
 pub const MIN_SERVER_TOKEN_LEN: usize = 32;
@@ -123,7 +126,7 @@ pub fn parse_listen_address(value: Option<&str>) -> Result<ServerListenAddress, 
 }
 
 /// Reads the global config's server section for the listen address,
-/// defaulting to loopback:7999 (mirrors TS `configuredListenAddress`).
+/// defaulting to loopback:18099.
 ///
 /// # Errors
 ///
@@ -238,7 +241,8 @@ mod tests {
     fn defaults_are_loopback() {
         let address = parse_listen_address(None).unwrap();
         assert_eq!(address.host, "127.0.0.1");
-        assert_eq!(address.port, 7999);
+        assert_eq!(address.port, 18099);
+        assert_eq!(address.port, DEFAULT_SERVER_PORT);
         assert!(is_loopback_host("localhost"));
         assert!(is_loopback_host("::1"));
         assert!(!is_loopback_host("0.0.0.0"));
@@ -247,7 +251,7 @@ mod tests {
     #[test]
     fn rejects_non_loopback_and_bad_ports() {
         assert!(matches!(
-            parse_listen_address(Some("0.0.0.0:7999")),
+            parse_listen_address(Some("0.0.0.0:18099")),
             Err(DaemonError::LoopbackRequired { .. })
         ));
         assert!(matches!(
@@ -259,7 +263,7 @@ mod tests {
             Err(DaemonError::InvalidListenAddress { .. })
         ));
         assert_eq!(
-            parse_listen_address(Some("[::1]:7999")).unwrap().host,
+            parse_listen_address(Some("[::1]:18099")).unwrap().host,
             "::1"
         );
     }

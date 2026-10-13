@@ -5,6 +5,7 @@ use super::crypto::stable_stringify;
 use super::{GRANT_FILE, RemoteEmbeddingAuthorizationStore, SIGNING_KEY_FILE};
 use crate::authorization::target::{canonicalize_workspace_roots, create_remote_embedding_target};
 use crate::authorization::types::{RemoteEmbeddingScope, RemoteEmbeddingTarget};
+use crate::paths::STATE_DIR_NAME;
 
 /// Canonical on-disk root: grant and key files live under the
 /// canonicalized path, so file assertions must join from there rather
@@ -196,7 +197,7 @@ fn workspace_keys_reject_cross_workspace_replay() {
     // Each workspace mints its own key file.
     let canonical_a = canonical_path(&root_a);
     let canonical_b = canonical_path(&root_b);
-    let key_a = canonical_a.join(".zvec-grep").join(SIGNING_KEY_FILE);
+    let key_a = canonical_a.join(STATE_DIR_NAME).join(SIGNING_KEY_FILE);
     assert!(key_a.is_file());
     #[cfg(unix)]
     {
@@ -209,8 +210,8 @@ fn workspace_keys_reject_cross_workspace_replay() {
     }
     // Replaying A's grant file into B verifies under neither B's
     // workspace key nor the (absent) legacy key.
-    let file_a = canonical_a.join(".zvec-grep").join(GRANT_FILE);
-    let file_b = canonical_b.join(".zvec-grep").join(GRANT_FILE);
+    let file_a = canonical_a.join(STATE_DIR_NAME).join(GRANT_FILE);
+    let file_b = canonical_b.join(STATE_DIR_NAME).join(GRANT_FILE);
     if let Some(parent) = file_b.parent() {
         fs::create_dir_all(parent).expect("mkdir b authz");
     }

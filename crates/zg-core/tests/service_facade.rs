@@ -288,7 +288,7 @@ fn fts_search(
 }
 
 fn manifest_home(dir: &TempDir) -> std::path::PathBuf {
-    dir.path().join(".zvec-grep")
+    dir.path().join(zg_core::paths::STATE_DIR_NAME)
 }
 
 #[test]
@@ -467,7 +467,7 @@ fn nested_git_manifest_validation() {
     let mut value = serde_json::to_value(&manifest).expect("json");
 
     let scratch = TempDir::new().expect("tempdir");
-    let scratch_home = scratch.path().join(".zvec-grep");
+    let scratch_home = scratch.path().join(zg_core::paths::STATE_DIR_NAME);
     std::fs::create_dir_all(&scratch_home).expect("mkdir");
     let write_manifest = |value: &serde_json::Value| {
         std::fs::write(
@@ -519,7 +519,7 @@ fn out_of_tree_index_location_round_trip() {
     service.ensure_index(&index_options(&src)).expect("index");
     // Storage lives out of tree; the source checkout is untouched.
     assert!(external.path().join("manifest.json").is_file());
-    assert!(!src.path().join(".zvec-grep").exists());
+    assert!(!src.path().join(zg_core::paths::STATE_DIR_NAME).exists());
 
     let info = service.workspace_info(None).expect("info");
     assert!(info.indexed);

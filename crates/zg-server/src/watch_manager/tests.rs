@@ -71,12 +71,16 @@ async fn internal_only_batches_skip_roots_refresh() {
     // index maintenance (drop/reset fail `LOCK.BUSY` under a live reader).
     let mut batch = HashMap::new();
     batch.insert(
-        PathBuf::from("/repo/.zvec-grep/manifest.json"),
+        PathBuf::from("/repo/.zvec-grep-rs/manifest.json"),
         Some(ChangeKind::Changed),
     );
     batch.insert(
-        PathBuf::from("/repo/.zvec-grep/LOCK.readers/x/lock.json"),
+        PathBuf::from("/repo/.zvec-grep-rs/LOCK.readers/x/lock.json"),
         Some(ChangeKind::Created),
+    );
+    batch.insert(
+        PathBuf::from("/repo/.zvec-grep/manifest.json"),
+        Some(ChangeKind::Changed),
     );
     assert!(classify_batch(&manager.shared, &batch).is_empty());
     assert_eq!(calls.load(Ordering::SeqCst), baseline);
@@ -92,6 +96,9 @@ async fn skips_index_internals() {
     let (manager, batches) = manager("/repo");
     manager
         .inject_event("/repo/.git/HEAD", ChangeKind::Changed, false)
+        .unwrap();
+    manager
+        .inject_event("/repo/.zvec-grep-rs/files.json", ChangeKind::Changed, false)
         .unwrap();
     manager
         .inject_event("/repo/.zvec-grep/files.json", ChangeKind::Changed, false)
@@ -216,7 +223,7 @@ async fn nested_git_policy_gates_watcher_batches() {
     std::fs::create_dir_all(dir.path().join("repo-a/.git")).expect("mkdir");
     std::fs::write(dir.path().join("repo-a/.git/HEAD"), "ref\n").expect("marker");
     std::fs::write(dir.path().join("repo-a/a.txt"), "a\n").expect("nested file");
-    let home = dir.path().join(".zvec-grep");
+    let home = dir.path().join(zg_core::paths::STATE_DIR_NAME);
     write_manifest_policy(&home, &root, None);
 
     let home_clone = home.clone();
@@ -286,6 +293,13 @@ async fn nested_git_policy_gates_watcher_batches() {
         .unwrap();
     manager
         .inject_event(
+            &format!("{root}/.zvec-grep-rs/manifest.json"),
+            ChangeKind::Changed,
+            false,
+        )
+        .unwrap();
+    manager
+        .inject_event(
             &format!("{root}/.zvec-grep/manifest.json"),
             ChangeKind::Changed,
             false,
@@ -295,6 +309,6 @@ async fn nested_git_policy_gates_watcher_batches() {
     assert_eq!(
         batches.lock().unwrap().len(),
         batch_count,
-        ".git and .zvec-grep changes stay untracked"
+        ".git, .zvec-grep-rs and legacy .zvec-grep changes stay untracked"
     );
 }

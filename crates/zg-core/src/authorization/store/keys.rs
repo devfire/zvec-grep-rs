@@ -9,10 +9,11 @@ use super::super::error::AuthError;
 use super::crypto::from_hex;
 use super::{RemoteEmbeddingAuthorizationStore, SIGNING_KEY_ENV_VAR, SIGNING_KEY_FILE};
 use crate::error::{EngineError, EngineResult};
+use crate::paths::STATE_DIR_NAME;
 use crate::utils::hash::to_hex;
 
 /// Default signing-key path: `$ZVEC_GREP_AUTHORIZATION_KEY_FILE`, else
-/// `~/.zvec-grep/authorization-signing.key` (real home, like TS `homedir`).
+/// `~/.zvec-grep-rs/authorization-signing.key` (real home, like TS `homedir`).
 pub(super) fn default_signing_key_path() -> PathBuf {
     if let Some(path) = std::env::var_os(SIGNING_KEY_ENV_VAR)
         && !path.is_empty()
@@ -20,7 +21,7 @@ pub(super) fn default_signing_key_path() -> PathBuf {
         return PathBuf::from(path);
     }
     let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
-    home.join(".zvec-grep").join("authorization-signing.key")
+    home.join(STATE_DIR_NAME).join("authorization-signing.key")
 }
 
 impl RemoteEmbeddingAuthorizationStore {
@@ -46,7 +47,7 @@ impl RemoteEmbeddingAuthorizationStore {
 
     /// Signing-key file inside one workspace root.
     fn workspace_key_path(root: &str) -> PathBuf {
-        Path::new(root).join(".zvec-grep").join(SIGNING_KEY_FILE)
+        Path::new(root).join(STATE_DIR_NAME).join(SIGNING_KEY_FILE)
     }
 
     /// Candidate key paths for `root`, workspace key first and the legacy

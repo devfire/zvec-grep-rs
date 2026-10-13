@@ -680,7 +680,7 @@ mod tests {
             timeout_secs: 600,
             token_env: None,
             force: false,
-            server_url: "http://127.0.0.1:7999".to_owned(),
+            server_url: "http://127.0.0.1:18099".to_owned(),
         }
     }
 

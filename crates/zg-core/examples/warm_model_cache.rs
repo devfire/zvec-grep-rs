@@ -4,7 +4,7 @@
 //! constructs each parity-gate model and calls
 //! [`EmbeddingModel::prepare`](zg_core::models::EmbeddingModel::prepare),
 //! downloading missing artifacts into the shared model cache
-//! (`$ZVEC_GREP_MODEL_CACHE`, else `~/.zvec-grep/models`). CI runs this on
+//! (`$ZVEC_GREP_MODEL_CACHE`, else `~/.zvec-grep-rs/models`). CI runs this on
 //! cache miss before the gate (`ZVEC_REQUIRE_MODELS=1 ... --test
 //! vector_parity`), so the gate checks real coverage instead of skipping.
 //!
