@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use super::crypto::stable_stringify;
 use super::{GRANT_FILE, RemoteEmbeddingAuthorizationStore, SIGNING_KEY_FILE};
 use crate::authorization::target::{canonicalize_workspace_roots, create_remote_embedding_target};
-use crate::authorization::types::{RemoteEmbeddingGrant, RemoteEmbeddingScope, RemoteEmbeddingTarget};
+use crate::authorization::types::{
+    RemoteEmbeddingGrant, RemoteEmbeddingScope, RemoteEmbeddingTarget,
+};
 use crate::paths::STATE_DIR_NAME;
 
 /// Canonical on-disk root: grant and key files live under the
@@ -317,7 +319,10 @@ fn workspace_local_signing_key_cannot_forge_grant() {
     };
     let signature = super::crypto::sign(&super::crypto::unsigned_grant(&unsigned), &attacker_key)
         .expect("sign forged grant");
-    let forged = RemoteEmbeddingGrant { signature, ..unsigned };
+    let forged = RemoteEmbeddingGrant {
+        signature,
+        ..unsigned
+    };
     let document = serde_json::json!({ "version": 1, "grants": [forged] });
     fs::write(state_dir.join(GRANT_FILE), document.to_string()).expect("plant forged grant");
     // Victim has no global secret yet, then creates a legitimate one by

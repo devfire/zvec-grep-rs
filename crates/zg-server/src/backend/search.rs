@@ -17,13 +17,13 @@ use zg_core::service::types::{ZvecGrepContextOptions, ZvecGrepContextResult};
 use zg_core::types::SearchPlanRoute;
 
 use super::error::BackendError;
-use super::util::join_backend_error;
 use super::index_run::{build_index_run, plan_search_permit};
 use super::root_actor::RootActor;
 use super::search_types::{
     BackgroundIndexState, DaemonSearchResult, ResultFreshness, SearchFreshness, SearchIndexing,
     SearchQuery,
 };
+use super::util::join_backend_error;
 use crate::change_set::ChangeSetSnapshot;
 use crate::errors::DaemonError;
 use crate::index_coordinator::CoordinatorReason;

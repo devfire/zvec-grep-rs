@@ -79,7 +79,9 @@ impl RemoteEmbeddingAuthorizationStore {
     /// at this path. Callers must keep the path outside workspace roots.
     #[must_use]
     pub fn with_signing_key(path: PathBuf) -> Self {
-        Self { signing_key_path: path }
+        Self {
+            signing_key_path: path,
+        }
     }
 
     /// Grant file for the target's first canonical workspace root.

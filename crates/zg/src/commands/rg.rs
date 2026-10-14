@@ -17,23 +17,82 @@ use crate::format::{Rendering, print_context_result, use_color};
 
 pub(crate) fn run_rg_direct(args: &QueryArgs, queries: &[String]) -> Result<(), CliError> {
     let color = use_color(args.color, args.no_color);
-    let mut patterns = queries.to_vec();
-    patterns.extend(args.regexp.clone());
-    let (before, after) = match (args.context, args.before_context, args.after_context) {
-        (Some(both), None, None) => (both as usize, both as usize),
-        _ => (
-            args.before_context.map_or(0, |value| value as usize),
-            args.after_context.map_or(0, |value| value as usize),
-        ),
+    let (before, after) = context_window(args)?;
+    let root = std::env::current_dir().map_err(|error| CliError::io(Path::new("."), error))?;
+    let options = lexical_options(args, queries, &root, before, after)?;
+    let searched = ZvecGrepService::new(service_options(
+        None,
+        None,
+        args.api_key.clone(),
+        None,
+        args.model_cache.clone(),
+        args.device,
+        None,
+    ))
+    .rg_search(&options)?;
+    let query = options.patterns.join(" | ");
+    // Every field is set explicitly: a new `ContextDiagnostics` field
+    // fails compilation here until its rg value is decided.
+    let result = ZvecGrepContextResult {
+        query,
+        root: root.to_string_lossy().into_owned(),
+        source: ContextSource::Rg,
+        coverage: if searched.diagnostics.truncated {
+            zg_core::service::types::ContextCoverage::RgTruncated
+        } else {
+            zg_core::service::types::ContextCoverage::RgExhaustive
+        },
+        workspace_index: None,
+        items: searched.items,
+        group_results: None,
+        diagnostics: ContextDiagnostics {
+            empty_reason: None,
+            index: None,
+            rg: serde_json::to_value(&searched.diagnostics).ok(),
+            structure: None,
+            timings: None,
+        },
     };
+    print_context_result(
+        &result,
+        Rendering::from(args.human),
+        color,
+        PreviewMode::Full,
+    );
+    if let Some(missing) = searched.diagnostics.missing_paths {
+        for path in missing {
+            eprintln!("warning: path not found: {path}");
+        }
+    }
+    Ok(())
+}
+
+fn context_window(args: &QueryArgs) -> Result<(usize, usize), CliError> {
     if args.context.is_some() && (args.before_context.is_some() || args.after_context.is_some()) {
         return Err(CliError::usage(
             "--context cannot be combined with --before-context or --after-context",
         ));
     }
-    let root = std::env::current_dir().map_err(|error| CliError::io(Path::new("."), error))?;
-    let options = LexicalSearchOptions {
-        root: root.clone(),
+    match (args.context, args.before_context, args.after_context) {
+        (Some(both), None, None) => Ok((both as usize, both as usize)),
+        _ => Ok((
+            args.before_context.map_or(0, |value| value as usize),
+            args.after_context.map_or(0, |value| value as usize),
+        )),
+    }
+}
+
+fn lexical_options(
+    args: &QueryArgs,
+    queries: &[String],
+    root: &Path,
+    before: usize,
+    after: usize,
+) -> Result<LexicalSearchOptions, CliError> {
+    let mut patterns = queries.to_vec();
+    patterns.extend(args.regexp.clone());
+    Ok(LexicalSearchOptions {
+        root: root.to_path_buf(),
         patterns,
         pattern_files: args.pattern_files.clone(),
         paths: args.rg_paths.clone(),
@@ -76,47 +135,7 @@ pub(crate) fn run_rg_direct(args: &QueryArgs, queries: &[String]) -> Result<(), 
         before_context: before,
         after_context: after,
         max_count: args.max_count,
-    };
-    let searched = ZvecGrepService::new(service_options(
-        None,
-        None,
-        args.api_key.clone(),
-        None,
-        args.model_cache.clone(),
-        args.device,
-        None,
-    ))
-    .rg_search(&options)?;
-    let query = options.patterns.join(" | ");
-    // Every field is set explicitly: a new `ContextDiagnostics` field
-    // fails compilation here until its rg value is decided.
-    let result = ZvecGrepContextResult {
-        query,
-        root: root.to_string_lossy().into_owned(),
-        source: ContextSource::Rg,
-        coverage: if searched.diagnostics.truncated {
-            zg_core::service::types::ContextCoverage::RgTruncated
-        } else {
-            zg_core::service::types::ContextCoverage::RgExhaustive
-        },
-        workspace_index: None,
-        items: searched.items,
-        group_results: None,
-        diagnostics: ContextDiagnostics {
-            empty_reason: None,
-            index: None,
-            rg: serde_json::to_value(&searched.diagnostics).ok(),
-            structure: None,
-            timings: None,
-        },
-    };
-    print_context_result(&result, Rendering::from(args.human), color, PreviewMode::Full);
-    if let Some(missing) = searched.diagnostics.missing_paths {
-        for path in missing {
-            eprintln!("warning: path not found: {path}");
-        }
-    }
-    Ok(())
+    })
 }
 
 #[cfg(test)]

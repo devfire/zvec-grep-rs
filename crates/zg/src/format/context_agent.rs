@@ -9,9 +9,9 @@ use zg_core::service::types::{ContentStatus, ContextItem, ZvecGrepContextResult}
 use zg_core::types::Content;
 
 use super::context_shared::{empty_detail_lines, preview_window};
-use crate::cli::PreviewMode;
 use super::range::range_label;
 use super::text::{format_score, one_line, truncate};
+use crate::cli::PreviewMode;
 
 /// Renders a context result as agent markdown (the default CLI layout).
 ///

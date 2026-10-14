@@ -1,17 +1,17 @@
 //! Human renderer: labeled fields with optional ANSI color.
 //!
 //! Preview width comes from `--preview` via
-//! [`preview_window`](super::context_shared::preview_window).
+//! [`preview_window`].
 
 use zg_core::service::types::{ContextItem, ZvecGrepContextResult};
 use zg_core::types::Content;
 
 use super::color::{DIM, RESET};
 use super::context_shared::{empty_detail_lines, preview_window, source_label};
-use crate::cli::PreviewMode;
 use super::fields::human_field;
 use super::range::range_label;
 use super::text::format_score;
+use crate::cli::PreviewMode;
 
 /// Renders a context result for humans: labeled fields, optional color.
 #[must_use]

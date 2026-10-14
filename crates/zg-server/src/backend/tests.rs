@@ -248,6 +248,12 @@ async fn wait_for_fresh_applies_completion_without_resubmit() {
     // the same job id.
     let backend = backend();
     let dir = fixture();
+    // `c.rs` is created before the first command spawns the actor (and
+    // its live filesystem watcher). A post-spawn write would race a
+    // `WatchBatch` followup job into the search window, breaking the
+    // same-job-id invariant below under load. The explicit incremental
+    // re-index of `c.rs` still exercises the wait path deterministically.
+    std::fs::write(dir.path().join("c.rs"), "fn gamma() {}\n").unwrap();
     let root = root(&dir);
     let submitted = backend
         .index(
@@ -281,7 +287,6 @@ async fn wait_for_fresh_applies_completion_without_resubmit() {
     })
     .await
     .unwrap();
-    std::fs::write(dir.path().join("c.rs"), "fn gamma() {}\n").unwrap();
     let changed = dir.path().join("c.rs");
     let incremental = backend
         .index(
@@ -463,8 +468,7 @@ async fn drop_during_running_job_waits_for_cancellation_and_drops() {
     .unwrap();
     let drop_backend = backend.clone();
     let drop_root = root.clone();
-    let mut drop_task =
-        tokio::spawn(async move { drop_backend.index_drop(&drop_root).await });
+    let mut drop_task = tokio::spawn(async move { drop_backend.index_drop(&drop_root).await });
     // Give the drop its chance to (incorrectly) race the running job,
     // then let the embedding call return into the cancelled pipeline.
     tokio::time::sleep(Duration::from_millis(200)).await;
