@@ -6,6 +6,7 @@
 //! (via [`crate::utils::json_io`]), and embedding-runtime resolution.
 
 mod endpoint;
+mod endpoint_resolver;
 mod parse;
 
 use std::collections::BTreeMap;
@@ -19,6 +20,7 @@ pub use endpoint::{
     ALLOW_PRIVATE_ENDPOINT_ENV_VAR, allow_private_endpoint_from_env, is_allowed_request_endpoint,
     is_http_endpoint, is_public_http_endpoint,
 };
+pub use endpoint_resolver::{ValidatedEndpointResolver, agent_with_validated_resolver};
 pub use parse::{
     invalid_runtime, merge_model_configs, merge_provider_configs, parse_global_config,
 };

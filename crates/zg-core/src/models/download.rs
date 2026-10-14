@@ -217,7 +217,7 @@ const TEMP_CREATE_ATTEMPTS: usize = 5;
 /// Builds an artifact-fetch agent: redirects are followed manually (so
 /// every hop is re-validated) and every call is bounded by
 /// connect/first-byte/body/global timeouts.
-fn download_agent() -> ureq::Agent {
+fn download_agent(allow_private_endpoint: bool) -> ureq::Agent {
     let config = ureq::config::Config::builder()
         .timeout_global(Some(GLOBAL_TIMEOUT))
         .timeout_connect(Some(CONNECT_TIMEOUT))
@@ -227,7 +227,10 @@ fn download_agent() -> ureq::Agent {
         .max_redirects(0)
         .max_redirects_will_error(false)
         .build();
-    ureq::Agent::new_with_config(config)
+    // Connect-time validation of the dialed addresses: a hostname whose
+    // DNS answer changes after `validate_artifact_url` (rebinding) is
+    // rejected by the resolver instead of reaching a blocked address.
+    crate::config::agent_with_validated_resolver(config, allow_private_endpoint)
 }
 
 /// True when `host` may serve model artifacts: `huggingface.co` itself or
@@ -416,7 +419,7 @@ fn download_to(
     mut file: fs::File,
     on_progress: Option<&mut dyn FnMut(u64, Option<u64>)>,
 ) -> EngineResult<()> {
-    let agent = download_agent();
+    let agent = download_agent(crate::config::allow_private_endpoint_from_env());
     let mut current = url.to_owned();
     for _ in 0..=MAX_REDIRECTS {
         validate_artifact_url(&current, url)?;

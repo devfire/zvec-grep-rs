@@ -15,7 +15,9 @@
 //! DNS checks; the syntactic HTTP(S) check and the userinfo rejection
 //! still apply.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
+
+use super::endpoint_resolver::check_resolved_addrs;
 
 /// Environment variable explicitly allowing private/self-hosted remote
 /// embedding endpoints at request time (`"1"`, `"true"`, or `"yes"`).
@@ -79,25 +81,34 @@ pub fn is_allowed_request_endpoint(value: &str, allow_private_endpoint: bool) ->
     if allow_private_endpoint {
         return true;
     }
-    if is_blocked_hostname(host) {
-        return false;
+    let port = url.port_or_known_default().unwrap_or(443);
+    validated_socket_addrs(host, port, allow_private_endpoint).is_some()
+}
+
+/// Resolves `host`:`port` once and returns the addresses a request may
+/// dial, or `None` when the strict policy rejects any of them.
+///
+/// This is the single resolution the HTTP layer must use: callers hand
+/// the returned addresses to the connector (via
+/// [`crate::config::ValidatedEndpointResolver`]) instead of letting the HTTP client
+/// resolve the hostname a second time, which closes the DNS-rebinding
+/// (TOCTOU) gap between check and connect.
+fn validated_socket_addrs(
+    host: &str,
+    port: u16,
+    allow_private_endpoint: bool,
+) -> Option<Vec<SocketAddr>> {
+    if !allow_private_endpoint && is_blocked_hostname(host) {
+        return None;
     }
     if let Ok(ip) = host.parse::<IpAddr>() {
-        return !is_blocked_ip(&ip);
-    }
-    let port = url.port_or_known_default().unwrap_or(443);
-    let joint = format!("{host}:{port}");
-    let Ok(addrs) = joint.as_str().to_socket_addrs() else {
-        return false;
-    };
-    let mut resolved_any = false;
-    for addr in addrs {
-        resolved_any = true;
-        if is_blocked_ip(&addr.ip()) {
-            return false;
+        if !allow_private_endpoint && is_blocked_ip(&ip) {
+            return None;
         }
+        return Some(vec![SocketAddr::new(ip, port)]);
     }
-    resolved_any
+    let addrs: Vec<SocketAddr> = (host, port).to_socket_addrs().ok()?.collect();
+    check_resolved_addrs(addrs, allow_private_endpoint)
 }
 
 /// Explicit private-endpoint opt-out from the process environment
@@ -127,7 +138,7 @@ pub(crate) fn parse_allow_private_env(value: Option<&str>) -> Option<bool> {
 /// True for hostnames that must never be dialed: `localhost` (plus any
 /// sub-domain and the trailing-dot FQDN root form) and the well-known
 /// cloud metadata hostnames.
-fn is_blocked_hostname(host: &str) -> bool {
+pub(crate) fn is_blocked_hostname(host: &str) -> bool {
     let trimmed = host.strip_suffix('.').unwrap_or(host);
     if trimmed.eq_ignore_ascii_case("localhost") {
         return true;
@@ -149,7 +160,7 @@ fn is_blocked_hostname(host: &str) -> bool {
 /// multicast, unspecified, private/reserved ranges, and the well-known
 /// cloud metadata endpoints. IPv4-mapped IPv6 addresses inherit the IPv4
 /// policy for their embedded address.
-fn is_blocked_ip(ip: &IpAddr) -> bool {
+pub(crate) fn is_blocked_ip(ip: &IpAddr) -> bool {
     if ip.is_loopback() || ip.is_multicast() || ip.is_unspecified() {
         return true;
     }

@@ -52,7 +52,7 @@ const VL_MAX_IMAGE_COUNT: usize = 10;
 /// followed manually (see `post_embedding_json`) so every hop is
 /// re-validated, never downgraded, and never leaks `Bearer` credentials
 /// cross-origin.
-fn remote_agent() -> ureq::Agent {
+fn remote_agent(allow_private_endpoint: bool) -> ureq::Agent {
     let config = ureq::config::Config::builder()
         .timeout_global(Some(REMOTE_TIMEOUT))
         .timeout_connect(Some(CONNECT_TIMEOUT))
@@ -60,7 +60,11 @@ fn remote_agent() -> ureq::Agent {
         .max_redirects(0)
         .max_redirects_will_error(false)
         .build();
-    ureq::Agent::new_with_config(config)
+    // The resolver validates the exact addresses dialed at connect time,
+    // so a DNS answer that changes between the pre-check in
+    // `post_embedding_json` and the connect (rebinding) cannot reach a
+    // blocked address.
+    crate::config::agent_with_validated_resolver(config, allow_private_endpoint)
 }
 /// Sends one JSON embedding request with `Bearer` auth, returning the parsed
 /// body. Transport, JSON, and provider failures carry their own codes,
@@ -463,7 +467,7 @@ impl QwenTextEmbeddingModel {
             model: entry.model.to_owned(),
             endpoint,
             api_key,
-            agent: remote_agent(),
+            agent: remote_agent(allow_private_endpoint),
             display_name,
             model_kind,
             max_batch_size: entry.max_batch_size,
@@ -671,7 +675,7 @@ impl Qwen3VlEmbeddingModel {
             endpoint: Some(endpoint.clone()),
             default_concurrency: None,
         };
-        let agent = remote_agent();
+        let agent = remote_agent(allow_private_endpoint);
         Self {
             info,
             model: entry.model.to_owned(),

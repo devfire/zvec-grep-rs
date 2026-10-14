@@ -59,7 +59,17 @@ fn embed_failed(entry: &TransformersJsEntry, detail: impl std::fmt::Display) -> 
 /// triggers the real (loud on failure) download; anything else means the
 /// model is self-contained.
 fn remote_file_exists(url: &str) -> bool {
-    ureq::head(url)
+    // Same connect-time endpoint validation as the artifact downloader:
+    // the default agent would resolve the hostname again unchecked.
+    let config = ureq::config::Config::builder()
+        .http_status_as_error(false)
+        .build();
+    let agent = crate::config::agent_with_validated_resolver(
+        config,
+        crate::config::allow_private_endpoint_from_env(),
+    );
+    agent
+        .head(url)
         .call()
         .is_ok_and(|response| (200..300).contains(&response.status().as_u16()))
 }
