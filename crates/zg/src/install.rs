@@ -152,8 +152,10 @@ pub fn uninstall(target: InstallTarget, home: &Path) -> Result<Vec<PathBuf>, Cli
     }
 }
 
-/// Detects installed targets: config files (or their parent dirs) that
-/// already exist under `home`.
+/// Detects installed targets: an agent executable on `PATH` (mirroring
+/// upstream `executableIsAvailable`), or a pre-existing config file (or
+/// its parent dir) under `home` as a fallback for agents whose binary
+/// is not on `PATH` in this session.
 pub fn detect_targets(home: &Path) -> Vec<InstallTarget> {
     const ALL: [InstallTarget; 6] = [
         InstallTarget::Claude,
@@ -165,11 +167,81 @@ pub fn detect_targets(home: &Path) -> Vec<InstallTarget> {
     ];
     ALL.iter()
         .copied()
-        .filter(|target| {
-            let path = config_path(*target, home);
-            path.exists() || path.parent().is_some_and(Path::exists)
-        })
+        .filter(|target| target_executable_present(*target) || config_present(*target, home))
         .collect()
+}
+
+/// True when any of the target's agent executables is runnable from
+/// `PATH` (mirroring upstream `AGENT_INSTALLERS[].executables`).
+fn target_executable_present(target: InstallTarget) -> bool {
+    target_executables(target)
+        .iter()
+        .any(|executable| executable_on_path(executable))
+}
+
+/// Agent executables per target, mirroring upstream `AGENT_INSTALLERS`.
+fn target_executables(target: InstallTarget) -> &'static [&'static str] {
+    match target {
+        InstallTarget::Claude => &["claude"],
+        InstallTarget::Codex => &["codex"],
+        InstallTarget::OpenCode => &["opencode"],
+        InstallTarget::Cursor => &["cursor"],
+        InstallTarget::Qwen => &["qwen"],
+        InstallTarget::Qoder => &["qoder", "qodercli", "qoder-ide"],
+    }
+}
+
+/// True when `executable` resolves to an executable file in a `PATH`
+/// directory (empty entries mean the current directory, as in shells).
+fn executable_on_path(executable: &str) -> bool {
+    let Some(path_var) = std::env::var_os("PATH") else {
+        return false;
+    };
+    for entry in std::env::split_paths(&path_var) {
+        let dir = if entry.as_os_str().is_empty() {
+            PathBuf::from(".")
+        } else {
+            entry
+        };
+        let candidate = dir.join(executable);
+        if is_executable_file(&candidate) {
+            return true;
+        }
+        #[cfg(windows)]
+        for extension in ["exe", "cmd", "bat", "com"] {
+            if is_executable_file(&candidate.with_extension(extension)) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// True when `path` is a regular file with any execute bit set (Unix);
+/// on non-Unix any existing regular file counts.
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+/// True when the target's config file (or its parent dir) already exists
+/// under `home`.
+fn config_present(target: InstallTarget, home: &Path) -> bool {
+    let path = config_path(target, home);
+    path.exists() || path.parent().is_some_and(Path::exists)
 }
 
 /// Container key holding MCP servers in a JSON target.
@@ -329,31 +401,70 @@ fn stdio_args(options: &InstallOptions) -> Vec<String> {
     args
 }
 
-/// True for entries this installer owns: a `zg` stdio command or an
-/// http(s) URL entry.
-fn is_managed(entry: &serde_json::Value) -> bool {
-    if entry.get("command").and_then(|command| command.as_str()) == Some("zg") {
-        return true;
+/// True for entries this installer owns (mirroring upstream
+/// `isManagedJsonMcpServer`): the daemon's server URL, a `zg` stdio
+/// launch, or the `OpenCode` array-command form.
+fn is_managed(entry: &serde_json::Value, server_url: &str) -> bool {
+    if !entry.is_object() {
+        return false;
     }
-    // OpenCode array form: `["zg", "--server", "--stdio", ..]`.
-    if let Some(command) = entry.get("command").and_then(|command| command.as_array())
-        && let [program, action, stdio, ..] = command.as_slice()
-        && program.as_str() == Some("zg")
-        && matches!(action.as_str(), Some("--server" | "server"))
-        && stdio.as_str() == Some("--stdio")
+    if entry
+        .get("url")
+        .and_then(|url| url.as_str())
+        .is_some_and(|url| url == server_url)
     {
         return true;
     }
-    for key in ["url", "httpUrl"] {
-        if entry
-            .get(key)
-            .and_then(|url| url.as_str())
-            .is_some_and(|url| url.starts_with("http://") || url.starts_with("https://"))
-        {
-            return true;
-        }
+    // Qwen's `httpUrl` twin of the daemon URL.
+    if entry
+        .get("httpUrl")
+        .and_then(|url| url.as_str())
+        .is_some_and(|url| url == server_url)
+    {
+        return true;
+    }
+    if entry.get("command").and_then(|command| command.as_str()) == Some("zg")
+        && entry.get("args").is_some_and(is_stdio_args)
+    {
+        return true;
+    }
+    // OpenCode array form, mirroring upstream `isManagedJsonMcpServer`
+    // (`["zg", "server", "--stdio", ..]`); this port writes the
+    // `--server` flag spelling, so both count as managed.
+    if let Some(command) = entry.get("command").and_then(|command| command.as_array())
+        && let [program, action, stdio, rest @ ..] = command.as_slice()
+        && program.as_str() == Some("zg")
+        && matches!(action.as_str(), Some("server" | "--server"))
+        && stdio.as_str() == Some("--stdio")
+        && is_toolset_tail(rest)
+    {
+        return entry.get("type").and_then(|kind| kind.as_str()) == Some("local");
     }
     false
+}
+
+/// True for upstream `stdioArgs` shapes: `["server", "--stdio"]` plus an
+/// optional `--mcp-toolset agent|full` tail.
+fn is_stdio_args(args: &serde_json::Value) -> bool {
+    let Some(args) = args.as_array() else {
+        return false;
+    };
+    let [action, stdio, rest @ ..] = args.as_slice() else {
+        return false;
+    };
+    action.as_str() == Some("server") && stdio.as_str() == Some("--stdio") && is_toolset_tail(rest)
+}
+
+/// True for the empty tail or `--mcp-toolset agent|full`.
+fn is_toolset_tail(rest: &[serde_json::Value]) -> bool {
+    match rest {
+        [] => true,
+        [flag, toolset] => {
+            flag.as_str() == Some("--mcp-toolset")
+                && matches!(toolset.as_str(), Some("agent" | "full"))
+        }
+        _ => false,
+    }
 }
 
 fn install_json(
@@ -362,28 +473,37 @@ fn install_json(
     options: &InstallOptions,
 ) -> Result<Vec<PathBuf>, CliError> {
     let key = container_key(target);
-    let mut root = read_json_object(path)?;
-    if let Some(container) = root.get(key)
-        && !container.is_object()
-    {
-        return Err(CliError::install_refused(format!(
-            "Expected {key} in {} to be a JSON object",
-            path.display()
-        )));
-    }
-    if has_jsonc_comments(path)? && !options.force {
+    let raw = read_text_file(path)?;
+    // `--force` replaces an unparseable file (invalid JSON or JSONC
+    // comments a serde rewrite would drop) instead of failing on it:
+    // read first, gate on consent, then start from an empty object.
+    if !options.force && has_jsonc_comments_text(&raw) {
         return Err(CliError::install_refused(format!(
             "{} contains comments that a JSON rewrite would drop. Re-run with --force to replace it for {}.",
             path.display(),
             target.label()
         )));
     }
+    let mut root = match parse_json_object(path, &raw) {
+        Ok(None) => serde_json::Value::Object(serde_json::Map::default()),
+        Ok(Some(root)) => root,
+        Err(error) => {
+            if !options.force {
+                return Err(error);
+            }
+            serde_json::Value::Object(serde_json::Map::default())
+        }
+    };
     let mut container = root
         .get(key)
         .cloned()
         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::default()));
     let existing = container.get("zvec_grep").cloned();
-    if existing.as_ref().is_some_and(|entry| !is_managed(entry)) && !options.force {
+    if existing
+        .as_ref()
+        .is_some_and(|entry| !is_managed(entry, options.server_url.as_str()))
+        && !options.force
+    {
         return Err(CliError::install_refused(format!(
             "Existing unmanaged zvec_grep MCP server found in {}. Re-run with --force to replace it for {}.",
             path.display(),
@@ -408,9 +528,15 @@ fn uninstall_json(path: &Path) -> Result<Vec<PathBuf>, CliError> {
         return Ok(Vec::new());
     }
     let mut root = read_json_object(path)?;
+    let server_url = resolve_server_url();
     let mut changed = false;
     for key in ["mcp", "mcpServers"] {
-        if let Some(container) = root.get_mut(key).and_then(|value| value.as_object_mut())
+        let managed = root
+            .get(key)
+            .and_then(|container| container.get("zvec_grep"))
+            .is_some_and(|entry| is_managed(entry, server_url.as_str()));
+        if managed
+            && let Some(container) = root.get_mut(key).and_then(|value| value.as_object_mut())
             && container.remove("zvec_grep").is_some()
         {
             changed = true;
@@ -469,19 +595,47 @@ fn codex_block(options: &InstallOptions) -> String {
             block.push_str(&toml_string_array(&stdio_args(options)));
         }
         McpTransportArg::Http => {
-            let _ = write!(block, "url = \"{}\"", options.server_url);
+            let _ = write!(block, "url = {}", toml_basic_string(&options.server_url));
         }
     }
     if let Some(env) = &options.token_env {
-        let _ = write!(block, "\nbearer_token_env_var = \"{env}\"");
+        let _ = write!(block, "\nbearer_token_env_var = {}", toml_basic_string(env));
     }
     block.push('\n');
     block.push_str(CONFIG_END);
     block
 }
 
+/// TOML basic string: `"` and `\` (plus control chars) escaped so a
+/// server URL or env-var name containing them cannot corrupt
+/// `config.toml` (mirrors upstream `JSON.stringify` quoting).
+fn toml_basic_string(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\u{8}' => quoted.push_str("\\b"),
+            '\t' => quoted.push_str("\\t"),
+            '\n' => quoted.push_str("\\n"),
+            '\u{c}' => quoted.push_str("\\f"),
+            '\r' => quoted.push_str("\\r"),
+            ch if (ch as u32) < 0x20 => {
+                let _ = write!(quoted, "\\u{:04X}", ch as u32);
+            }
+            ch => quoted.push(ch),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
 fn toml_string_array(values: &[String]) -> String {
-    let quoted: Vec<String> = values.iter().map(|value| format!("\"{value}\"")).collect();
+    let quoted: Vec<String> = values
+        .iter()
+        .map(|value| toml_basic_string(value))
+        .collect();
     format!("[{}]", quoted.join(", "))
 }
 
@@ -515,37 +669,39 @@ fn remove_marked_block(existing: &str, start: &str, end: &str) -> String {
 }
 
 fn read_json_object(path: &Path) -> Result<serde_json::Value, CliError> {
-    if !path.exists() {
-        return Ok(serde_json::Value::Object(serde_json::Map::default()));
+    let text = read_text_file(path)?;
+    match parse_json_object(path, &text)? {
+        Some(value) => Ok(value),
+        None => Ok(serde_json::Value::Object(serde_json::Map::default())),
     }
-    let text = std::fs::read_to_string(path).map_err(|error| CliError::io(path, error))?;
-    serde_json::from_str(&text)
-        .map_err(|_| {
-            CliError::install_refused(format!(
-                "{} is not valid JSON. Fix it or re-run with --force to replace it.",
-                path.display()
-            ))
-        })
-        .and_then(|value: serde_json::Value| {
-            if value.is_object() {
-                Ok(value)
-            } else {
-                Err(CliError::install_refused(format!(
-                    "Expected {} to hold a JSON object",
-                    path.display()
-                )))
-            }
-        })
 }
 
-/// Naive comment scan outside string literals: JSONC comments would not
-/// survive a serde rewrite, so they need explicit consent.
-fn has_jsonc_comments(path: &Path) -> Result<bool, CliError> {
-    if !path.exists() {
-        return Ok(false);
+/// Parses installer JSON: `None` for a missing/empty file (fresh
+/// install), otherwise the object or a refusal error.
+fn parse_json_object(path: &Path, text: &str) -> Result<Option<serde_json::Value>, CliError> {
+    if text.trim().is_empty() {
+        return Ok(None);
     }
-    let text = std::fs::read_to_string(path).map_err(|error| CliError::io(path, error))?;
-    Ok(contains_comment(&text))
+    let value: serde_json::Value = serde_json::from_str(text).map_err(|_| {
+        CliError::install_refused(format!(
+            "{} is not valid JSON. Fix it or re-run with --force to replace it.",
+            path.display()
+        ))
+    })?;
+    if value.is_object() {
+        Ok(Some(value))
+    } else {
+        Err(CliError::install_refused(format!(
+            "Expected {} to hold a JSON object",
+            path.display()
+        )))
+    }
+}
+
+/// Comment scan over already-read text (avoids re-reading the file on
+/// the install path).
+fn has_jsonc_comments_text(text: &str) -> bool {
+    contains_comment(text)
 }
 
 fn contains_comment(text: &str) -> bool {
@@ -779,5 +935,113 @@ mod tests {
         assert!(!contains_comment(r#"{"url": "http://x/y"}"#));
         assert!(contains_comment("{\n// c\n}"));
         assert!(contains_comment("{\n/* c */\n}"));
+    }
+
+    /// Regression for #76.1: `executable_on_path` resolves an agent
+    /// binary from a `PATH`-style value without any config file present.
+    /// (`detect_targets` itself reads process `PATH`, which a test must
+    /// not mutate; the lookup helper takes effect through it.)
+    #[test]
+    fn path_executable_counts_as_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let exe = bin.join("qodercli");
+        std::fs::write(&exe, "#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        assert!(is_executable_file(&exe));
+        assert!(!is_executable_file(&bin.join("missing")));
+        assert!(target_executables(InstallTarget::Qoder).contains(&"qodercli"));
+        // Non-executable regular files never count on Unix.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let plain = bin.join("plain");
+            std::fs::write(&plain, "x").unwrap();
+            std::fs::set_permissions(&plain, std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(!is_executable_file(&plain));
+        }
+    }
+
+    /// Regression for #76.2a: a foreign `http(s)` URL is unmanaged and
+    /// needs `--force`; the daemon's own URL reinstalls freely.
+    #[test]
+    fn foreign_http_url_needs_force() {
+        let home = home();
+        let dir = home.path();
+        let path = config_path(InstallTarget::Cursor, dir);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"mcpServers": {"zvec_grep": {"url": "https://foreign.example/mcp"}}}"#,
+        )
+        .unwrap();
+        let error = install(InstallTarget::Cursor, &options(), dir).expect_err("must refuse");
+        assert!(error.to_string().contains("--force"), "{error}");
+        // The daemon URL itself is managed: reinstall needs no consent.
+        std::fs::write(
+            &path,
+            r#"{"mcpServers": {"zvec_grep": {"url": "http://127.0.0.1:18099"}}}"#,
+        )
+        .unwrap();
+        install(InstallTarget::Cursor, &options(), dir).unwrap();
+    }
+
+    /// Regression for #76.2b: uninstall never removes a foreign entry.
+    #[test]
+    fn uninstall_keeps_unmanaged_entry() {
+        let home = home();
+        let dir = home.path();
+        let path = config_path(InstallTarget::Cursor, dir);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"mcpServers": {"zvec_grep": {"command": "foreign"}}}"#,
+        )
+        .unwrap();
+        assert!(uninstall(InstallTarget::Cursor, dir).unwrap().is_empty());
+        let root: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(root["mcpServers"]["zvec_grep"]["command"], "foreign");
+    }
+
+    /// Regression for #76.3: `--force` replaces a commented file that
+    /// `read_json_object` cannot parse.
+    #[test]
+    fn force_replaces_commented_file() {
+        let home = home();
+        let dir = home.path();
+        let path = config_path(InstallTarget::Qwen, dir);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "{\n// keep me\n}").unwrap();
+        let mut forced = options();
+        forced.force = true;
+        install(InstallTarget::Qwen, &forced, dir).unwrap();
+        let root: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(root["mcpServers"]["zvec_grep"]["command"], "zg");
+    }
+
+    /// Regression for #76.4: `"` and `\` in TOML strings are escaped.
+    #[test]
+    fn toml_basic_string_escapes() {
+        assert_eq!(toml_basic_string("a\"b\\c"), "\"a\\\"b\\\\c\"");
+        let mut opts = options();
+        opts.transport = McpTransportArg::Http;
+        opts.server_url = "https://x.example/\"q\"\\p".to_owned();
+        opts.token_env = Some("A\"B\\C".to_owned());
+        let block = codex_block(&opts);
+        assert!(
+            block.contains("url = \"https://x.example/\\\"q\\\"\\\\p\""),
+            "{block}"
+        );
+        assert!(
+            block.contains("bearer_token_env_var = \"A\\\"B\\\\C\""),
+            "{block}"
+        );
     }
 }
