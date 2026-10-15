@@ -27,6 +27,12 @@ pub enum DaemonError {
         /// Canonical root the caller asked about.
         root: String,
     },
+    /// The root actor's bounded client mailbox is full; the caller should
+    /// retry. Rust addition for #93: TS has no bounded mailbox.
+    ActorBusy {
+        /// Canonical root whose actor mailbox is full.
+        root: String,
+    },
     /// A second writer arrived while an index or drop job owns the root.
     IndexBusy {
         /// Canonical root under contention.
@@ -116,6 +122,7 @@ impl DaemonError {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::ShuttingDown => "DAEMON_SHUTTING_DOWN",
+            Self::ActorBusy { .. } => "ACTOR_BUSY",
             Self::IndexMissing { .. } => "INDEX_MISSING",
             Self::IndexBusy { .. } => "INDEX_BUSY",
             Self::IndexFailed { .. } => "INDEX_FAILED",
@@ -150,6 +157,12 @@ impl fmt::Display for DaemonError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ShuttingDown => write!(f, "the daemon is shutting down"),
+            Self::ActorBusy { root } => {
+                write!(
+                    f,
+                    "root actor mailbox is full for {root}; retry the request"
+                )
+            }
             Self::IndexMissing { root } => write!(
                 f,
                 "indexed search requires a built zvec-grep index for {root}"
@@ -214,6 +227,10 @@ impl std::error::Error for DaemonError {
 pub fn all_codes() -> Vec<&'static str> {
     vec![
         DaemonError::ShuttingDown.code(),
+        DaemonError::ActorBusy {
+            root: String::new(),
+        }
+        .code(),
         DaemonError::IndexMissing {
             root: String::new(),
         }

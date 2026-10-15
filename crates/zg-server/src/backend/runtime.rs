@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{Receiver, UnboundedReceiver, UnboundedSender};
 use zg_core::error::{EngineError, EngineResult};
 use zg_core::models::catalog::{EMBEDDING_MODEL_CATALOG, EmbeddingCatalogEntry, ModelReference};
 use zg_core::models::error::ModelError;
@@ -41,13 +41,14 @@ pub(crate) async fn spawn_root_actor(
     manager: RuntimeManager,
     key: RootKey,
     generation: u64,
-    tx: UnboundedSender<RootCommand>,
-    rx: UnboundedReceiver<RootCommand>,
+    internal_tx: UnboundedSender<RootCommand>,
+    rx: Receiver<RootCommand>,
+    internal_rx: UnboundedReceiver<RootCommand>,
 ) {
     let coordinator = IndexCoordinator::new(key.as_str(), None);
     let opener = session_opener(shared.clone(), key.clone());
     let sessions = WorkspaceReadSessionCache::new(opener, Some(shared.read_session_ttl));
-    let (on_changes, on_pending, on_active) = watcher_callbacks(&tx);
+    let (on_changes, on_pending, on_active) = watcher_callbacks(&internal_tx);
     let service = shared.service.clone();
     let root = key.to_string();
     let get_roots = Arc::new(move || {
@@ -106,7 +107,7 @@ pub(crate) async fn spawn_root_actor(
     // as fresh (#34); roots without an index need nothing (the first
     // explicit index call already forces a full build).
     if let Some(seed) = catch_up_snapshot(had_index) {
-        let seed_tx = tx.clone();
+        let seed_tx = internal_tx.clone();
         let seed_key = key.clone();
         let seed_shared = shared.clone();
         if coordinator
@@ -134,7 +135,8 @@ pub(crate) async fn spawn_root_actor(
         status: None,
         scan: None,
         rx,
-        tx,
+        internal_rx,
+        internal_tx,
     };
     actor.run().await;
 }

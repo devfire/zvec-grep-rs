@@ -10,6 +10,7 @@
 # job snapshots and MCP payloads. `ADDRESS_IN_USE`, `UNKNOWN_JOB`,
 # `ALREADY_RUNNING`, and `SHUTDOWN_FAILED` are Rust additions (TS throws
 # plain `Error`s there); the rest mirror `daemon/errors.ts` call sites.
+ACTOR_BUSY
 ADDRESS_IN_USE
 ALREADY_RUNNING
 DAEMON_SHUTTING_DOWN

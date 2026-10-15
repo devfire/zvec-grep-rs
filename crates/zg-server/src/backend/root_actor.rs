@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, error::TryRecvError};
+use tokio::sync::mpsc::{Receiver, UnboundedReceiver, UnboundedSender, error::TryRecvError};
 use zg_core::index_status::{index_completion_for_job, index_completion_from_status};
 use zg_core::service::facade::ZvecGrepService;
 
@@ -38,8 +38,9 @@ pub(crate) struct RootActor {
     pub(crate) watcher: WatchManager,
     pub(crate) status: Option<zg_core::types::WorkspaceIndexStatus>,
     pub(crate) scan: Option<zg_core::types::FileScanDiagnostics>,
-    pub(crate) rx: UnboundedReceiver<RootCommand>,
-    pub(crate) tx: UnboundedSender<RootCommand>,
+    pub(crate) rx: Receiver<RootCommand>,
+    pub(crate) internal_rx: UnboundedReceiver<RootCommand>,
+    pub(crate) internal_tx: UnboundedSender<RootCommand>,
 }
 
 impl RootActor {
@@ -48,14 +49,15 @@ impl RootActor {
         loop {
             tokio::select! {
                 biased;
-                Some(cmd) = self.rx.recv() => {
+                Some(cmd) = self.internal_rx.recv() => {
                     idle.as_mut().reset(tokio::time::Instant::now() + self.shared.runtime_idle_ttl);
-                    if matches!(cmd, RootCommand::Shutdown) {
+                    if !self.dispatch(cmd).await {
                         break;
                     }
-                    // A completed drop owns no state worth keeping: exit so
-                    // the manager can reclaim the task.
-                    if !self.handle(cmd).await {
+                }
+                Some(cmd) = self.rx.recv() => {
+                    idle.as_mut().reset(tokio::time::Instant::now() + self.shared.runtime_idle_ttl);
+                    if !self.dispatch(cmd).await {
                         break;
                     }
                 }
@@ -68,20 +70,21 @@ impl RootActor {
                     if self.runtime.is_quiet() && !self.runtime.needs_reconciliation() {
                         // A flushed batch re-enters as `WatchBatch`; handle
                         // one queued command (if any) instead of exiting
-                        // over it.
-                        match self.rx.try_recv() {
+                        // over it. Internal delivery is checked first so a
+                        // queued shutdown/finished is never skipped.
+                        let queued = match self.internal_rx.try_recv() {
+                            Ok(cmd) => Ok(cmd),
+                            Err(TryRecvError::Empty) => self.rx.try_recv(),
+                            Err(error) => Err(error),
+                        };
+                        match queued {
                             Ok(cmd) => {
                                 idle.as_mut().reset(tokio::time::Instant::now() + self.shared.runtime_idle_ttl);
-                                if matches!(cmd, RootCommand::Shutdown) {
-                                    break;
-                                }
-                                if !self.handle(cmd).await {
+                                if !self.dispatch(cmd).await {
                                     break;
                                 }
                             }
-                            Err(
-                                TryRecvError::Empty | TryRecvError::Disconnected,
-                            ) => break,
+                            Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
                         }
                     } else {
                         idle.as_mut().reset(tokio::time::Instant::now() + self.shared.runtime_idle_ttl);
@@ -90,6 +93,15 @@ impl RootActor {
             }
         }
         self.teardown().await;
+    }
+
+    /// Dispatches one command; returns false when the actor should exit
+    /// (shutdown, or a completed drop — see `handle`).
+    async fn dispatch(&mut self, cmd: RootCommand) -> bool {
+        if matches!(cmd, RootCommand::Shutdown) {
+            return false;
+        }
+        self.handle(cmd).await
     }
 
     /// Handles one command. Returns false when the actor should exit
@@ -189,7 +201,7 @@ impl RootActor {
                 ..ChangeSetSnapshot::default()
             }
         };
-        let tx = self.tx.clone();
+        let tx = self.internal_tx.clone();
         let key = self.key.clone();
         let shared = self.shared.clone();
         match self.coordinator.enqueue(
@@ -213,7 +225,7 @@ impl RootActor {
             WatchReason::Watch => CoordinatorReason::Watch,
             WatchReason::Reconcile => CoordinatorReason::Reconcile,
         };
-        let tx = self.tx.clone();
+        let tx = self.internal_tx.clone();
         let key = self.key.clone();
         let shared = self.shared.clone();
         let result = self.coordinator.enqueue(
@@ -290,15 +302,22 @@ impl RootActor {
             .map_err(BackendError::Engine)
     }
 
-    /// Applies queued index completions without yielding the actor.
-    ///
-    /// `wait_for_fresh` blocks the actor on `scheduler.wait`; the run's
-    /// `IndexFinished` message then sits in this same mailbox, so the
-    /// runtime still reads dirty after the wait and the next loop round
-    /// would submit a duplicate job (#54). Drain those completions before
-    /// re-checking: other commands are stashed and re-queued in order.
     pub(crate) fn drain_finished(&mut self) {
         let mut deferred = Vec::new();
+        // IndexFinished arrives only on the internal channel; client
+        // commands drained from the bounded mailbox are deferred too.
+        // Re-queueing deferred commands on the lossless internal channel
+        // preserves their relative order and cannot fail on a full
+        // bounded mailbox refilled by concurrent clients (#93).
+        loop {
+            match self.internal_rx.try_recv() {
+                Ok(RootCommand::IndexFinished { finished }) => {
+                    self.apply_finished(*finished);
+                }
+                Ok(cmd) => deferred.push(cmd),
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+            }
+        }
         loop {
             match self.rx.try_recv() {
                 Ok(RootCommand::IndexFinished { finished }) => {
@@ -309,7 +328,7 @@ impl RootActor {
             }
         }
         for cmd in deferred {
-            let _ = self.tx.send(cmd);
+            let _ = self.internal_tx.send(cmd);
         }
     }
 

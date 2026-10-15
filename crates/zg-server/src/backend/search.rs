@@ -173,7 +173,7 @@ impl RootActor {
                     force_full_reconcile: full,
                     ..ChangeSetSnapshot::default()
                 };
-                let tx = self.tx.clone();
+                let tx = self.internal_tx.clone();
                 let key = self.key.clone();
                 let shared = self.shared.clone();
                 if let Ok(submitted) = self.coordinator.enqueue(

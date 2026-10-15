@@ -15,7 +15,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::mpsc::{Sender, channel, unbounded_channel};
 use tokio::task::JoinHandle;
 use zg_core::service::facade::ZvecGrepService;
 
@@ -28,6 +29,12 @@ use crate::sync::MutexExt;
 
 /// Idle TTL before a quiet actor exits itself; mirrors TS `runtimeIdleTtlMs`.
 pub const DEFAULT_RUNTIME_IDLE_TTL: Duration = Duration::from_secs(30 * 60);
+
+/// Bounded client-command mailbox per root actor (#93). Client commands
+/// (`Search`/`Index`/`Status`/`Drop`) beyond this depth are rejected with
+/// `ACTOR_BUSY` instead of queueing unboundedly; watcher, index-finished,
+/// and shutdown delivery uses a separate unbounded internal channel.
+pub const ROOT_ACTOR_MAILBOX_CAPACITY: usize = 64;
 
 struct ActorEntry {
     handle: RootHandle,
@@ -183,7 +190,7 @@ impl RuntimeManager {
     pub async fn evict(&self, key: &RootKey) {
         let entry = self.inner.lock_ignore_poison().actors.remove(key.as_str());
         if let Some(entry) = entry {
-            let _ = entry.handle.tx.send(RootCommand::Shutdown);
+            let _ = entry.handle.internal_tx.send(RootCommand::Shutdown);
             if let Some(join) = entry.join {
                 let _ = join.await;
             }
@@ -210,7 +217,7 @@ impl RuntimeManager {
             .collect();
         self.inner.lock_ignore_poison().aliases.clear();
         for entry in &entries {
-            let _ = entry.handle.tx.send(RootCommand::Shutdown);
+            let _ = entry.handle.internal_tx.send(RootCommand::Shutdown);
         }
         // Joins awaited after every actor saw Shutdown: teardowns run
         // concurrently, and none blocks on another actor.
@@ -247,10 +254,12 @@ impl RuntimeManager {
             inner.next_generation = generation.wrapping_add(1);
             generation
         };
-        let (tx, rx) = unbounded_channel();
+        let (tx, rx) = channel(ROOT_ACTOR_MAILBOX_CAPACITY);
+        let (internal_tx, internal_rx) = unbounded_channel();
         let handle = RootHandle {
             key: canonical.clone(),
             tx: tx.clone(),
+            internal_tx: internal_tx.clone(),
             generation,
         };
         let manager = self.clone();
@@ -261,8 +270,9 @@ impl RuntimeManager {
                 manager.clone(),
                 key,
                 generation,
-                tx.clone(),
+                internal_tx.clone(),
                 rx,
+                internal_rx,
             )
             .await;
         });
@@ -311,13 +321,20 @@ impl RuntimeManager {
     }
 }
 
-/// Sends one actor command, mapping a dead actor to a shutdown error.
+/// Sends one client actor command without queueing unboundedly: a full
+/// bounded mailbox is `ACTOR_BUSY`, a dead actor is a shutdown error (#93).
 pub(crate) fn send_command(
-    tx: &UnboundedSender<RootCommand>,
+    tx: &Sender<RootCommand>,
+    root: &str,
     command: RootCommand,
 ) -> Result<(), BackendError> {
-    tx.send(command)
-        .map_err(|_| BackendError::Daemon(DaemonError::ShuttingDown))
+    match tx.try_send(command) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(_)) => Err(BackendError::Daemon(DaemonError::ActorBusy {
+            root: root.to_owned(),
+        })),
+        Err(TrySendError::Closed(_)) => Err(BackendError::Daemon(DaemonError::ShuttingDown)),
+    }
 }
 
 #[cfg(test)]
@@ -381,6 +398,21 @@ mod tests {
             assert!(first.tx.same_channel(&handle.tx));
         }
         manager.close().await;
+    }
+
+    #[test]
+    fn full_client_mailbox_rejects_busy_instead_of_queueing() {
+        // Capacity-1 stand-in for the bounded client mailbox: the first
+        // command fills it, the second must fail fast with ACTOR_BUSY
+        // rather than queue behind a busy actor (#93).
+        let (tx, _rx) = channel(1);
+        send_command(&tx, "/repo", RootCommand::Shutdown).unwrap();
+        let error = send_command(&tx, "/repo", RootCommand::Shutdown).unwrap_err();
+        assert_eq!(error.code(), "ACTOR_BUSY");
+        assert!(matches!(
+            error,
+            BackendError::Daemon(DaemonError::ActorBusy { .. })
+        ));
     }
 
     #[tokio::test]

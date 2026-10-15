@@ -11,6 +11,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use axum::http::{HeaderMap, Method, StatusCode};
@@ -50,6 +51,72 @@ impl Default for McpHttpEndpointOptions {
     }
 }
 
+/// Daemon-wide legacy-session cap, shared by every endpoint (`/mcp` and
+/// `/mcp/admin`) so the ceiling is not per-endpoint (#93). A slot is
+/// reserved atomically before an initialize is forwarded and held until
+/// forwarding returns; by then a created session is counted in its
+/// manager's live map, so concurrent initializes cannot all observe a
+/// stale count below the cap and overshoot it.
+pub struct LegacySessionGate {
+    max: usize,
+    reserved: AtomicUsize,
+    gate: tokio::sync::Mutex<()>,
+    managers: std::sync::Mutex<Vec<Arc<LocalSessionManager>>>,
+}
+
+impl LegacySessionGate {
+    pub(crate) fn new(max: usize) -> Arc<Self> {
+        Arc::new(Self {
+            max,
+            reserved: AtomicUsize::new(0),
+            gate: tokio::sync::Mutex::new(()),
+            managers: std::sync::Mutex::new(Vec::new()),
+        })
+    }
+
+    fn register(&self, sessions: &Arc<LocalSessionManager>) {
+        if let Ok(mut managers) = self.managers.lock() {
+            managers.push(Arc::clone(sessions));
+        }
+    }
+
+    async fn live_count(&self) -> usize {
+        let managers: Vec<Arc<LocalSessionManager>> = self
+            .managers
+            .lock()
+            .map(|managers| managers.clone())
+            .unwrap_or_default();
+        let mut total = 0usize;
+        for manager in &managers {
+            total = total.saturating_add(manager.sessions.read().await.len());
+        }
+        total
+    }
+
+    /// Atomically reserves one slot when live + reserved is below the cap.
+    async fn try_reserve(self: &Arc<Self>) -> Option<SessionReservation> {
+        let _lock = self.gate.lock().await;
+        if self.live_count().await + self.reserved.load(Ordering::SeqCst) >= self.max {
+            return None;
+        }
+        self.reserved.fetch_add(1, Ordering::SeqCst);
+        Some(SessionReservation {
+            gate: Arc::clone(self),
+        })
+    }
+}
+
+/// One reserved session slot; releases on drop.
+struct SessionReservation {
+    gate: Arc<LegacySessionGate>,
+}
+
+impl Drop for SessionReservation {
+    fn drop(&mut self) {
+        self.gate.reserved.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// Stateful MCP HTTP endpoint: one rmcp service plus the TS session
 /// guards. Shared by reference behind the axum routes.
 #[derive(Clone)]
@@ -59,7 +126,7 @@ pub struct McpHttpEndpoint {
         LocalSessionManager,
     >,
     sessions: Arc<LocalSessionManager>,
-    max_legacy_sessions: usize,
+    session_gate: Arc<LegacySessionGate>,
 }
 
 impl McpHttpEndpoint {
@@ -75,6 +142,24 @@ impl McpHttpEndpoint {
         version: String,
         toolset: McpToolset,
         options: &McpHttpEndpointOptions,
+    ) -> Result<Self, McpError> {
+        Self::with_session_gate(
+            backend,
+            version,
+            toolset,
+            options,
+            LegacySessionGate::new(options.max_legacy_sessions),
+        )
+    }
+
+    /// Endpoint sharing `session_gate` with sibling endpoints, so the
+    /// legacy-session cap is daemon-wide rather than per-endpoint (#93).
+    pub(crate) fn with_session_gate(
+        backend: DaemonBackend,
+        version: String,
+        toolset: McpToolset,
+        options: &McpHttpEndpointOptions,
+        session_gate: Arc<LegacySessionGate>,
     ) -> Result<Self, McpError> {
         if options.max_legacy_sessions == 0 || options.legacy_session_idle_ttl.is_zero() {
             return Err(McpError::invalid_params(
@@ -96,10 +181,11 @@ impl McpHttpEndpoint {
                 stateful_mode: true,
             },
         );
+        session_gate.register(&sessions);
         Ok(Self {
             service,
             sessions,
-            max_legacy_sessions: options.max_legacy_sessions,
+            session_gate,
         })
     }
 
@@ -123,12 +209,17 @@ impl McpHttpEndpoint {
                 "An MCP initialize request is required before other requests.",
             );
         }
-        if self.session_count().await >= self.max_legacy_sessions {
+        // Reserve before forwarding: the session is only created inside
+        // rmcp during `forward`, so a bare count check is check-then-act
+        // and concurrent initializes overshoot the cap (#93). The
+        // reservation drops after forwarding, when a created session is
+        // already visible in the live count.
+        let Some(_reservation) = self.session_gate.try_reserve().await else {
             return mcp_error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "MCP legacy session limit reached.",
             );
-        }
+        };
         self.forward(Method::POST, headers, body).await
     }
 

@@ -144,6 +144,14 @@ pub fn normalize_search_input(input: &SearchInput) -> Result<NormalizedSearchInp
             "zvec_grep_search requires query, queries, fts, or vector.",
         ));
     }
+    // The 32-group cap is per request, not per field: `query`/`queries`
+    // merge into `queries` and `fts`/`vector` into `routes`, so the merged
+    // total is what executes (embedding + retrieval per group) (#93).
+    if queries.len() + routes.len() > MCP_MAX_QUERY_GROUPS {
+        return Err(McpError::invalid_params(format!(
+            "search exceeds {MCP_MAX_QUERY_GROUPS} groups."
+        )));
+    }
     if input.symbol_types.len() > 6 {
         return Err(McpError::invalid_params("symbolTypes exceeds 6 entries."));
     }
@@ -343,6 +351,23 @@ mod tests {
         let normalized = normalize_search_input(&input).unwrap();
         assert_eq!(normalized.queries.len(), 1);
         assert_eq!(normalized.queries[0].as_str(), "ok");
+    }
+
+    #[test]
+    fn group_cap_is_per_request_not_per_field() {
+        // 16 primary + 16 route groups = exactly the cap: accepted.
+        let mut input = search("seed");
+        input.queries = Some(StringOrList::Multiple(
+            (0..15).map(|index| format!("q{index}")).collect(),
+        ));
+        input.fts = Some(StringOrList::Multiple(
+            (0..16).map(|index| format!("f{index}")).collect(),
+        ));
+        let normalized = normalize_search_input(&input).unwrap();
+        assert_eq!(normalized.queries.len() + normalized.routes.len(), 32);
+        // Each field alone is under the cap, but the merged total is not (#93).
+        input.vector = Some(StringOrList::Multiple(vec!["v0".to_owned()]));
+        assert!(normalize_search_input(&input).is_err());
     }
 
     #[test]

@@ -30,7 +30,7 @@ use tokio_util::sync::CancellationToken;
 use crate::backend::DaemonBackend;
 use crate::config::is_loopback_host;
 use crate::errors::DaemonError;
-use crate::mcp::http_transport::{McpHttpEndpoint, McpHttpEndpointOptions};
+use crate::mcp::http_transport::{LegacySessionGate, McpHttpEndpoint, McpHttpEndpointOptions};
 use crate::mcp::toolset::McpToolset;
 use crate::sync::MutexExt;
 
@@ -122,20 +122,25 @@ impl DaemonHttpServer {
         if !is_loopback_host(&options.host) {
             return Err(DaemonError::LoopbackRequired { host: options.host });
         }
-        let mcp = McpHttpEndpoint::new(
+        // One gate for both endpoints: the session cap is daemon-wide,
+        // not per-endpoint (#93).
+        let session_gate = LegacySessionGate::new(options.mcp_endpoint.max_legacy_sessions);
+        let mcp = McpHttpEndpoint::with_session_gate(
             options.backend.clone(),
             options.version.clone(),
             options.mcp_toolset,
             &options.mcp_endpoint,
+            Arc::clone(&session_gate),
         )
         .map_err(|error| DaemonError::IndexFailed {
             message: format!("invalid MCP endpoint options: {error}"),
         })?;
-        let mcp_admin = McpHttpEndpoint::new(
+        let mcp_admin = McpHttpEndpoint::with_session_gate(
             options.backend.clone(),
             options.version.clone(),
             McpToolset::Full,
             &options.mcp_endpoint,
+            session_gate,
         )
         .map_err(|error| DaemonError::IndexFailed {
             message: format!("invalid MCP endpoint options: {error}"),

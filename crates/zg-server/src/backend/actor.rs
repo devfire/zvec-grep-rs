@@ -8,7 +8,7 @@
 //! [`CachedSession`] is the read-session cache entry: facade guard plus the
 //! model identity and pool lease that keep it valid.
 
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{Sender, UnboundedSender};
 use tokio::sync::oneshot;
 use zg_core::error::EngineError;
 use zg_core::models::EmbeddingModelInfo;
@@ -36,8 +36,12 @@ use crate::watch_manager::WatchReason;
 pub struct RootHandle {
     /// Canonical root the actor owns.
     pub key: RootKey,
-    /// Actor command sender.
-    pub(crate) tx: UnboundedSender<RootCommand>,
+    /// Bounded client command sender: `try_send` rejects with
+    /// `ACTOR_BUSY` when the mailbox is full (#93).
+    pub(crate) tx: Sender<RootCommand>,
+    /// Unbounded internal sender for watcher/index-finished/shutdown
+    /// delivery, which must stay lossless (#93).
+    pub(crate) internal_tx: UnboundedSender<RootCommand>,
     /// Spawn generation identifying this actor instance. The manager bumps
     /// it per spawn; stale teardowns unregister only their own generation
     /// so a live replacement is never removed (#33).
@@ -198,7 +202,7 @@ pub(crate) async fn send_recv<T>(
     make: impl FnOnce(oneshot::Sender<T>) -> RootCommand,
 ) -> Result<T, BackendError> {
     let (tx, rx) = oneshot::channel();
-    send_command(&handle.tx, make(tx))?;
+    send_command(&handle.tx, handle.key.as_str(), make(tx))?;
     rx.await
         .map_err(|_| BackendError::Daemon(DaemonError::ShuttingDown))
 }

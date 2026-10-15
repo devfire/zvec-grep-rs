@@ -234,6 +234,59 @@ async fn session_cap_returns_503() {
 }
 
 #[tokio::test]
+async fn session_cap_is_shared_and_atomic_across_endpoints() {
+    // Cap 4 shared by /mcp + /mcp/admin (#93): 16 concurrent initializes
+    // across both endpoints never create more than 4 sessions, and
+    // sequential fills reach exactly 4 before rejection. A per-endpoint
+    // cap would admit 8; a check-then-act cap could overshoot under race.
+    let (server, base) = start(
+        stub_backend(),
+        McpToolset::Full,
+        McpHttpEndpointOptions {
+            max_legacy_sessions: 4,
+            ..McpHttpEndpointOptions::default()
+        },
+    )
+    .await;
+    let mut tasks = Vec::new();
+    for index in 0..16u64 {
+        let base = base.clone();
+        let path = if index % 2 == 0 { "/mcp" } else { "/mcp/admin" };
+        tasks.push(tokio::spawn(async move {
+            post_path(&base, path, &initialize_body(index + 1), None)
+                .await
+                .status()
+        }));
+    }
+    let mut created = 0usize;
+    let mut rejected = 0usize;
+    for task in tasks {
+        match task.await.unwrap() {
+            reqwest::StatusCode::OK => created += 1,
+            reqwest::StatusCode::SERVICE_UNAVAILABLE => rejected += 1,
+            other => panic!("unexpected initialize status: {other}"),
+        }
+    }
+    // No overshoot: at most the cap is created, the rest rejected. (An
+    // in-flight reservation transiently counts alongside its just-created
+    // session, so a staggered burst may create fewer — never more.)
+    assert!((1..=4).contains(&created), "created={created}");
+    assert_eq!(created + rejected, 16);
+    // Sequential initializes then fill exactly to the shared cap across
+    // both endpoints, and the next one is rejected.
+    for index in 0..(4 - created) {
+        let path = if index % 2 == 0 { "/mcp" } else { "/mcp/admin" };
+        let status = post_path(&base, path, &initialize_body(100 + index as u64), None)
+            .await
+            .status();
+        assert_eq!(status, reqwest::StatusCode::OK);
+    }
+    let (status, _) = message(post(&base, &initialize_body(200), None).await).await;
+    assert_eq!(status, reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    server.close().await;
+}
+
+#[tokio::test]
 async fn agent_toolset_hides_lifecycle_tools() {
     let (server, base) = start(
         stub_backend(),
