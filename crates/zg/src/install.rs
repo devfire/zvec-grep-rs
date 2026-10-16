@@ -142,13 +142,21 @@ impl InstallOptions {
     }
 }
 
-/// Primary config file path for a target under `home`, honoring
-/// upstream env overrides (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
-/// `OPENCODE_CONFIG`, `XDG_CONFIG_HOME`, `CURSOR_CONFIG_DIR`,
-/// `QODER_CONFIG_DIR`, and the new targets' homes).
 #[must_use]
 pub fn config_path(target: InstallTarget, home: &Path) -> PathBuf {
-    paths::config_path(target, home)
+    config_path_with_env(target, home, &|name| std::env::var(name).ok())
+}
+
+/// `config_path` with an explicit env lookup; tests pass an empty
+/// lookup so a developer/CI `XDG_CONFIG_HOME`, `OPENCODE_CONFIG`, etc.
+/// cannot redirect a fake-home install onto the real config.
+#[must_use]
+pub(crate) fn config_path_with_env(
+    target: InstallTarget,
+    home: &Path,
+    lookup: &paths::EnvLookup<'_>,
+) -> PathBuf {
+    paths::config_path_with_env(target, home, lookup)
 }
 
 /// Installs one target; returns files written.
@@ -157,12 +165,22 @@ pub fn install(
     options: &InstallOptions,
     home: &Path,
 ) -> Result<Vec<PathBuf>, CliError> {
+    install_with_env(target, options, home, &|name| std::env::var(name).ok())
+}
+
+/// `install` with an explicit env lookup (see `config_path_with_env`).
+pub(crate) fn install_with_env(
+    target: InstallTarget,
+    options: &InstallOptions,
+    home: &Path,
+    lookup: &paths::EnvLookup<'_>,
+) -> Result<Vec<PathBuf>, CliError> {
     match target {
-        InstallTarget::Codex => install_codex(&config_path(target, home), options),
-        InstallTarget::Grok => install_grok(&config_path(target, home), options),
+        InstallTarget::Codex => install_codex(&config_path_with_env(target, home, lookup), options),
+        InstallTarget::Grok => install_grok(&config_path_with_env(target, home, lookup), options),
         InstallTarget::Qoder => {
             let mut written = Vec::new();
-            for path in paths::install_paths(target, home) {
+            for path in paths::install_paths_with_env(target, home, lookup) {
                 let entry = if path.file_name().is_some_and(|name| name == "settings.json") {
                     server_entry(target, options, None)
                 } else {
@@ -179,7 +197,7 @@ pub fn install(
         | InstallTarget::Copilot
         | InstallTarget::VsCode => {
             let mut written = Vec::new();
-            for path in paths::install_paths(target, home) {
+            for path in paths::install_paths_with_env(target, home, lookup) {
                 written.extend(install_json(target, &path, options)?);
             }
             Ok(written)
@@ -190,9 +208,18 @@ pub fn install(
 /// Uninstalls one target; returns files written (missing files are
 /// skipped silently).
 pub fn uninstall(target: InstallTarget, home: &Path) -> Result<Vec<PathBuf>, CliError> {
+    uninstall_with_env(target, home, &|name| std::env::var(name).ok())
+}
+
+/// `uninstall` with an explicit env lookup (see `config_path_with_env`).
+pub(crate) fn uninstall_with_env(
+    target: InstallTarget,
+    home: &Path,
+    lookup: &paths::EnvLookup<'_>,
+) -> Result<Vec<PathBuf>, CliError> {
     match target {
-        InstallTarget::Codex => uninstall_codex(&config_path(target, home)),
-        InstallTarget::Grok => uninstall_grok(&config_path(target, home)),
+        InstallTarget::Codex => uninstall_codex(&config_path_with_env(target, home, lookup)),
+        InstallTarget::Grok => uninstall_grok(&config_path_with_env(target, home, lookup)),
         InstallTarget::Claude
         | InstallTarget::OpenCode
         | InstallTarget::Cursor
@@ -201,7 +228,7 @@ pub fn uninstall(target: InstallTarget, home: &Path) -> Result<Vec<PathBuf>, Cli
         | InstallTarget::Copilot
         | InstallTarget::VsCode => {
             let mut written = Vec::new();
-            for path in paths::uninstall_paths(target, home) {
+            for path in paths::uninstall_paths_with_env(target, home, lookup) {
                 written.extend(uninstall_json(&path)?);
             }
             Ok(written)
@@ -1034,6 +1061,24 @@ mod tests {
 
     fn home() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
+    }
+    // Hermetic shadows of the public wrappers: an empty env lookup, so
+    // ambient `XDG_CONFIG_HOME`/`OPENCODE_CONFIG`/… on the developer or
+    // CI machine cannot redirect a fake-home install onto real configs.
+    fn install(
+        target: InstallTarget,
+        options: &InstallOptions,
+        home: &Path,
+    ) -> Result<Vec<PathBuf>, CliError> {
+        install_with_env(target, options, home, &|_| None)
+    }
+
+    fn uninstall(target: InstallTarget, home: &Path) -> Result<Vec<PathBuf>, CliError> {
+        uninstall_with_env(target, home, &|_| None)
+    }
+
+    fn config_path(target: InstallTarget, home: &Path) -> PathBuf {
+        config_path_with_env(target, home, &|_| None)
     }
 
     #[test]

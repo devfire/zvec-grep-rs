@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use super::InstallTarget;
 
-type EnvLookup<'a> = dyn Fn(&str) -> Option<String> + 'a;
+pub(crate) type EnvLookup<'a> = dyn Fn(&str) -> Option<String> + 'a;
 
 fn env_value(lookup: &EnvLookup<'_>, name: &str) -> Option<String> {
     lookup(name).filter(|value| !value.trim().is_empty())
@@ -26,12 +26,6 @@ fn home_join(home: &Path, segments: &[&str]) -> PathBuf {
     path
 }
 
-/// Primary config file for `target` (first install path).
-#[must_use]
-pub fn config_path(target: InstallTarget, home: &Path) -> PathBuf {
-    config_path_with_env(target, home, &|name| std::env::var(name).ok())
-}
-
 /// Files written by install for `target` (Qoder: CLI + IDE; VS Code:
 /// one per detected channel profile).
 #[must_use]
@@ -39,14 +33,11 @@ pub fn install_paths(target: InstallTarget, home: &Path) -> Vec<PathBuf> {
     install_paths_with_env(target, home, &|name| std::env::var(name).ok())
 }
 
-/// Files scanned by uninstall; `OpenCode` also cleans the non-selected
-/// sibling (`.jsonc`/`.json`) unless `OPENCODE_CONFIG` pins one file.
-#[must_use]
-pub fn uninstall_paths(target: InstallTarget, home: &Path) -> Vec<PathBuf> {
-    uninstall_paths_with_env(target, home, &|name| std::env::var(name).ok())
-}
-
-fn config_path_with_env(target: InstallTarget, home: &Path, lookup: &EnvLookup<'_>) -> PathBuf {
+pub(crate) fn config_path_with_env(
+    target: InstallTarget,
+    home: &Path,
+    lookup: &EnvLookup<'_>,
+) -> PathBuf {
     match install_paths_with_env(target, home, lookup)
         .into_iter()
         .next()
@@ -56,7 +47,7 @@ fn config_path_with_env(target: InstallTarget, home: &Path, lookup: &EnvLookup<'
     }
 }
 
-fn install_paths_with_env(
+pub(crate) fn install_paths_with_env(
     target: InstallTarget,
     home: &Path,
     lookup: &EnvLookup<'_>,
@@ -74,7 +65,9 @@ fn install_paths_with_env(
     }
 }
 
-fn uninstall_paths_with_env(
+/// Files scanned by uninstall; `OpenCode` also cleans the non-selected
+/// sibling (`.jsonc`/`.json`) unless `OPENCODE_CONFIG` pins one file.
+pub(crate) fn uninstall_paths_with_env(
     target: InstallTarget,
     home: &Path,
     lookup: &EnvLookup<'_>,

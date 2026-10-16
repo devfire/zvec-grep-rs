@@ -298,10 +298,9 @@ pub(crate) fn resolve_embedding_concurrency_policy(
     let requested = if requested.is_some() {
         requested
     } else {
-        let backend = crate::models::catalog::get_embedding_model_catalog_entry(
-            &model.info().reference,
-        )
-        .map(crate::models::catalog::EmbeddingCatalogEntry::backend);
+        let backend =
+            crate::models::catalog::get_embedding_model_catalog_entry(&model.info().reference)
+                .map(crate::models::catalog::EmbeddingCatalogEntry::backend);
         let is_llama = backend == Some(crate::models::catalog::BackendKind::LlamaCpp);
         let from_env = crate::env::index_embedding_concurrency_from_env(is_llama);
         match (from_env, backend) {

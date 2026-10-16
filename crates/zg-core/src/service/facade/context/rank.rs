@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use icu_collator::{CollatorBorrowed, CollatorPreferences};
 use icu_collator::options::CollatorOptions;
+use icu_collator::{CollatorBorrowed, CollatorPreferences};
 
 use crate::service::types::{ContextItem, QueryGroupRef, SelectionReason};
 use crate::types::SearchMatchedBy;
@@ -127,10 +127,9 @@ fn locale_compare(left: &str, right: &str) -> std::cmp::Ordering {
     let collator = COLLATOR.get_or_init(|| {
         CollatorBorrowed::try_new(CollatorPreferences::default(), CollatorOptions::default()).ok()
     });
-    collator.as_ref().map_or_else(
-        || left.cmp(right),
-        |collator| collator.compare(left, right),
-    )
+    collator
+        .as_ref()
+        .map_or_else(|| left.cmp(right), |collator| collator.compare(left, right))
 }
 
 /// Global item order, mirroring TS `compareContextGlobalRank`: RRF score

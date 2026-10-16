@@ -12,6 +12,20 @@ fn options(transport: McpTransportArg) -> InstallOptions {
         server_url: "http://127.0.0.1:7999".to_owned(),
     }
 }
+// Hermetic shadows of the public wrappers: an empty env lookup, so
+// ambient `XDG_CONFIG_HOME`/`OPENCODE_CONFIG`/… on the developer or CI
+// machine cannot redirect a fake-home install onto real configs.
+fn install(
+    target: InstallTarget,
+    options: &InstallOptions,
+    home: &Path,
+) -> Result<Vec<PathBuf>, CliError> {
+    install_with_env(target, options, home, &|_| None)
+}
+
+fn config_path(target: InstallTarget, home: &Path) -> PathBuf {
+    config_path_with_env(target, home, &|_| None)
+}
 
 fn installed_entry(target: InstallTarget, opts: &InstallOptions, home: &Path) -> serde_json::Value {
     install(target, opts, home).unwrap();

@@ -177,10 +177,7 @@ mod tests {
 
     #[test]
     fn watcher_timeout_allows_zero() {
-        assert_eq!(
-            parse_watcher_idle_timeout(Some("0")),
-            Some(Duration::ZERO)
-        );
+        assert_eq!(parse_watcher_idle_timeout(Some("0")), Some(Duration::ZERO));
         assert_eq!(
             parse_watcher_idle_timeout(Some("7200")),
             Some(Duration::from_secs(7200))
