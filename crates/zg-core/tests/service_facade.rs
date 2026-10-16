@@ -85,7 +85,12 @@ fn open_index_status_search_round_trip() {
     assert!(result.files_scanned >= 2, "{result:?}");
 
     let status = service.index_status(None).expect("status");
-    let _ = status;
+    // Upstream `filesIndexed`: both fixture files completed indexing.
+    assert_eq!(status.files_indexed, 2, "{status:?}");
+    assert_eq!(
+        serde_json::to_value(&status).expect("status json")["filesIndexed"],
+        2
+    );
 
     let found = service.context(&search_options(&dir)).expect("context");
     assert_eq!(found.query, "hello");

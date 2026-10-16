@@ -185,6 +185,8 @@ pub struct StatusFilesOutput {
     pub stored: usize,
     /// Files scanned.
     pub scanned: usize,
+    /// Files with a completed index record.
+    pub files_indexed: usize,
     /// Entities indexed.
     pub indexed: usize,
     /// Files pending.
@@ -210,6 +212,7 @@ impl From<&zg_core::types::WorkspaceIndexStatus> for StatusFilesOutput {
         Self {
             stored: status.files_stored,
             scanned: status.files_scanned,
+            files_indexed: status.files_indexed,
             indexed: status.entities_indexed,
             pending: status.files_pending,
             failed: status.files_failed,

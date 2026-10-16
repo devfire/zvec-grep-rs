@@ -2,6 +2,10 @@
 //! primary-coverage pass, mirroring TS `selectAndRankContextItems`.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
+
+use icu_collator::{CollatorBorrowed, CollatorPreferences};
+use icu_collator::options::CollatorOptions;
 
 use crate::service::types::{ContextItem, QueryGroupRef, SelectionReason};
 use crate::types::SearchMatchedBy;
@@ -111,10 +115,27 @@ fn first_group_number(matches: &[QueryGroupRef]) -> usize {
         .min()
         .unwrap_or(usize::MAX)
 }
+/// Locale-aware dedupe-key comparison, mirroring TS
+/// `String.prototype.localeCompare` under the runtime default collation:
+/// the ICU root collator (default options resolve to tertiary strength,
+/// like `Intl.Collator` defaults). Constructed once; collation data is
+/// compiled in. Falls back to byte order only if the baked root data
+/// cannot be loaded, which compiled data prevents in practice.
+#[must_use]
+fn locale_compare(left: &str, right: &str) -> std::cmp::Ordering {
+    static COLLATOR: OnceLock<Option<CollatorBorrowed<'static>>> = OnceLock::new();
+    let collator = COLLATOR.get_or_init(|| {
+        CollatorBorrowed::try_new(CollatorPreferences::default(), CollatorOptions::default()).ok()
+    });
+    collator.as_ref().map_or_else(
+        || left.cmp(right),
+        |collator| collator.compare(left, right),
+    )
+}
+
 /// Global item order, mirroring TS `compareContextGlobalRank`: RRF score
-/// descending, then best group rank, group number, and dedupe key ascending.
-/// The key comparison is byte order, which diverges from TS `localeCompare`
-/// for non-ASCII paths (see `docs/ts-divergence.md`).
+/// descending, then best group rank, group number, and dedupe key ascending
+/// under `localeCompare`.
 #[must_use]
 fn compare_global(left: &ContextItem, right: &ContextItem) -> std::cmp::Ordering {
     rrf_score(&right.query_groups)
@@ -126,7 +147,7 @@ fn compare_global(left: &ContextItem, right: &ContextItem) -> std::cmp::Ordering
         .then_with(|| {
             first_group_number(&left.query_groups).cmp(&first_group_number(&right.query_groups))
         })
-        .then_with(|| dedupe_key(left).cmp(&dedupe_key(right)))
+        .then_with(|| locale_compare(&dedupe_key(left), &dedupe_key(right)))
 }
 
 /// Group rank of `item` inside `group_id`; absent matches sort last.
@@ -326,6 +347,24 @@ mod tests {
         }
         assert_eq!(ranked[6].selection_reason, None);
     }
+    #[test]
+    fn locale_compare_orders_accented_letters_with_base_letter() {
+        // Byte order puts U+00E4 (0xC3 0xA4) after "b"; locale collation
+        // orders it with "a", before "b" — the `localeCompare` behavior.
+        assert_eq!(
+            locale_compare("range:/repo/\u{e4}.rs", "range:/repo/b.rs"),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            locale_compare("range:/repo/b.rs", "range:/repo/\u{e4}.rs"),
+            std::cmp::Ordering::Greater
+        );
+        assert_eq!(
+            locale_compare("range:/repo/a.rs", "range:/repo/a.rs"),
+            std::cmp::Ordering::Equal
+        );
+    }
+
     #[test]
     fn groupless_items_sort_last() {
         use SearchMatchedBy::Fts;

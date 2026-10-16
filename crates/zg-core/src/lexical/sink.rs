@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use grep_matcher::Matcher as _;
 use grep_searcher::{Sink, SinkMatch};
 
-use super::context::expand_context_item;
+use super::context::{LineCache, expand_context_item, utf16_len};
 use super::options::LexicalSearchOptions;
 use super::search_paths::display_paths;
 
@@ -26,7 +26,7 @@ pub(crate) struct MatchSink<'a> {
     pub(crate) root: &'a Path,
     pub(crate) options: &'a LexicalSearchOptions,
     pub(crate) matcher: &'a grep_regex::RegexMatcher,
-    pub(crate) line_cache: HashMap<PathBuf, Option<Vec<String>>>,
+    pub(crate) line_cache: LineCache,
     pub(crate) per_file_counts: HashMap<PathBuf, usize>,
 }
 
@@ -78,12 +78,16 @@ impl Sink for MatchSink<'_> {
         let first = self.matcher.find(mat.bytes()).ok().flatten();
         let line_text = String::from_utf8_lossy(mat.bytes());
         let line_text = line_text.trim_end_matches(['\r', '\n']);
+        // Columns are UTF-16 code units over the lossy decoding, computed
+        // from the raw bytes: applying a raw byte offset to the decoded
+        // string would shift the column after any invalid UTF-8 sequence
+        // (each bad byte decodes to one U+FFFD regardless of byte count).
         let start_column = first
             .as_ref()
-            .map_or(0, |m| char_column(line_text, m.start()));
+            .map_or(0, |m| utf16_column(mat.bytes(), m.start()));
         let end_column = first.as_ref().map_or_else(
-            || line_text.chars().count(),
-            |m| char_column(line_text, m.end()),
+            || utf16_len(line_text),
+            |m| utf16_column(mat.bytes(), m.end()),
         );
         let rank = self.next_rank;
         self.next_rank += 1;
@@ -169,13 +173,41 @@ pub(crate) fn record_file(path: &Path) {
 fn current_sink_path() -> PathBuf {
     CURRENT_SEARCH_PATH.with(|slot| slot.borrow().clone())
 }
-/// Byte offset → character column, mirroring `textPositionAtByteOffset` for
-/// the single-line case (multiline prefixes cannot occur: the searcher runs
-/// without multiline mode).
-fn char_column(line: &str, byte_offset: usize) -> usize {
-    let mut end = byte_offset.min(line.len());
-    while end > 0 && !line.is_char_boundary(end) {
-        end -= 1;
+/// Raw byte offset → UTF-16 column in the lossy decoding of `bytes`,
+/// mirroring upstream `textPositionAtByteOffset` on the decoded line
+/// (multiline prefixes cannot occur: the searcher runs without multiline
+/// mode). Decoding only the prefix keeps the offset in raw-byte space, so
+/// invalid sequences before the match (each decoded to U+FFFD) cannot
+/// shift the result.
+fn utf16_column(bytes: &[u8], byte_offset: usize) -> usize {
+    let end = byte_offset.min(bytes.len());
+    let prefix = bytes.get(..end).unwrap_or(bytes);
+    String::from_utf8_lossy(prefix)
+        .chars()
+        .map(char::len_utf16)
+        .sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn utf16_column_counts_emoji_as_two_units() {
+        // "a" + emoji (4 raw bytes, 2 UTF-16 units) + "b": byte offset of
+        // "b" is 5, its UTF-16 column is 3.
+        let line = "a\u{1F600}b".as_bytes();
+        assert_eq!(utf16_column(line, 5), 3);
+        assert_eq!(utf16_column(line, 1), 1);
+        assert_eq!(utf16_column(line, 0), 0);
     }
-    line[..end].chars().count()
+
+    #[test]
+    fn utf16_column_unshifted_by_invalid_utf8() {
+        // 0xFF decodes to one U+FFFD (1 UTF-16 unit); "needle" starts at
+        // raw byte 3 after two bad bytes and a space.
+        let line = b"\xff\xfe needle";
+        assert_eq!(utf16_column(line, 3), 3);
+        assert_eq!(utf16_column(line, 9), 9);
+    }
 }

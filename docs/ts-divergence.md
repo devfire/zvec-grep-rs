@@ -106,8 +106,6 @@ Remaining CLI divergences and choices:
   never share collections, the port bakes the `standard` tokenizer into
   `index.zvec` and records it in the embedding fingerprint so a foreign
   collection is refused, not adopted; no jieba dictionary ships.
-- **Ranking key order is byte order**, not TS `localeCompare`, for
-  non-ASCII paths in the global context ranking tie-break.
 - **Context search plans omit `track_entity_id`** per group, matching
   the TS context `searchPlan` call, which also omits it.
 - **Model backends' concurrency shapes differ**:

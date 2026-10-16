@@ -180,7 +180,7 @@ fn collect_matches(
         root,
         options,
         matcher: &context.matcher,
-        line_cache: HashMap::new(),
+        line_cache: super::context::LineCache::new(),
         per_file_counts: HashMap::new(),
     };
     for entry in walk {
@@ -436,6 +436,48 @@ mod tests {
         let result = run_lexical_search(&options).expect("search");
         assert_eq!(result.items.len(), 1);
         assert!(result.items[0].file.relative_path.ends_with("main.rs"));
+    }
+
+    #[test]
+    fn columns_are_utf16_units_on_emoji_lines() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write_file(dir.path(), "a.txt", "\u{1F600} needle\n");
+
+        let mut options = options_in(dir.path());
+        options.patterns = vec!["needle".to_owned()];
+        let result = run_lexical_search(&options).expect("search");
+        assert_eq!(result.items.len(), 1);
+        let crate::types::Range::Text {
+            start_offset,
+            end_offset,
+            ..
+        } = result.items[0].range
+        else {
+            panic!("expected text range");
+        };
+        // Emoji = 2 UTF-16 units, space = 1: "needle" spans 3..9.
+        assert_eq!((start_offset, end_offset), (3, 9));
+    }
+
+    #[test]
+    fn columns_unshifted_by_invalid_utf8_before_match() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("a.txt"), b"\xff needle\n").expect("write bytes");
+
+        let mut options = options_in(dir.path());
+        options.patterns = vec!["needle".to_owned()];
+        let result = run_lexical_search(&options).expect("search");
+        assert_eq!(result.items.len(), 1);
+        let crate::types::Range::Text {
+            start_offset,
+            end_offset,
+            ..
+        } = result.items[0].range
+        else {
+            panic!("expected text range");
+        };
+        // The bad byte decodes to one U+FFFD, plus the space: 2..8.
+        assert_eq!((start_offset, end_offset), (2, 8));
     }
 
     #[test]

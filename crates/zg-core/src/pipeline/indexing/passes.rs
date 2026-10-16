@@ -141,6 +141,7 @@ pub fn get_workspace_index_status(
             files_unchanged: diff.unchanged.len(),
             files_failed: failed_files.len(),
             files_stored: stored_files.len(),
+            files_indexed: indexed_files.len(),
             pending_files,
             failed_files,
             added_files: diff.added,

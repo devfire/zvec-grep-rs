@@ -114,6 +114,8 @@ pub struct WorkspaceIndexStatus {
     pub modified_files: Vec<FileInfo>,
     pub deleted_files: Vec<FileInfo>,
     pub files_stored: usize,
+    /// Files with a completed index record (upstream `filesIndexed`).
+    pub files_indexed: usize,
     pub entities_indexed: usize,
     pub fragments_truncated: usize,
 }

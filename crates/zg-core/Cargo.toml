@@ -43,6 +43,7 @@ tree-sitter-typescript.workspace = true
 tree-sitter-vb-dotnet.workspace = true
 rustix.workspace = true
 url.workspace = true
+icu_collator.workspace = true
 # Feature-gated heavy backends: optional workspace deps, enabled via
 # `dep:` below so default builds need no C++ toolchain or ORT download.
 ort = { workspace = true, optional = true }
