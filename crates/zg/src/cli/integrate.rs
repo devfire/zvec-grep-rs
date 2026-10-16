@@ -7,8 +7,8 @@ use super::values::{McpToolsetArg, McpTransportArg};
 /// `zg install` flags.
 #[derive(Debug, Args)]
 pub struct InstallArgs {
-    /// Integration targets: claude, codex, opencode, cursor, qwen, qoder
-    /// (repeatable, comma-separated).
+    /// Integration targets: claude, codex, opencode, cursor, qwen, qoder,
+    /// copilot, vscode, grok, all, auto (repeatable, comma-separated).
     #[arg(long = "target")]
     pub target: Vec<String>,
     /// MCP tool request timeout in seconds.

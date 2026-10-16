@@ -9,6 +9,10 @@ use crate::install::{InstallOptions, InstallTarget, detect_targets, install, uni
 pub(crate) fn run_install(args: &InstallArgs) -> Result<(), CliError> {
     let home = user_home()?;
     let targets = resolve_targets(&args.target, &home)?;
+    if targets.is_empty() {
+        println!("No agent integrations selected.");
+        return Ok(());
+    }
     let options = install_options(args)?;
     let mut files = Vec::new();
     for target in targets {
@@ -64,15 +68,36 @@ fn resolve_targets(target: &[String], home: &Path) -> Result<Vec<InstallTarget>,
         let detected = detect_targets(home);
         if detected.is_empty() {
             return Err(CliError::usage(
-                "No agent integrations detected. Pass --target claude|codex|opencode|cursor|qwen|qoder.",
+                "No agent integrations detected. Pass --target claude|codex|opencode|cursor|qwen|qoder|copilot|vscode|grok|all|auto.",
             ));
         }
         return Ok(detected);
     }
-    tokens
-        .iter()
-        .map(|token| InstallTarget::parse(token))
-        .collect()
+    // Upstream tokens: `all` selects every target, `auto` only the
+    // detected ones, `none` selects nothing.
+    let mut selected: Vec<InstallTarget> = Vec::new();
+    let push = |target: InstallTarget, selected: &mut Vec<InstallTarget>| {
+        if !selected.contains(&target) {
+            selected.push(target);
+        }
+    };
+    for token in &tokens {
+        match token.to_lowercase().as_str() {
+            "none" => return Ok(Vec::new()),
+            "all" => {
+                for target in InstallTarget::ALL {
+                    push(target, &mut selected);
+                }
+            }
+            "auto" => {
+                for target in detect_targets(home) {
+                    push(target, &mut selected);
+                }
+            }
+            _ => push(InstallTarget::parse(token)?, &mut selected),
+        }
+    }
+    Ok(selected)
 }
 
 fn user_home() -> Result<PathBuf, CliError> {
