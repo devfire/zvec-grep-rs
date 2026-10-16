@@ -5,7 +5,7 @@
 //! The TS manager stores live `RootRuntime` objects in `Map`s shared across
 //! `await` points; here the manager stores only [`RootHandle`]s
 //! (`mpsc` senders + join handles) and every `RootRuntime` is owned by its
-//! actor task as plain `&mut` state (M3/M6, see `docs/ts-divergence.md`).
+//! actor task as plain `&mut` state (see `docs/ts-divergence.md`).
 //! Idle eviction needs no manager task: each actor loop carries its own
 //! idle deadline and unregisters itself; the manager only evicts on
 //! request.
@@ -202,7 +202,7 @@ impl RuntimeManager {
     }
 
     /// Stops every actor, then the scheduler (which awaits in-flight
-    /// blocking work per M6) and the model pool. Concurrent calls coalesce:
+    /// blocking work) and the model pool. Concurrent calls coalesce:
     /// the first caller drains while the rest return immediately.
     pub async fn close(&self) {
         if self.closed.swap(true, Ordering::SeqCst) {

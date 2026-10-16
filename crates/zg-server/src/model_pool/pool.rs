@@ -131,7 +131,7 @@ impl EmbeddingModelPool {
         request.key()
     }
 
-    /// Bounded embed gate (M6): hold across CPU-bound embed work.
+    /// Bounded embed gate: hold across CPU-bound embed work.
     #[must_use]
     pub fn embed_permits(&self) -> Arc<Semaphore> {
         Arc::clone(&self.shared.embed_permits)

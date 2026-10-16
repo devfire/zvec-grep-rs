@@ -2,7 +2,7 @@
 //! (`cli/commands.ts` + `cli/auth.ts` behavior).
 //!
 //! Direct mode drives `ZvecGrepService` in-process with the same permit
-//! guard as the daemon (authorization lives in `zg-core`, phase F);
+//! guard as the daemon (authorization lives in `zg-core`);
 //! server mode goes through [`crate::client::DaemonClient`]. Server-mode index sends
 //! only `{root, rebuild, wait, debug}`: per-request credentials and
 //! index scoping are daemon configuration in this port and fail fast

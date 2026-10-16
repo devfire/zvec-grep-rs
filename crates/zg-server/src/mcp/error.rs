@@ -2,7 +2,7 @@
 //!
 //! Mirrors the failure surface of `../zvec-grep/src/mcp/tools.ts`
 //! (`ProtocolError(-32602)` for invalid input, plain `Error` otherwise).
-//! No new wire codes are invented (M1): variants map onto JSON-RPC
+//! No new wire codes are invented: variants map onto JSON-RPC
 //! `-32602` (invalid params) and `-32603` (internal error).
 
 use rmcp::ErrorData;

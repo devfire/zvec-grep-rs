@@ -1,4 +1,4 @@
-# Wire-code registry for the zg-server daemon (M1).
+# Wire-code registry for the zg-server daemon.
 #
 # Every line is a bare daemon code produced by `DaemonError::code()`.
 # `tests/daemon_error_codes_golden.rs` renders the same set from live

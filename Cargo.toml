@@ -7,9 +7,9 @@ version = "0.2.1"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/devfire/zvec-grep-rs"
-# Bumped 1.85 -> 1.88 by phases C/D: `ort =2.0.0-rc.13` declares
-# `rust-version = "1.88"` (verified via `cargo info`), and the plan
-# mandates bumping deliberately rather than holding a false MSRV.
+# Bumped 1.85 -> 1.88: `ort =2.0.0-rc.13` declares
+# `rust-version = "1.88"` (verified via `cargo info`); bump deliberately
+# rather than holding a false MSRV.
 # `llama-cpp-2` declares no `rust-version`; its toolchain floor is
 # unverified (it needs a C++ toolchain regardless) and CI builds it on
 # stable.
@@ -79,7 +79,7 @@ unicode-width = "0.2"
 libc = "0.2"
 rustix = { version = "1", features = ["process"] }
 os_info = "3"
-# Heavy local-inference backends (M7): exact pins. `ort` is pinned to the
+# Heavy local-inference backends: exact pins. `ort` is pinned to the
 # 2.x-rc line whose `Session::builder` / `inputs!` / `try_extract_tensor`
 # API this workspace targets (the 1.x line differs); `llama-cpp-2` caret
 # pins the 0.1 minor line. Both are `optional` and enabled via
@@ -97,7 +97,7 @@ inherits = "release"
 lto = "fat"
 [workspace.lints.rust]
 unsafe_code = "forbid"
-# M8 tracks `missing_docs = "warn"` restoration with `cargo doc --no-deps`
+# Restoring `missing_docs = "warn"` is tracked with `cargo doc --no-deps`
 # warning-free. Until then this stays `allow`: ~870 undocumented public
 # items flood `cargo test`/`clippy` and hide real warnings. Enforce docs via
 # `RUSTDOCFLAGS="-D missing-docs" cargo doc --workspace --no-deps` in CI.
@@ -108,11 +108,11 @@ all = { level = "deny", priority = -1 }
 todo = "deny"
 dbg_macro = "deny"
 unwrap_used = "deny"
-# Phase 0 lint firewall: `expect` in non-test code is a hidden panic.
+# Lint firewall: `expect` in non-test code is a hidden panic.
 # Test builds keep targeted `cfg(test)` allows at each crate root
 # (template: `crates/zg/src/main.rs`) plus per-file allows in `tests/`.
 expect_used = "deny"
-# `panic!` in non-test code must go through typed errors (Phase 2). The
+# `panic!` in non-test code must go through typed errors. The
 # three `redact_error_text` statics carry one targeted `#[allow]` +
 # justification until then; test targets keep their own `cfg(test)` /
 # file-level allows. (`unreachable!` sites verify clean under this lint.)
@@ -123,20 +123,19 @@ fallible_impl_from = "deny"
 unneeded_field_pattern = "deny"
 fn_params_excessive_bools = "deny"
 # `indexing_slicing`, `wildcard_enum_match_arm`, and `must_use_candidate`
-# were warn-level debt until Phases 4/5/7 cleared every site (clippy-cleanup
-# commit); they stay `deny` so no new violations land.
+# were warn-level debt until every site was cleared; they stay `deny`
+# so no new violations land.
 indexing_slicing = "deny"
 wildcard_enum_match_arm = "deny"
 must_use_candidate = "deny"
-# Docs + diagnostics: panic and error docs are mandatory after Phases 2-3
-# cleared every site; large-`Err` diagnostics warn until their owning phase
-# clears them.
+# Docs + diagnostics: panic and error docs are mandatory; large-`Err`
+# diagnostics warn until the responsible code is reworked to shrink them.
 missing_errors_doc = "deny"
 missing_panics_doc = "deny"
 result_large_err = "warn"
 # `string_slice` stays at its default (allow): trial-enabling it as `warn`
 # fires on ~45 pre-existing sites across 12 files (markdown, trace,
-# install, glob, ...), far beyond the four R8 audited. Those need a
+# install, glob, ...), far beyond the few audited sites. Those need a
 # dedicated audit pass first — a warn-gate with 45 known warnings trains
 # reviewers to ignore warnings. `indexing_slicing` remains the deny-level
 # firewall; audited `str` sites carry the ASCII-boundary invariant comment.

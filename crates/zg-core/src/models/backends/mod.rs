@@ -1,6 +1,6 @@
 //! Backend implementations.
 //!
-//! The heavy local backends are cargo features (M7): `onnx` pulls in
+//! The heavy local backends are cargo features: `onnx` pulls in
 //! `ort`, `llama` pulls in `llama-cpp-2`, and both stay compiled out of
 //! default builds so `cargo install zg` needs no C++ toolchain and
 //! `cargo test -p zg-core` stays hermetic.

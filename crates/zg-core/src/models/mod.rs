@@ -88,7 +88,7 @@ pub enum EmbeddingStageKind {
 
 /// Sink for model-load progress notifications.
 ///
-/// Named per event type (M2): this is the model-load sink, distinct from
+/// Named per event type: this is the model-load sink, distinct from
 /// the index-progress sink ([`crate::pipeline::indexing::IndexProgressSink`]).
 pub type ModelLoadSink = Arc<dyn Fn(EmbeddingModelProgress) + Send + Sync>;
 

@@ -1,4 +1,4 @@
-//! Golden daemon code registry test (M1).
+//! Golden daemon code registry test.
 //!
 //! Renders every bare daemon code from live `DaemonError` values via
 //! `zg_server::errors::all_codes`, sorts and dedupes them, and compares

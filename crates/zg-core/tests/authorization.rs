@@ -1,4 +1,4 @@
-//! Phase F proof: a remote-embedding call without a permit fails closed
+//! Proof: a remote-embedding call without a permit fails closed
 //! before any network traffic, with the TS-exact `AUTH` code.
 
 // Test targets exercise fallible fixtures directly: `unwrap`/`expect`/`panic!`

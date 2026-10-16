@@ -1,7 +1,7 @@
 //! Remote-embedding authorization domain records, mirroring
 //! `src/authorization/types.ts` field-for-field on the wire.
 //!
-//! Fingerprints are newtypes with private fields (M2): a
+//! Fingerprints are newtypes with private fields: a
 //! `WorkspaceFingerprint` can only come from target hashing, never from a
 //! raw string at a call site.
 

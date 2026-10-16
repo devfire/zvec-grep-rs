@@ -15,7 +15,7 @@
 //!   `Arc`, and the model destructors run then. The observable behavior —
 //!   at most `max_loaded_models` idle models resident — is identical.
 //!
-//! The pool also owns the single bounded embed gate from M6: all CPU-bound
+//! The pool also owns the single bounded embed gate: all CPU-bound
 //! embed work should hold [`EmbeddingModelPool::embed_permits`] (sized to
 //! `available_parallelism`) so a many-root daemon cannot oversubscribe the
 //! blocking pool.

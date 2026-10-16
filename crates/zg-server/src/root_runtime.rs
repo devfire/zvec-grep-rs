@@ -7,7 +7,7 @@
 //! contexts, and freshness probes; those live in the actor (`backend.rs`)
 //! and [`WorkspaceReadSessionCache`](crate::read_session_cache) instead —
 //! one actor task owns one `RootRuntime` as plain `&mut` state, so no lock
-//! protects it (M3/M6, see `docs/ts-divergence.md`).
+//! protects it (see `docs/ts-divergence.md`).
 
 use std::fmt;
 use std::path::Path;
@@ -18,7 +18,7 @@ use crate::errors::DaemonError;
 
 /// Canonical workspace root: an absolute, symlink-resolved path.
 ///
-/// Newtype (M2) so a requested (possibly relative, possibly aliased) path
+/// Newtype so a requested (possibly relative, possibly aliased) path
 /// can never flow where a canonical key is required. The field is private:
 /// build with [`RootKey::parse`] (validates absolute) or
 /// [`resolve_requested_root`] (validates everything).
@@ -55,7 +55,7 @@ impl fmt::Display for RootKey {
     }
 }
 
-/// Monotonic revision/epoch counter. Newtype (M2): a dirty revision must
+/// Monotonic revision/epoch counter. Newtype: a dirty revision must
 /// never be compared against a reconciliation epoch, so each role gets its
 /// own value even though both are `u64` underneath.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

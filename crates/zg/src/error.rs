@@ -1,4 +1,4 @@
-//! Typed CLI errors (M1): one enum, const wire codes, golden registry.
+//! Typed CLI errors: one enum, const wire codes, golden registry.
 //!
 //! Mirrors no single TS module: the TypeScript CLI throws plain `Error`s
 //! with hand-written messages. The codes here are Rust additions under
@@ -156,7 +156,7 @@ impl CliError {
     }
 
     /// Rendered wire code: own codes qualified, wrapped codes passed
-    /// through untouched (M1: no merging).
+    /// through untouched (no merging).
     pub fn code(&self) -> String {
         match self {
             Self::Engine(error) => error.code().to_string(),

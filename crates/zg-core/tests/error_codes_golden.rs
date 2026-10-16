@@ -1,4 +1,4 @@
-//! Golden wire-code registry test (M1).
+//! Golden wire-code registry test.
 //!
 //! Renders every `ZVEC_GREP.ENGINE.*` code the crate can produce — one live
 //! value per `ModelError` variant (all Qwen model × failure combinations,

@@ -298,7 +298,7 @@ pub async fn stop_server(
 }
 
 /// Spawns a detached `zg server run` child and waits for readiness.
-/// (Phase I owns the exact CLI surface; this is the spawn/wait primitive.)
+/// (The CLI owns the exact surface; this is the spawn/wait primitive.)
 ///
 /// # Errors
 ///

@@ -38,7 +38,7 @@ pub use workspace::{
 ///
 /// The field is private so wall-clock values flow through [`UnixMillis::now`]
 /// or the explicitly-untrusted [`UnixMillis::from_millis`]; readers use
-/// [`UnixMillis::as_millis`] (M2).
+/// [`UnixMillis::as_millis`].
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,
 )]

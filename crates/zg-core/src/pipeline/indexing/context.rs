@@ -17,7 +17,7 @@ use super::scanner::CancelFlag;
 
 /// Index-progress sink shared across indexing threads.
 ///
-/// Named per event type (M2): this is the single index-progress sink used by
+/// Named per event type: this is the single index-progress sink used by
 /// the pipeline, the service options, and the workspace index handle —
 /// distinct from the model-load sink ([`crate::models::ModelLoadSink`]).
 pub type IndexProgressSink = Arc<dyn Fn(IndexProgress) + Send + Sync>;

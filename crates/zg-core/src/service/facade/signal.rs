@@ -1,6 +1,6 @@
 //! Abort plumbing for blocking index runs: polls the caller's `AbortCheck`
 //! on a helper thread and trips a shared [`CancelFlag`]. The blocking run
-//! only ever sees the flag (M6).
+//! only ever sees the flag.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -35,7 +35,7 @@ impl Drop for SignalWatch {
 }
 
 /// Polls `signal` on a helper thread until the returned [`SignalWatch`] is
-/// dropped; the blocking index run only ever sees the flag (M6).
+/// dropped; the blocking index run only ever sees the flag.
 pub(super) fn spawn_signal_watch(
     signal: Option<crate::service::types::AbortCheck>,
     cancel: &CancelFlag,

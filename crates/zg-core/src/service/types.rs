@@ -17,7 +17,7 @@ use crate::types::{
 
 /// Abort probe: return `true` to cancel a long-running operation.
 ///
-/// Owned and `Send + Sync` (M4) so options structs can cross the async
+/// Owned and `Send + Sync` so options structs can cross the async
 /// boundary via `spawn_blocking`; borrowed `&dyn Fn` is leaf-only.
 pub type AbortCheck = Arc<dyn Fn() -> bool + Send + Sync>;
 
@@ -473,7 +473,7 @@ pub fn workspace_index_disabled(root: &str) -> crate::error::EngineError {
     .with_context(format!("root={root}"))
 }
 
-/// Options structs must stay `Send` (M4): they cross the async boundary via
+/// Options structs must stay `Send`: they cross the async boundary via
 /// `spawn_blocking`. A borrowed callback field would break this; the test
 /// below pins it.
 #[cfg(test)]

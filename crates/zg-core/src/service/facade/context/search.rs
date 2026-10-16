@@ -25,7 +25,7 @@ impl ZvecGrepService {
     /// [`ensure_index`](Self::ensure_index): `refresh`
     /// probes freshness under a shared read lock and only escalates to the
     /// exclusive write-lock run when the status reports pending work.
-    /// Read sessions (phase G) always pass it cleared.
+    /// Read sessions always pass it cleared.
     ///
     /// # Errors
     ///

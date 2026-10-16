@@ -50,11 +50,11 @@ It all goes through the same daemon and the same index as the command line, so y
 
 ## Local backends (opt-in)
 
-`onnx` (ort) and `llama` (llama-cpp-2) cargo features, off by default so the default build stays pure Rust. Compiled out, those catalog entries resolve but `create_embedding_model` returns `ModelError::BackendUnavailable`. `llama` needs a C++ toolchain; both download models on first use.
+`onnx` (ort) and `llama` (llama-cpp-2) cargo features, off by default so the default build stays pure Rust. Compiled out, those catalog entries resolve but `create_embedding_model` returns `ModelError::BackendUnavailable`. `llama` needs a C++ toolchain and `cmake` (`llama-cpp-sys-2`'s build script fails with "is `cmake` not installed?" otherwise); both download models on first use.
 
 ## Prereqs
 
-Rust 1.88+, `cargo` (`llama` feature additionally needs a C++ toolchain).
+Rust 1.88+, `cargo` (`llama` feature additionally needs a C++ toolchain and `cmake`; `cargo test --workspace --all-features` therefore fails on machines without `cmake`).
 
 ## Build / test / lint
 
@@ -97,8 +97,8 @@ let root = Path::new("/path/to/workspace");
 let svc = create_zvec_grep(CreateZvecGrepOptions {
     root: Some(root.to_path_buf()),
     embedding_model: None, // resolves the catalog default via factory
-    ..Default::default()
-)?;
+    ..CreateZvecGrepOptions::default()
+});
 
 svc.ensure_index(&ZvecGrepIndexOptions { root: Some(root), ..Default::default() })?;
 let hits = svc.context(&ZvecGrepContextOptions {

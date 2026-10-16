@@ -1,8 +1,8 @@
-//! Scheduler index runs: lazy takes, M6 permits, blocking bodies.
+//! Scheduler index runs: lazy takes, embed permits, blocking bodies.
 //!
 //! [`build_index_run`] builds the [`JobRun`](crate::job_scheduler::JobRun)
 //! for one submitted job: it takes the pending snapshot lazily, holds the
-//! M6 embed permit across model load and the blocking index, and reports
+//! An embed permit across model load and the blocking index, and reports
 //! back through [`RootCommand::IndexFinished`](super::actor::RootCommand).
 //! [`plan_search_permit`] serves the actor search path in
 //! [`super::search`].
@@ -40,7 +40,7 @@ use crate::read_session_cache::WorkspaceReadSessionCache;
 use crate::root_runtime::RootKey;
 
 /// Builds the scheduler run for one submitted job: takes the pending
-/// snapshot lazily, holds the M6 embed permit across the blocking index,
+/// snapshot lazily, holds the embed permit across the blocking index,
 /// and reports back through [`RootCommand::IndexFinished`].
 pub(crate) fn build_index_run(
     tx: UnboundedSender<RootCommand>,
@@ -79,7 +79,7 @@ pub(crate) fn build_index_run(
             if token.is_cancelled() {
                 return Err(JobFailure::Cancelled);
             }
-            // M6: one embed permit per index job, held across model load
+            // One embed permit per index job, held across model load
             // and the blocking run, bounding CPU oversubscription.
             let _embed = shared
                 .pool
@@ -178,7 +178,7 @@ async fn run_blocking_index(
     let needs_update = !snapshot.touched_files.is_empty()
         || !snapshot.rescan_directories.is_empty()
         || !snapshot.deleted_prefixes.is_empty();
-    // Cooperative cancel crosses as an owned abort probe (M4): the facade
+    // Cooperative cancel crosses as an owned abort probe: the facade
     // polls it on a helper thread and trips the blocking body's CancelFlag.
     let abort = Arc::new({
         let token = token.clone();

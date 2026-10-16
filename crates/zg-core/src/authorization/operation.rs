@@ -3,7 +3,7 @@
 //!
 //! Divergence: TS scopes the permit with `AsyncLocalStorage` (async task
 //! context); the sync engine uses a thread-local cell instead. The daemon
-//! (phase G) sets the permit around each `spawn_blocking` embed call, so
+//! The daemon sets the permit around each `spawn_blocking` embed call, so
 //! the permit never leaks across operations on a shared thread.
 
 use std::cell::RefCell;

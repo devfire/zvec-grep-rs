@@ -9,7 +9,7 @@
 //!   [`CancellationToken`](tokio_util::sync::CancellationToken) at the
 //!   async edge; the sync index body only ever sees a
 //!   [`CancelFlag`](zg_core::pipeline::indexing::scanner::CancelFlag)
-//!   via [`bridge_cancellation`] (M6). Dropping a `spawn_blocking` handle
+//!   via [`bridge_cancellation`]. Dropping a `spawn_blocking` handle
 //!   cannot abort it, so shutdown awaits in-flight work instead of
 //!   orphaning it.
 //! - The TS promise-chain generation idiom is sequential task execution:

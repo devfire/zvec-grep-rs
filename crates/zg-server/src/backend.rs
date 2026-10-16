@@ -18,7 +18,7 @@
 //!   `closePromise` is [`RuntimeManager::close`](crate::runtime_manager::RuntimeManager::close)
 //!   awaiting actor joins plus
 //!   [`JobScheduler::close`](crate::job_scheduler::JobScheduler::close)
-//!   awaiting in-flight blocking work (M6).
+//!   awaiting in-flight blocking work.
 //! - Searches during an index read the last committed session instead of
 //!   the TS writer context (documented staleness trade-off).
 //!

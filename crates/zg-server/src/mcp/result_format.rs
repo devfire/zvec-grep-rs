@@ -4,7 +4,7 @@
 //! `toolResult`) plus the agent short-preview rendering the search/rg
 //! tools use (`formatAgentContextResult(result, { preview: "short" })`
 //! from `../zvec-grep/src/cli/format/context.ts`). The full CLI format
-//! surface (symbol blocks, highlighters, human layout) belongs to phase I;
+//! surface (symbol blocks, highlighters, human layout) belongs to the CLI;
 //! this module renders the bounded short form: ranked headers, group
 //! lines, clipped outlines, and a 10-line anchored source window.
 //!
@@ -201,7 +201,7 @@ fn format_score(score: f64) -> String {
 }
 
 /// `groups: id#rank, …` (the engine tracks group id and rank per item;
-/// per-group `matchedBy` is a CLI-transport detail from phase I).
+/// per-group `matchedBy` is a CLI-transport detail).
 fn query_group_line(item: &ContextItem) -> Option<String> {
     if item.query_groups.is_empty() {
         return None;

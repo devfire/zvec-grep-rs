@@ -1,7 +1,7 @@
 //! Daemon error taxonomy: `DaemonError` enum plus golden code registry.
 //!
 //! Mirrors `../zvec-grep/src/daemon/errors.ts` (`DaemonError` with a plain
-//! string code and a `retryable` flag). Per M1 the Rust shape is an enum —
+//! string code and a `retryable` flag). The Rust shape is an enum —
 //! every code is a `&'static str` literal returned by [`DaemonError::code`],
 //! exhaustively matched, with no runtime-assembled variant. Codes stay bare
 //! (`INDEX_MISSING`, not `ZVEC_GREP.ENGINE.*`-prefixed): the TS wire carries

@@ -7,10 +7,10 @@
 //! purpose, truncated to `max_input_tokens`, pooled (`cls`/`mean`) and
 //! L2-normalized exactly like the TypeScript pipeline options.
 //!
-//! Concurrency follows the C/D design note in `docs/ts-divergence.md`:
+//! Concurrency shape is recorded in `docs/ts-divergence.md`:
 //! the `Arc<dyn EmbeddingModel>` owns `'static` weights (tokenizer plus a
 //! session pool), and each `embed` leases a session from a bounded pool
-//! that doubles as M6's gate. Sessions are created lazily up to
+//! that doubles as the embed gate. Sessions are created lazily up to
 //! `min(8, available_parallelism)` and retained, mirroring the TypeScript
 //! context-growth loop; a lease is one full batch, never one input.
 //!

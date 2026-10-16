@@ -5,7 +5,7 @@
 //! therefore yields its inner value instead of wedging the daemon — the
 //! panicking holder already records its own failure through its job outcome.
 //! `MutexExt::lock_ignore_poison` is the single spelling of that policy
-//! (R3 collapsed the per-module `fn lock` copies here).
+//! (This collapses the per-module `fn lock` copies into one place.)
 
 use std::sync::{Mutex, MutexGuard};
 

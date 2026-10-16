@@ -18,7 +18,7 @@ use crate::errors::DaemonError;
 pub const DEFAULT_MAX_CHANGED_PATHS: usize = 1_000;
 
 /// Cap on accumulated paths before the set widens scopes or forces a full
-/// reconcile. Newtype (M2) so a bare `usize` cannot flow in silently.
+/// reconcile. Newtype so a bare `usize` cannot flow in silently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MaxChangedPaths(usize);
 

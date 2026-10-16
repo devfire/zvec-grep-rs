@@ -106,7 +106,7 @@ impl ServiceConfig {
 pub struct BackendShared {
     /// Shared index job scheduler.
     pub scheduler: JobScheduler,
-    /// Shared model pool (owns the M6 embed gate).
+    /// Shared model pool (owns the embed gate).
     pub pool: EmbeddingModelPool,
     /// Service options for facade construction.
     pub service: ServiceConfig,

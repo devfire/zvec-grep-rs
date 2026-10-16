@@ -11,7 +11,7 @@
 //! `embeddings_seq_ith`, no explicit pooling selection, raw unnormalized
 //! vectors).
 //!
-//! Concurrency follows the C/D design note in `docs/ts-divergence.md`:
+//! Concurrency shape is recorded in `docs/ts-divergence.md`:
 //! inference state (`LlamaContext` borrows, model handles) may not cross
 //! threads, so each loaded model owns one dedicated worker thread holding
 //! the model and a single reused context as plain locals; the

@@ -1,4 +1,4 @@
-//! Vector-parity gate for phases C/D (mandatory, blocks sign-off).
+//! Vector-parity gate for the local backends (mandatory, blocks sign-off).
 //!
 //! For each of the four local models, `tests/golden/vectors/*.json` holds
 //! inputs (short, long/truncated, unicode, query-purpose, document-purpose)

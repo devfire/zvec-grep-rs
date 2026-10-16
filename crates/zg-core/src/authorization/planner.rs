@@ -4,7 +4,7 @@
 //! Divergence: TS takes the MCP `NormalizedSearchInput`; the core planner
 //! takes the already-normalized signals (`uses_vector`, `auto_update`,
 //! `freshness_wait`) so `zg-core` does not depend on the MCP layer. The
-//! MCP crate adapts its normalized input to these flags in phase H.
+//! MCP crate adapts its normalized input to these flags.
 
 use super::error::AuthError;
 use super::store::RemoteEmbeddingAuthorizationStore;

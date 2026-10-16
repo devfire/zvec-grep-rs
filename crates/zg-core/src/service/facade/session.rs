@@ -1,5 +1,5 @@
 //! Explicit RAII read sessions: `context()` with `auto_update` forced off.
-//! The facade holds no timers; TTL eviction belongs to the daemon (phase G).
+//! The facade holds no timers; TTL eviction belongs to the daemon.
 
 use std::path::Path;
 
@@ -50,7 +50,7 @@ impl ZvecGrepService {
 
 /// Explicit read-session guard: `context()` with `auto_update` forced off.
 ///
-/// The facade holds no timers; TTL eviction belongs to the daemon (phase G).
+/// The facade holds no timers; TTL eviction belongs to the daemon.
 /// Single-owner close: the session owns shutdown — [`close`](ReadSession::close)
 /// consumes the guard and drains the one [`WorkspaceIndex`] through its consuming
 /// primitive, so a second close is a compile-time move error. [`Drop`] only

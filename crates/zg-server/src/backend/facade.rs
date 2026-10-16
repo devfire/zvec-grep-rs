@@ -207,7 +207,7 @@ impl DaemonBackend {
         }
     }
 
-    /// Stops every actor, then awaits in-flight work (M6) and unloads models.
+    /// Stops every actor, then awaits in-flight work and unloads models.
     pub async fn close(&self) {
         self.manager.close().await;
     }

@@ -1,12 +1,12 @@
 //! MCP tool schemas: frozen numeric bounds, validated boundary newtypes,
 //! and wire input/output structs.
 //!
-//! Mirrors `../zvec-grep/src/mcp/schemas.ts`. Per M2 the numeric bounds
+//! Mirrors `../zvec-grep/src/mcp/schemas.ts`. The numeric bounds
 //! are `const` values validated in one place: wire structs deserialize
 //! loosely and convert into validated newtypes ([`QueryText`],
 //! [`PathFilter`], [`SearchLimit`]) at the boundary, so a handler cannot
 //! receive an out-of-range value. Output structs use the TS
-//! `snake_case/camelCase` wire shapes verbatim (a wire fact per M3).
+//! `snake_case/camelCase` wire shapes verbatim.
 //!
 //! Layout: shared bounds live in `bounds`; wire inputs in `inputs`;
 //! job/index outputs in `outputs`; status outputs and

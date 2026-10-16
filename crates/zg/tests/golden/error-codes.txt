@@ -1,4 +1,4 @@
-# Wire-code registry for the zg CLI (M1).
+# Wire-code registry for the zg CLI.
 #
 # Every line is a `ZVEC_GREP.ENGINE.CLI.*` code produced by
 # `CliError::own_code()`. `src/error.rs` renders the same set from live

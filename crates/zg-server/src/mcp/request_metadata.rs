@@ -4,7 +4,7 @@
 //! Mirrors `../zvec-grep/src/mcp/request-metadata.ts`
 //! (`EMBEDDING_ENVIRONMENT_META_KEY`,
 //! `embeddingEnvironmentFromRequestMeta`). Trace-context propagation
-//! rides on `zg-server::trace` (phase F); this module reads the raw meta
+//! rides on `zg-server::trace`; this module reads the raw meta
 //! value so handlers stay transport-agnostic.
 
 use std::collections::HashMap;

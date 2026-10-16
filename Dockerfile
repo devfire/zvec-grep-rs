@@ -1,9 +1,11 @@
+# syntax=docker/dockerfile:1
 # Multi-stage image for the `zg` CLI.
 #
 # The release binary dynamically links `libzvec_c_api.so` (pulled in via
-# `zvec-rust-sys`, no rpath set), so the runtime stage installs that library
-# into the system library path (`/usr/local/lib` + `ldconfig`). No
-# `LD_LIBRARY_PATH` is needed inside the container.
+# `zvec-rust-sys`). On Linux `.cargo/config.toml` (copied into the builder
+# below) sets an `$ORIGIN` rpath, and the runtime stage additionally
+# installs that library into the system library path (`/usr/local/lib` +
+# `ldconfig`), so no `LD_LIBRARY_PATH` is needed inside the container.
 #
 # Build:
 #   docker build -t zg .
@@ -24,7 +26,6 @@
 #   `--network host` on Linux. Daemon home (`~/.zvec-grep-rs`) is ephemeral
 #   unless mounted (e.g. `-v zg-home:/root/.zvec-grep-rs`).
 
-# syntax=docker/dockerfile:1
 
 ARG RUST_IMAGE=rust:1-bookworm
 ARG RUNTIME_IMAGE=debian:bookworm-slim
@@ -35,8 +36,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
+COPY .cargo ./.cargo
 COPY crates ./crates
-RUN cargo build --release --bin zg \
+RUN cargo build --release --locked --bin zg \
     && cp "$(find target/release/build -name libzvec_c_api.so | head -n 1)" /tmp/libzvec_c_api.so \
     && ldd target/release/zg
 

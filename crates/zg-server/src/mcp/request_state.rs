@@ -260,7 +260,7 @@ impl RequestStateCodec {
         expected: &RequestStateFields,
         principal: &str,
     ) -> Result<RemoteEmbeddingRequestState, McpError> {
-        // Fail closed: an unreadable clock expires every token (R2).
+        // Fail closed: an unreadable clock expires every token.
         self.verify_at(token, expected, principal, UnixMillis::try_now())
     }
 

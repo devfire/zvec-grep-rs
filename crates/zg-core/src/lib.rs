@@ -13,9 +13,9 @@
 //! service/ + pipeline/    orchestration: indexing + hybrid search
 //! ```
 
-// Test builds exercise fallible paths with `unwrap`/`expect`/`panic!` per the
-// port plan (M8 permits `allow(unwrap_used)`/`allow(expect_used)` under
-// `cfg(test)` only; `panic!` in `let-else` refusal branches is the same class).
+// Test builds exercise fallible paths with `unwrap`/`expect`/`panic!`
+// (`allow(unwrap_used)`/`allow(expect_used)` under `cfg(test)` only;
+// `panic!` in `let-else` refusal branches is the same class).
 #![cfg_attr(
     test,
     allow(

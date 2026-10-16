@@ -1,7 +1,7 @@
 //! Backend failure type and blocking-task error mapping.
 //!
 //! [`BackendError`] converges typed daemon and engine errors without merging
-//! their wire codes (M1) — [`BackendError::code`] returns the raw string
+//! their wire codes — [`BackendError::code`] returns the raw string
 //! from either side.
 
 use zg_core::error::EngineError;
@@ -10,7 +10,7 @@ use crate::errors::DaemonError;
 use crate::read_session_cache::SessionError;
 
 /// Backend failure: typed daemon and engine errors converge here without
-/// merging their wire codes (M1) — [`BackendError::code`] returns the raw
+/// merging their wire codes — [`BackendError::code`] returns the raw
 /// string from either side.
 #[derive(Debug)]
 pub enum BackendError {

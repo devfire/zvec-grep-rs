@@ -1,4 +1,4 @@
-# Wire-code registry for zg-core (R6).
+# Wire-code registry for zg-core.
 #
 # Every line is a fully-qualified `ZVEC_GREP.ENGINE.*` code from the
 # exhaustive `EngineErrorCode::all_codes()` walk.

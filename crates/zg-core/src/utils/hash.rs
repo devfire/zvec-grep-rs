@@ -9,7 +9,7 @@ pub fn sha256_text(text: &str) -> String {
 }
 
 /// Lowercase hex of bytes, via a nibble lookup table (no per-byte `format!`).
-/// Single spelling for grant signatures, fingerprints, and digests (R3).
+/// Single spelling for grant signatures, fingerprints, and digests.
 #[must_use]
 pub fn to_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";

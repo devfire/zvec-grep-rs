@@ -43,7 +43,7 @@ tree-sitter-typescript.workspace = true
 tree-sitter-vb-dotnet.workspace = true
 rustix.workspace = true
 url.workspace = true
-# Feature-gated heavy backends (M7): optional workspace deps, enabled via
+# Feature-gated heavy backends: optional workspace deps, enabled via
 # `dep:` below so default builds need no C++ toolchain or ORT download.
 ort = { workspace = true, optional = true }
 llama-cpp-2 = { workspace = true, optional = true }
@@ -56,7 +56,7 @@ serde_json.workspace = true
 [features]
 default = []
 test-support = []
-# Heavy local-inference backends (M7): off by default so `cargo install zg`
+# Heavy local-inference backends: off by default so `cargo install zg`
 # needs no C++ toolchain and `cargo test -p zg-core` stays hermetic.
 # Each feature enables its pinned optional dep plus the matching
 # `#[cfg(feature)]`-gated backend module and factory arm; compiled out,

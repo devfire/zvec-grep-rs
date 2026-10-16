@@ -5,7 +5,7 @@
 //! required, cache directories defaulted. Each plan variant feeds its owning
 //! backend constructor; [`create_embedding_model`] is the dispatch entry
 //! point. The heavy local backends (`onnx`, `llama`) construct their models
-//! only when their cargo feature is enabled (M7); compiled out, the arm
+//! only when their cargo feature is enabled; compiled out, the arm
 //! reports [`ModelError::BackendUnavailable`], mirroring the TypeScript
 //! `unsupportedCatalogEntry` arm with a typed error instead of a string.
 
@@ -170,7 +170,7 @@ pub fn resolved_create_options(
 /// Resolves `reference` against the catalog and validates backend-specific
 /// options (Qwen API key/endpoint, local cache directory).
 ///
-/// Takes the [`ModelReference`] newtype (M2) so a bare `&str` that is not a
+/// Takes the [`ModelReference`] newtype so a bare `&str` that is not a
 /// model reference cannot flow in.
 ///
 /// # Errors

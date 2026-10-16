@@ -96,7 +96,7 @@ pub(crate) enum RootCommand {
     /// A scheduler index run finished (sent by the run closure).
     IndexFinished {
         /// Outcome with its target revision, boxed: the status payload
-        /// dwarfs every other variant (M3).
+        /// dwarfs every other variant.
         finished: Box<FinishedIndex>,
     },
     /// Stop the actor and unregister.

@@ -367,7 +367,7 @@ pub type EngineResult<T> = Result<T, EngineError>;
 /// Every constructor is `const` and takes no runtime input: codes are
 /// literals, never assembled. The `extractor` escape hatch that once took a
 /// runtime `suffix: &str` is gone; each extractor code is its own literal
-/// below (M1). See `tests/golden/error-codes.txt` for the full registry.
+/// below. See `tests/golden/error-codes.txt` for the full registry.
 pub mod codes {
     use super::EngineErrorCode;
 
@@ -589,9 +589,9 @@ fn is_bearer_value(value: &str) -> bool {
 ///
 /// Panics only when a `static` redaction regex fails to compile. The patterns
 /// are literal constants that ship with the crate, so construction cannot fail
-/// at runtime; Phase 2 converts these to `LazyLock<Result<Regex>>` with a
-/// skip-pass fallback and removes this section.
-// Phase 2 debt: `panic!` in `LazyLock` init must become typed error /
+/// at runtime; converting these to `LazyLock<Result<Regex>>` with a
+/// skip-pass fallback would remove this section.
+// Debt: `panic!` in `LazyLock` init must become typed error /
 // skip-pass fallback (`LazyLock<Result<Regex>>`). Allowed here so the
 // `panic = "deny"` firewall stays green until then.
 #[allow(clippy::panic)]

@@ -110,7 +110,7 @@ Remaining CLI divergences and choices:
   non-ASCII paths in the global context ranking tie-break.
 - **Context search plans omit `track_entity_id`** per group, matching
   the TS context `searchPlan` call, which also omits it.
-- **Model backends' concurrency shapes differ** (the C/D design note):
+- **Model backends' concurrency shapes differ**:
   ONNX leases sessions from a bounded pool behind an
   `Arc<dyn EmbeddingModel>`; llama.cpp gives each loaded model one
   dedicated worker thread holding the model and a single reused

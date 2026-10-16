@@ -55,6 +55,37 @@ pub struct CreateZvecGrepOptions {
 }
 
 /// Builds a [`ZvecGrepService`], mirroring `createZvecGrep`.
+///
+/// # Example
+///
+/// ```no_run
+/// use std::path::Path;
+///
+/// use zg_core::service::facade::{CreateZvecGrepOptions, create_zvec_grep};
+/// use zg_core::service::types::{ZvecGrepContextOptions, ZvecGrepIndexOptions};
+///
+/// # fn main() -> zg_core::EngineResult<()> {
+/// let root = Path::new("/path/to/workspace");
+/// let svc = create_zvec_grep(CreateZvecGrepOptions {
+///     root: Some(root.to_path_buf()),
+///     embedding_model: None, // resolves the catalog default via factory
+///     ..CreateZvecGrepOptions::default()
+/// });
+///
+/// svc.ensure_index(&ZvecGrepIndexOptions {
+///     root: Some(root),
+///     ..Default::default()
+/// })?;
+/// let hits = svc.context(&ZvecGrepContextOptions {
+///     root: Some(root),
+///     query: Some("hello".to_owned()),
+///     fts: vec!["hello".to_owned()],
+///     ..Default::default()
+/// })?;
+/// # let _ = hits;
+/// # Ok(())
+/// # }
+/// ```
 #[must_use]
 pub fn create_zvec_grep(options: CreateZvecGrepOptions) -> ZvecGrepService {
     ZvecGrepService::new(options)

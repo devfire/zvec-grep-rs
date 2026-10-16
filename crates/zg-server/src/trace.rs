@@ -33,7 +33,7 @@ impl std::fmt::Display for TraceParent {
     }
 }
 
-/// Request id for log correlation (`RequestId` newtype, M2).
+/// Request id for log correlation (`RequestId` newtype).
 ///
 /// Private field: only [`request_id`] builds one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
