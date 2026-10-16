@@ -22,8 +22,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex, OnceLock};
 
 use crate::error::{EngineError, EngineResult};
-use crate::models::catalog::{PoolingKind, TransformersJsEntry};
+use crate::models::catalog::{OnnxDataArtifact, PoolingKind, TransformersJsEntry};
 use crate::models::download::{self, ModelDownloadReporter};
+use crate::models::download_verify::ArtifactExpectation;
 use crate::models::embeddings::{DeviceKind, EmbeddingResult, embed_validated, purpose_prefix};
 use crate::models::error::ModelError;
 use crate::models::{
@@ -72,6 +73,30 @@ fn remote_file_exists(url: &str) -> bool {
         .head(url)
         .call()
         .is_ok_and(|response| (200..300).contains(&response.status().as_u16()))
+}
+
+/// What to do about the external-data companion, given the catalog
+/// declaration and the HEAD probe. Split out as a pure function so the
+/// fail-closed branch is testable without network access.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExternalDataPlan {
+    /// No companion to fetch: self-contained graph, or a pinned
+    /// companion the probe did not find (session load then fails loud
+    /// if the graph actually references it).
+    Skip,
+    /// Companion exists upstream and is pinned: download and verify it.
+    Download(ArtifactExpectation<'static>),
+    /// Companion exists upstream but the catalog pins none for this
+    /// revision: never download or trust unverified weights.
+    RejectUnverified,
+}
+
+fn external_data_plan(artifact: OnnxDataArtifact, remote_exists: bool) -> ExternalDataPlan {
+    match (artifact, remote_exists) {
+        (OnnxDataArtifact::None | OnnxDataArtifact::Pinned(_), false) => ExternalDataPlan::Skip,
+        (OnnxDataArtifact::Pinned(expectation), true) => ExternalDataPlan::Download(expectation),
+        (OnnxDataArtifact::None, true) => ExternalDataPlan::RejectUnverified,
+    }
 }
 
 /// Builds the typed `TRANSFORMERS_JS_TOKENIZATION_FAILED` error.
@@ -332,29 +357,43 @@ impl OnnxEmbeddingModel {
         // while a present-but-unfetchable file stays a loud error below.
         let data_remote = format!("{remote_onnx}_data");
         let data_file_name = format!("{onnx_file_name}_data");
-        if remote_file_exists(&download::huggingface_url(
+        let remote_exists = remote_file_exists(&download::huggingface_url(
             entry.repo,
             entry.revision,
             &data_remote,
-        )) {
-            reporter.register(&data_file_name);
-            let data_path = download::scoped_cache_path(
-                &self.cache_dir,
-                "onnx",
-                entry.repo,
-                entry.revision,
-                &data_file_name,
-            );
-            download::download_cached_file(
-                entry.repo,
-                entry.revision,
-                &data_remote,
-                &data_path,
-                &data_file_name,
-                entry.onnx_data_artifact,
-                reporter,
-            )
-            .map_err(|err| embed_failed(entry, format_args!("{err}")))?;
+        ));
+        match external_data_plan(entry.onnx_data_artifact, remote_exists) {
+            ExternalDataPlan::Skip => {}
+            ExternalDataPlan::RejectUnverified => {
+                return Err(embed_failed(
+                    entry,
+                    format_args!(
+                        "unexpected unverified external data artifact {data_remote}: \
+                         catalog pins no *_data file at this revision; \
+                         refusing to download or trust it"
+                    ),
+                ));
+            }
+            ExternalDataPlan::Download(expectation) => {
+                reporter.register(&data_file_name);
+                let data_path = download::scoped_cache_path(
+                    &self.cache_dir,
+                    "onnx",
+                    entry.repo,
+                    entry.revision,
+                    &data_file_name,
+                );
+                download::download_cached_file(
+                    entry.repo,
+                    entry.revision,
+                    &data_remote,
+                    &data_path,
+                    &data_file_name,
+                    expectation,
+                    reporter,
+                )
+                .map_err(|err| embed_failed(entry, format_args!("{err}")))?;
+            }
         }
         download::download_cached_file(
             entry.repo,
@@ -705,10 +744,34 @@ mod tests {
             document_prefix: Some("passage: "),
             max_input_tokens: 512,
             max_batch_size: 4,
-            onnx_artifact: crate::models::download_verify::ArtifactExpectation::UNVERIFIED,
-            onnx_data_artifact: crate::models::download_verify::ArtifactExpectation::UNVERIFIED,
-            tokenizer_artifact: crate::models::download_verify::ArtifactExpectation::UNVERIFIED,
+            onnx_artifact: ArtifactExpectation::UNVERIFIED,
+            onnx_data_artifact: OnnxDataArtifact::None,
+            tokenizer_artifact: ArtifactExpectation::UNVERIFIED,
         }
+    }
+
+    #[test]
+    fn external_data_plan_never_trusts_unverified_companion() {
+        let pinned = ArtifactExpectation::new(Some(3), Some("test-sha"));
+        // No companion upstream: nothing to fetch, pinned or not.
+        assert_eq!(
+            external_data_plan(OnnxDataArtifact::None, false),
+            ExternalDataPlan::Skip
+        );
+        assert_eq!(
+            external_data_plan(OnnxDataArtifact::Pinned(pinned), false),
+            ExternalDataPlan::Skip
+        );
+        // Pinned companion present: download only under its expectation.
+        assert_eq!(
+            external_data_plan(OnnxDataArtifact::Pinned(pinned), true),
+            ExternalDataPlan::Download(pinned)
+        );
+        // Present but unpinned (issue #96): fail closed, never trust it.
+        assert_eq!(
+            external_data_plan(OnnxDataArtifact::None, true),
+            ExternalDataPlan::RejectUnverified
+        );
     }
 
     #[test]

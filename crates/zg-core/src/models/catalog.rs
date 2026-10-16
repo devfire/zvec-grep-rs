@@ -161,6 +161,21 @@ const fn pinned(size: u64, sha256: &'static str) -> ArtifactExpectation<'static>
     ArtifactExpectation::new(Some(size), Some(sha256))
 }
 
+/// External-data companion (`*_data`) for an ONNX graph.
+///
+/// `None` means the pinned upstream revision has no companion (verified
+/// against the Hugging Face blob listing for that revision): the graph
+/// is self-contained, and a companion appearing upstream or in the cache
+/// is unexpected and must never be downloaded or trusted. `Pinned`
+/// means a companion exists upstream and carries its recorded
+/// size/SHA-256. Keeping these distinct makes an unverified companion
+/// unrepresentable, unlike a bare `ArtifactExpectation::UNVERIFIED`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnnxDataArtifact {
+    None,
+    Pinned(ArtifactExpectation<'static>),
+}
+
 /// Catalog entry for a Qwen text embedding model (remote API).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QwenTextEntry {
@@ -204,9 +219,10 @@ pub struct TransformersJsEntry {
     pub max_batch_size: usize,
     /// Upstream-recorded size/SHA-256 for the ONNX graph file.
     pub onnx_artifact: ArtifactExpectation<'static>,
-    /// Upstream-recorded size/SHA-256 for the external-data companion
-    /// (`*_data`), or `UNVERIFIED` when the model has none upstream.
-    pub onnx_data_artifact: ArtifactExpectation<'static>,
+    /// External-data companion (`*_data`) for the graph: `Pinned` with
+    /// its upstream-recorded size/SHA-256 when one exists at the pinned
+    /// revision, or `None` when the model has none upstream.
+    pub onnx_data_artifact: OnnxDataArtifact,
     /// Upstream-recorded size/SHA-256 for `tokenizer.json`.
     pub tokenizer_artifact: ArtifactExpectation<'static>,
 }
@@ -400,10 +416,10 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
             132_562,
             "266acb3edd98a1932f876d15bd8f7881a4955d0d53a6d5e79900f788b432de09",
         ),
-        onnx_data_artifact: pinned(
+        onnx_data_artifact: OnnxDataArtifact::Pinned(pinned(
             61_185_024,
             "77aff1dfb1e0591a40b61a91e5a97796f14c2aff56706e345bef5cbb3613b8cc",
-        ),
+        )),
         tokenizer_artifact: pinned(
             533_603,
             "ea77de727ef7fd34d177b83b4b1f1d3bb8884c95c90b6554a0adb0b3b65350a9",
@@ -427,10 +443,10 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
             69_663,
             "e4dcb918111189b7686147e309379832fce83d4ecbf17c395961749b5788c786",
         ),
-        onnx_data_artifact: pinned(
+        onnx_data_artifact: OnnxDataArtifact::Pinned(pinned(
             54_429_696,
             "56fb7a55115e900196115a74e399beb45c2f41ae00b99525d46fb52935c4ee2a",
-        ),
+        )),
         tokenizer_artifact: pinned(
             533_808,
             "07805d116826679de90b4edeb2222269c4b8753bc0981be4399f732b2708e904",
@@ -523,7 +539,7 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
             118_308_185,
             "f80102d3f2a1229f387d3c81909990d8945513e347b0eab049f7de3c6f98c193",
         ),
-        onnx_data_artifact: ArtifactExpectation::UNVERIFIED,
+        onnx_data_artifact: OnnxDataArtifact::None,
         tokenizer_artifact: pinned(
             17_082_730,
             "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39",
@@ -547,7 +563,7 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
             161_895_621,
             "ed45870251c9f0cf656e78aab0d37a23489066df8a222bb1c8caf8a45f2cb16d",
         ),
-        onnx_data_artifact: ArtifactExpectation::UNVERIFIED,
+        onnx_data_artifact: OnnxDataArtifact::None,
         tokenizer_artifact: pinned(
             2_561_316,
             "b01c78a902aa4facb2f47f95449f48e2f7bbfea5d2472ee2f6ce92323c6f86e5",
@@ -571,7 +587,7 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
             224_152_761,
             "5d1278a1ba749c06b82f9a2f65c2c1c5765d36f2eb88b4888de62ff12b0724a2",
         ),
-        onnx_data_artifact: ArtifactExpectation::UNVERIFIED,
+        onnx_data_artifact: OnnxDataArtifact::None,
         tokenizer_artifact: pinned(
             3_583_228,
             "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30",
@@ -595,7 +611,7 @@ pub static EMBEDDING_MODEL_CATALOG: &[EmbeddingCatalogEntry] = &[
             165_113_221,
             "314976b7b9fba83283f9c8a29ee680a159fa485f52104e3fa39d3d5858337003",
         ),
-        onnx_data_artifact: ArtifactExpectation::UNVERIFIED,
+        onnx_data_artifact: OnnxDataArtifact::None,
         tokenizer_artifact: pinned(
             711_396,
             "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
@@ -680,13 +696,21 @@ mod tests {
 
     #[test]
     fn downloaded_artifacts_carry_size_and_sha256() {
-        let (mut onnx, mut model2vec) = (0usize, 0usize);
+        let (mut onnx, mut model2vec, mut onnx_data_pinned) = (0usize, 0usize, 0usize);
         for entry in EMBEDDING_MODEL_CATALOG {
             match entry {
                 EmbeddingCatalogEntry::TransformersJs(e) => {
                     onnx += 1;
                     assert_pinned(e.onnx_artifact, e.reference);
                     assert_pinned(e.tokenizer_artifact, e.reference);
+                    // A companion that exists upstream must be pinned;
+                    // `None` is reserved for revisions verified to have
+                    // no `*_data` file (bge-small and all-MiniLM are the
+                    // only catalog models with one).
+                    if let OnnxDataArtifact::Pinned(expectation) = e.onnx_data_artifact {
+                        onnx_data_pinned += 1;
+                        assert_pinned(expectation, e.reference);
+                    }
                 }
                 EmbeddingCatalogEntry::Model2Vec(e) => {
                     model2vec += 1;
@@ -700,5 +724,6 @@ mod tests {
         }
         assert_eq!(onnx, 6);
         assert_eq!(model2vec, 3);
+        assert_eq!(onnx_data_pinned, 2);
     }
 }
