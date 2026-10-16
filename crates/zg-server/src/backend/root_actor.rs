@@ -45,6 +45,9 @@ pub(crate) struct RootActor {
 
 impl RootActor {
     pub(crate) async fn run(&mut self) {
+        // Zero idle TTL means "never release" (#79 upstream `0`), so
+        // the idle branch must never fire.
+        let idle_enabled = !self.shared.runtime_idle_ttl.is_zero();
         let mut idle = Box::pin(tokio::time::sleep(self.shared.runtime_idle_ttl));
         loop {
             tokio::select! {
@@ -61,7 +64,7 @@ impl RootActor {
                         break;
                     }
                 }
-                () = &mut idle => {
+                () = &mut idle, if idle_enabled => {
                     // Drain debounced-but-unflushed watcher batches before
                     // deciding to exit: teardown drops pending changes, so
                     // exiting over an unflushed batch would silently lose

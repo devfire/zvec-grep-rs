@@ -49,8 +49,12 @@ impl DaemonBackend {
             read_session_ttl: options
                 .read_session_ttl
                 .unwrap_or(crate::read_session_cache::DEFAULT_READ_SESSION_IDLE_TTL),
+            // Explicit option wins, then
+            // `ZVEC_GREP_WATCHER_IDLE_TIMEOUT_SECONDS` (#79; `0`
+            // means never release), then the local default.
             runtime_idle_ttl: options
                 .runtime_idle_ttl
+                .or_else(zg_core::env::watcher_idle_timeout_from_env)
                 .unwrap_or(crate::runtime_manager::DEFAULT_RUNTIME_IDLE_TTL),
         };
         let manager = RuntimeManager::new(shared);

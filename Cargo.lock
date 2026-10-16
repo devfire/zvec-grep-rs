@@ -4158,6 +4158,7 @@ name = "zg-core"
 version = "0.2.1"
 dependencies = [
  "chrono",
+ "dirs",
  "globset",
  "grep-matcher",
  "grep-regex",

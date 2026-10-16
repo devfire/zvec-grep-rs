@@ -262,6 +262,9 @@ impl EmbeddingModel for LlamaCppEmbeddingModel {
 /// store lands (no fallible step sits between its successful CAS and the
 /// store, so the spin always terminates).
 fn global_backend(entry: &LlamaCppEntry) -> EngineResult<&'static LlamaBackend> {
+    // Upstream Metal residency mitigation (#79) must land before the
+    // backend initializes; `ZVEC_GREP_METAL_KEEP_RESIDENCY=1` opts out.
+    crate::env::apply_metal_residency_mitigation();
     static BACKEND: OnceLock<LlamaBackend> = OnceLock::new();
     if let Some(backend) = BACKEND.get() {
         return Ok(backend);

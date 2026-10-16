@@ -20,15 +20,37 @@ pub const STATE_DIR_NAME: &str = ".zvec-grep-rs";
 /// wherever the user chooses.
 pub const LEGACY_STATE_DIR_NAME: &str = ".zvec-grep";
 
-/// Default global state directory: `$ZVEC_GREP_HOME` or `~/.zvec-grep-rs`.
-pub fn default_home() -> PathBuf {
-    if let Some(home) = std::env::var_os("ZVEC_GREP_HOME")
+/// Pure home resolution: explicit override, else the platform home
+/// directory. `None` when neither exists — never the CWD (#79).
+#[must_use]
+pub fn resolve_default_home(
+    override_home: Option<std::ffi::OsString>,
+    platform_home: Option<PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(home) = override_home
         && !home.is_empty()
     {
-        return PathBuf::from(home);
+        return Some(PathBuf::from(home));
     }
-    let home_dir = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
-    home_dir.join(STATE_DIR_NAME)
+    platform_home.map(|home| home.join(STATE_DIR_NAME))
+}
+
+/// Default global state directory: `$ZVEC_GREP_HOME` or `~/.zvec-grep-rs`
+/// (platform home lookup via `dirs`, so `HOME`-unset shells still find
+/// the real home instead of writing global state into the CWD, #79).
+///
+/// # Panics
+///
+/// Panics when neither `$ZVEC_GREP_HOME` nor a platform home directory
+/// can be determined; callers that can recover should use
+/// [`resolve_default_home`] instead.
+#[must_use]
+#[allow(clippy::panic)] // No home anywhere is an unrecoverable environment bug; recoverable callers use `resolve_default_home`.
+pub fn default_home() -> PathBuf {
+    match resolve_default_home(std::env::var_os("ZVEC_GREP_HOME"), dirs::home_dir()) {
+        Some(home) => home,
+        None => panic!("cannot determine the global state directory: set ZVEC_GREP_HOME or HOME"),
+    }
 }
 
 /// Lexically absolute form of `path` (no symlink resolution, like `resolve`).
@@ -98,6 +120,30 @@ mod tests {
         assert_eq!(STATE_DIR_NAME, ".zvec-grep-rs");
         assert_eq!(LEGACY_STATE_DIR_NAME, ".zvec-grep");
         assert_ne!(STATE_DIR_NAME, LEGACY_STATE_DIR_NAME);
+    }
+
+    #[test]
+    fn home_resolution_never_falls_back_to_cwd() {
+        assert_eq!(resolve_default_home(None, None), None);
+        assert_eq!(
+            resolve_default_home(None, Some(PathBuf::from("/home/u"))),
+            Some(PathBuf::from("/home/u/.zvec-grep-rs"))
+        );
+        assert_eq!(
+            resolve_default_home(
+                Some(std::ffi::OsString::from("/custom")),
+                Some(PathBuf::from("/home/u"))
+            ),
+            Some(PathBuf::from("/custom"))
+        );
+        // Empty override counts as unset.
+        assert_eq!(
+            resolve_default_home(
+                Some(std::ffi::OsString::new()),
+                Some(PathBuf::from("/home/u"))
+            ),
+            Some(PathBuf::from("/home/u/.zvec-grep-rs"))
+        );
     }
 
     #[test]

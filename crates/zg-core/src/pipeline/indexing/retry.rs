@@ -290,6 +290,31 @@ pub(crate) fn resolve_embedding_concurrency_policy(
     requested: Option<usize>,
     model: &dyn EmbeddingModel,
 ) -> ConcurrencyPolicy {
+    // Env fallback (#79): explicit option wins, then
+    // `ZVEC_GREP_INDEX_EMBEDDING_CONCURRENCY`, then (llama only)
+    // `ZVEC_GREP_LLAMA_CONTEXT_PARALLELISM`. Env-derived local
+    // llama/ONNX values cap at 8 like upstream; explicit requests
+    // keep their existing uncapped semantics.
+    let requested = if requested.is_some() {
+        requested
+    } else {
+        let backend = crate::models::catalog::get_embedding_model_catalog_entry(
+            &model.info().reference,
+        )
+        .map(crate::models::catalog::EmbeddingCatalogEntry::backend);
+        let is_llama = backend == Some(crate::models::catalog::BackendKind::LlamaCpp);
+        let from_env = crate::env::index_embedding_concurrency_from_env(is_llama);
+        match (from_env, backend) {
+            (
+                Some(value),
+                Some(
+                    crate::models::catalog::BackendKind::LlamaCpp
+                    | crate::models::catalog::BackendKind::TransformersJs,
+                ),
+            ) => Some(value.min(crate::env::LOCAL_EMBEDDING_CONCURRENCY_CAP)),
+            (other, _) => other,
+        }
+    };
     if let Some(requested) = requested.filter(|value| *value > 0) {
         return ConcurrencyPolicy {
             initial: requested,
