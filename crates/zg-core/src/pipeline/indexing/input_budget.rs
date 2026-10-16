@@ -58,59 +58,41 @@ fn is_token_dense_text(text: Option<&str>, max_input_tokens: usize) -> bool {
         }
         return false;
     }
-    // Large input: dense verdict from bounded leading/trailing/interior
-    // samples with early exit, instead of sliding a window across the file.
-    sample_windows(text).any(window_is_dense)
+    // Large input: slide a 16K-char window across the whole text (upstream
+    // steps by 8K; checking every position is a superset, so a dense region
+    // anywhere — not only at sampled offsets — qualifies).
+    sliding_window_is_dense(text)
 }
 
-/// Leading, trailing, and two interior byte windows snapped to char
-/// boundaries. Bounded: four 16KiB samples regardless of input size.
-fn sample_windows(text: &str) -> impl Iterator<Item = &str> {
-    let bytes = text.len();
-    let mut starts = vec![
-        0,
-        bytes / 3,
-        bytes * 2 / 3,
-        bytes.saturating_sub(TOKEN_DENSE_WINDOW_CHARS),
-    ];
-    starts.sort_unstable();
-    starts.dedup();
-    starts
-        .into_iter()
-        .filter_map(|start| snap_window(text, start, TOKEN_DENSE_WINDOW_CHARS))
-}
-
-fn snap_window(text: &str, start: usize, len: usize) -> Option<&str> {
-    if start >= text.len() {
-        return None;
-    }
-    let mut end = start.saturating_add(len).min(text.len());
-    let mut snapped = start;
-    while snapped < end && !text.is_char_boundary(snapped) {
-        snapped += 1;
-    }
-    while end > snapped && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    if snapped >= end {
-        return None;
-    }
-    Some(&text[snapped..end])
-}
-
-/// True when one sample window reaches the 30% dense-char bar, bailing on
-/// the first dense evidence instead of scanning the whole window.
-fn window_is_dense(window: &str) -> bool {
+/// True when any 16K-char window reaches the 30% dense-char bar.
+///
+/// Single char pass with a ring of the last window's dense flags: O(n)
+/// time, O(window) space, no per-window rescan. The bar is in chars, so
+/// multi-byte text (CJK, emoji) is judged on the same scale as ASCII —
+/// a byte-sized window would hold too few 4-byte chars to ever qualify.
+fn sliding_window_is_dense(text: &str) -> bool {
     let required = TOKEN_DENSE_WINDOW_CHARS
         .saturating_mul(TOKEN_DENSE_PERCENT)
         .div_ceil(100);
+    let mut ring = vec![false; TOKEN_DENSE_WINDOW_CHARS];
     let mut dense = 0usize;
-    for ch in window.chars() {
-        if is_dense_char(ch) {
+    for (index, ch) in text.chars().enumerate() {
+        let slot = index % TOKEN_DENSE_WINDOW_CHARS;
+        // Slot is in bounds by construction: ring has exactly
+        // TOKEN_DENSE_WINDOW_CHARS cells and slot is a modulo of it.
+        let Some(cell) = ring.get_mut(slot) else {
+            continue;
+        };
+        if index >= TOKEN_DENSE_WINDOW_CHARS && *cell {
+            dense -= 1;
+        }
+        let is_dense = is_dense_char(ch);
+        *cell = is_dense;
+        if is_dense {
             dense += 1;
-            if dense >= required {
-                return true;
-            }
+        }
+        if index + 1 >= TOKEN_DENSE_WINDOW_CHARS && dense >= required {
+            return true;
         }
     }
     false
@@ -137,8 +119,31 @@ mod tests {
         assert_eq!(options.overlap_chars, Some(277));
     }
     #[test]
-    fn large_inputs_classify_from_bounded_samples() {
-        // 100KB-class inputs take the sampling path (no full char passes).
+    fn four_byte_dense_text_qualifies() {
+        // 4-byte chars: a 16KiB byte window holds only ~4K chars, below
+        // the 4916-char bar, so byte sampling could never flag this.
+        let dense = "\u{1F600}".repeat(100_000);
+        assert_eq!(
+            index_chunk_options(Some(1000), Some(&dense)).max_chunk_chars,
+            Some(1000)
+        );
+    }
+
+    #[test]
+    fn dense_region_buried_between_sparse_text_qualifies() {
+        // Dense block sits away from every fixed sample offset.
+        let mut text = "a ".repeat(30_000);
+        text.push_str(&";".repeat(20_000));
+        text.push_str(&"a ".repeat(30_000));
+        assert_eq!(
+            index_chunk_options(Some(1000), Some(&text)).max_chunk_chars,
+            Some(1000)
+        );
+    }
+
+    #[test]
+    fn large_inputs_classify_by_density() {
+        // 100KB-class inputs take the sliding-window path.
         let sparse = "a ".repeat(50_000);
         assert_eq!(
             index_chunk_options(Some(1000), Some(&sparse)).max_chunk_chars,

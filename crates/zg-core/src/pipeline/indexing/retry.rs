@@ -400,10 +400,15 @@ fn classify_embedding_retry(
     // Missing/revoked remote-embedding authorization never heals by retrying
     // per file: fail the whole index instead of marking every file failed.
     let auth_required = code == "ZVEC_GREP.ENGINE.AUTH.REMOTE_EMBEDDING_REQUIRED";
+    // A panicked embedding worker never heals per file either: without
+    // fail-fast, the wave's abort flag silently drops every remaining
+    // file and `index_files` returns Ok with uncounted work (#75).
+    let thread_failed = *error.code() == EngineErrorCode::IndexingEmbeddingThreadFailed;
     RetryClassification {
         retryable,
         rate_limited,
-        fail_fast: auth_required
+        fail_fast: thread_failed
+            || auth_required
             || retryable
             || shared_local_failure
             || remote_configuration_failure
@@ -654,6 +659,45 @@ mod tests {
             "remote embedding authorization required",
         );
         assert!(should_fail_fast_embedding_error(&error, &model));
+    }
+
+    #[test]
+    fn embedding_thread_failed_is_fail_fast() {
+        // #75: a panicked worker must fail the run, not abort silently.
+        struct LocalModel;
+        impl EmbeddingModel for LocalModel {
+            fn info(&self) -> &crate::models::EmbeddingModelInfo {
+                use std::sync::OnceLock;
+                static INFO: OnceLock<crate::models::EmbeddingModelInfo> = OnceLock::new();
+                INFO.get_or_init(|| crate::models::EmbeddingModelInfo {
+                    reference: "test/local".to_owned(),
+                    provider: "local".to_owned(),
+                    model: "test-model".to_owned(),
+                    dimension: 4,
+                    metric: crate::types::SearchMetric::Cosine,
+                    supports_images: false,
+                    max_input_tokens: None,
+                    endpoint: None,
+                    input_kinds: vec![crate::models::EmbeddingInputKind::Text],
+                    default_concurrency: None,
+                })
+            }
+            fn max_batch_size(&self) -> usize {
+                8
+            }
+            fn embed(
+                &self,
+                _purpose: EmbeddingPurpose,
+                _inputs: &[EmbeddingInput<'_>],
+            ) -> EngineResult<EmbeddingResult> {
+                unreachable!("classification only")
+            }
+        }
+        let error = EngineError::new(
+            EngineErrorCode::IndexingEmbeddingThreadFailed,
+            "embedding worker thread failed",
+        );
+        assert!(should_fail_fast_embedding_error(&error, &LocalModel));
     }
 
     #[test]

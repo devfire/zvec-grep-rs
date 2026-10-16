@@ -15,12 +15,12 @@ use crate::utils::glob::{
     path_pattern_might_match_descendant,
 };
 
-/// Rejects a single ignore file with more parsed rules than this, with an
-/// error rather than a silent skip (#35).
+/// Truncation bound for one ignore file (#75): rules past this are dropped
+/// with a stderr warning, not a hard scan error (upstream has no limit).
 pub(crate) const MAX_IGNORE_RULES_PER_FILE: usize = 10_000;
 
-/// Rejects an accumulated per-directory rule set larger than this, with an
-/// error rather than a silent skip (#35).
+/// Truncation bound for an accumulated per-directory rule set (#75):
+/// excess rules are dropped with a stderr warning, not a scan error.
 pub(crate) const MAX_IGNORE_RULES_PER_DIRECTORY: usize = 50_000;
 
 #[derive(Debug, Clone)]
@@ -123,43 +123,41 @@ pub(crate) fn ignore_rules_for_directory(
     };
     rules.extend(read_configured_ignore_rules(root)?);
     if !root.no_ignore.unwrap_or(false) {
-        rules.extend(read_gitignore_rules(root, &root.absolute_path)?);
+        rules.extend(read_gitignore_rules(root, &root.absolute_path));
     }
     let path_from_root = strip_root_prefix(&root.absolute_path, directory);
     if path_from_root.is_empty() {
-        return check_total_rule_count(rules, &root.absolute_path);
+        return Ok(check_total_rule_count(rules, &root.absolute_path));
     }
     let mut current = PathBuf::from(&root.absolute_path);
     for segment in path_from_root.split('/').filter(|s| !s.is_empty()) {
         current.push(segment);
         if !root.no_ignore.unwrap_or(false) {
-            rules.extend(read_gitignore_rules(root, &to_display_path(&current))?);
+            rules.extend(read_gitignore_rules(root, &to_display_path(&current)));
         }
     }
-    check_total_rule_count(rules, &root.absolute_path)
+    Ok(check_total_rule_count(rules, &root.absolute_path))
 }
 
-fn check_total_rule_count(rules: Vec<IgnoreRule>, root: &str) -> EngineResult<Vec<IgnoreRule>> {
+#[allow(clippy::print_stderr)] // Warning mirrors upstream stderr warnings.
+fn check_total_rule_count(mut rules: Vec<IgnoreRule>, root: &str) -> Vec<IgnoreRule> {
     if rules.len() > MAX_IGNORE_RULES_PER_DIRECTORY {
-        return Err(EngineError::new(
-            EngineErrorCode::ScannerConfiguredIgnoreReadFailed,
-            "workspace index ignore rules exceed the per-directory limit",
-        )
-        .with_context(format!("root={root} rules={}", rules.len())));
+        eprintln!(
+            "zvec-grep warning: ignore rules for root={root} exceed {MAX_IGNORE_RULES_PER_DIRECTORY} ({} rules); truncating.",
+            rules.len()
+        );
+        rules.truncate(MAX_IGNORE_RULES_PER_DIRECTORY);
     }
-    Ok(rules)
+    rules
 }
 
-pub(crate) fn read_gitignore_rules(
-    root: &RootPath,
-    current_path: &str,
-) -> EngineResult<Vec<IgnoreRule>> {
+pub(crate) fn read_gitignore_rules(root: &RootPath, current_path: &str) -> Vec<IgnoreRule> {
     let ignore_path = Path::new(current_path).join(".gitignore");
     let Ok(content) = std::fs::read_to_string(&ignore_path) else {
         if let Ok(mut cache) = gitignore_cache().lock() {
             cache.entries.remove(&to_display_path(&ignore_path));
         }
-        return Ok(Vec::new());
+        return Vec::new();
     };
     let base_path = display_relative(&root.absolute_path, current_path);
     let cache_key = format!("{}\0{base_path}", to_display_path(&ignore_path));
@@ -167,9 +165,9 @@ pub(crate) fn read_gitignore_rules(
         && let Some((cached_content, rules)) = cache.entries.get(&cache_key)
         && cached_content == &content
     {
-        return Ok(rules.clone());
+        return rules.clone();
     }
-    let rules = parse_gitignore_rules(&content, &base_path, &to_display_path(&ignore_path))?;
+    let rules = parse_gitignore_rules(&content, &base_path, &to_display_path(&ignore_path));
     if let Ok(mut cache) = gitignore_cache().lock() {
         while cache.entries.len() >= MAX_GITIGNORE_CACHE_ENTRIES {
             let Some(oldest) = cache.order.pop_front() else {
@@ -180,7 +178,7 @@ pub(crate) fn read_gitignore_rules(
         cache.order.push_back(cache_key.clone());
         cache.entries.insert(cache_key, (content, rules.clone()));
     }
-    Ok(rules)
+    rules
 }
 
 pub(crate) fn read_configured_ignore_rules(root: &RootPath) -> EngineResult<Vec<IgnoreRule>> {
@@ -202,29 +200,26 @@ pub(crate) fn read_configured_ignore_rules(root: &RootPath) -> EngineResult<Vec<
             &content,
             "",
             &to_display_path(&absolute),
-        )?);
+        ));
     }
     Ok(rules)
 }
 
-fn parse_gitignore_rules(
-    content: &str,
-    base_path: &str,
-    source: &str,
-) -> EngineResult<Vec<IgnoreRule>> {
-    let rules = content
+#[allow(clippy::print_stderr)] // Warning mirrors upstream stderr warnings.
+fn parse_gitignore_rules(content: &str, base_path: &str, source: &str) -> Vec<IgnoreRule> {
+    let mut rules = content
         .split('\n')
         .map(|line| line.strip_suffix('\r').unwrap_or(line))
         .filter_map(|line| parse_gitignore_rule(line, base_path))
         .collect::<Vec<_>>();
     if rules.len() > MAX_IGNORE_RULES_PER_FILE {
-        return Err(EngineError::new(
-            EngineErrorCode::ScannerConfiguredIgnoreReadFailed,
-            "workspace index ignore file exceeds the per-file rule limit",
-        )
-        .with_context(format!("path={source} rules={}", rules.len())));
+        eprintln!(
+            "zvec-grep warning: ignore file {source} exceeds {MAX_IGNORE_RULES_PER_FILE} rules ({} rules); truncating.",
+            rules.len()
+        );
+        rules.truncate(MAX_IGNORE_RULES_PER_FILE);
     }
-    Ok(rules)
+    rules
 }
 
 fn parse_gitignore_rule(line: &str, base_path: &str) -> Option<IgnoreRule> {
@@ -394,6 +389,35 @@ mod tests {
             recursive: true,
             ..RootPath::default()
         }
+    }
+
+    #[test]
+    fn oversized_gitignore_warns_and_scans_instead_of_erroring() {
+        // #75: >10k rules in one .gitignore truncates with a warning.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut gitignore = String::from("blocked.txt\n");
+        for i in 0..10_005 {
+            std::fmt::Write::write_fmt(&mut gitignore, format_args!("f{i}.txt\n"))
+                .expect("write gitignore rule");
+        }
+        write_tree(
+            dir.path(),
+            &[
+                (".gitignore", &gitignore),
+                ("blocked.txt", "blocked\n"),
+                ("keep.rs", "fn keep() {}\n"),
+            ],
+        );
+        let options = ScanOptions::default();
+        let result = scan_root_paths("idx", &[test_root(dir.path())], &options)
+            .expect("oversized gitignore must not fail the scan");
+        let names: Vec<_> = result
+            .files
+            .iter()
+            .map(|f| f.relative_path.clone())
+            .collect();
+        assert!(names.iter().any(|n| n == "keep.rs"), "{names:?}");
+        assert!(!names.iter().any(|n| n == "blocked.txt"), "{names:?}");
     }
 
     #[test]

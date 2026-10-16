@@ -250,6 +250,15 @@ pub(crate) fn index_files(
             &mut embed_elapsed_ms,
         )?;
     }
+    // An abort that reached here broke out of a wave loop without a wave
+    // returning its error: remaining files were never processed or
+    // counted, so success would be a silent partial index (#75).
+    if abort.load(Ordering::Relaxed) {
+        return Err(EngineError::new(
+            EngineErrorCode::IndexingEmbeddingThreadFailed,
+            "embedding aborted before all files were processed",
+        ));
+    }
     if !files.is_empty() {
         timings.add("index_prepare", prepare_elapsed_ms, files.len() as u64);
     }

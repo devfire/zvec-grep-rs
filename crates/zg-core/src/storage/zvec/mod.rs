@@ -123,7 +123,7 @@ impl ZvecWorkspaceIndexStorage {
             );
         }
         let index_path = paths.index_path.to_string_lossy().into_owned();
-        let collection = if paths.index_path.exists() {
+        let mut collection = if paths.index_path.exists() {
             let mut open_options = CollectionOptions::new().map_err(zvec_error_open)?;
             open_options
                 .set_read_only(read_only)
@@ -150,6 +150,29 @@ impl ZvecWorkspaceIndexStorage {
             write_embedding_fingerprint(&paths.storage_path, embedding)?;
             collection
         };
+        // #75: metadata is the authoritative file list. An empty metadata
+        // store with a non-empty collection means the docs are orphans
+        // (e.g. files.json was quarantined as corrupt and restarted
+        // empty): no diff can ever name them deleted, so they would
+        // consume search top-k forever. Reset to a fresh collection.
+        if !read_only
+            && meta.records().is_empty()
+            && collection.stats().is_ok_and(|stats| stats.doc_count > 0)
+        {
+            drop(collection);
+            std::fs::remove_dir_all(&paths.index_path).map_err(|error| {
+                EngineError::new(
+                    EngineErrorCode::StorageDeleteFailed,
+                    "failed to delete orphaned workspace index collection",
+                )
+                .with_context(format!("path={} error={error}", paths.index_path.display()))
+            })?;
+            let collection_schema = create_entities_schema(embedding)?;
+            collection = open_zvec_collection(&index_path, read_only, "create", || {
+                Collection::create_and_open(&index_path, &collection_schema, None)
+            })?;
+            write_embedding_fingerprint(&paths.storage_path, embedding)?;
+        }
         Ok(Box::new(Self {
             read_only,
             collection: Some(collection),

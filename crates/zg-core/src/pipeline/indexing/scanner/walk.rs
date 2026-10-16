@@ -22,19 +22,16 @@ use super::types::{CancelFlag, PathKind, ScanOptions, ScanResult, throw_if_cance
 use super::types::{HARD_SKIP_HIDDEN_NAMES, display_relative, file_name_of, known_files_by_path};
 use super::types::{matching_root_paths, parent_display, path_outside_root, strip_root_prefix};
 
-/// Default cap on directory depth when `root.max_depth` is unset (#36).
+/// Effective depth limit for a root: the explicit `max_depth` only.
 ///
-/// Keeps the iterative walk heap-bound and stops runaway scans. Set
-/// `max_depth` to `u32::MAX` to opt out explicitly.
-const DEFAULT_MAX_SCAN_DEPTH: usize = 256;
-
-/// Effective depth limit for a root: explicit `max_depth`, the default cap
-/// when unset, or `None` for the explicit `u32::MAX` opt-out (#36).
+/// No implicit cap when unset (#75, matching upstream): the walk is
+/// iterative with a visited-directory set, so deep trees cost heap, not
+/// call stack, and cycles cannot loop. `u32::MAX` stays an explicit
+/// unlimited spelling for compatibility.
 fn effective_max_depth(root: &RootPath) -> Option<usize> {
     match root.max_depth {
-        Some(u32::MAX) => None,
+        Some(u32::MAX) | None => None,
         Some(max) => Some(max as usize),
-        None => Some(DEFAULT_MAX_SCAN_DEPTH),
     }
 }
 
@@ -387,21 +384,18 @@ struct WalkFrame {
 /// Returns the parent set unchanged when ignores are disabled or the
 /// directory adds no fresh rules; otherwise appends the fresh rules to a
 /// merged copy shared down the stack by [`Arc`].
-fn resolve_frame_ignore_rules(
-    root: &RootPath,
-    frame: &WalkFrame,
-) -> EngineResult<Arc<[IgnoreRule]>> {
+fn resolve_frame_ignore_rules(root: &RootPath, frame: &WalkFrame) -> Arc<[IgnoreRule]> {
     if root.no_ignore.unwrap_or(false) {
-        return Ok(Arc::clone(&frame.ignore_rules));
+        return Arc::clone(&frame.ignore_rules);
     }
-    let fresh = read_gitignore_rules(root, &frame.current_path)?;
+    let fresh = read_gitignore_rules(root, &frame.current_path);
     if fresh.is_empty() {
-        return Ok(Arc::clone(&frame.ignore_rules));
+        return Arc::clone(&frame.ignore_rules);
     }
     let mut merged = Vec::with_capacity(frame.ignore_rules.len() + fresh.len());
     merged.extend(frame.ignore_rules.iter().cloned());
     merged.extend(fresh);
-    Ok(Arc::from(merged))
+    Arc::from(merged)
 }
 
 /// Records `path` once in scan diagnostics as unreadable (#63).
@@ -453,7 +447,7 @@ fn walk(
     }];
     while let Some(frame) = stack.pop() {
         throw_if_cancelled(cancel)?;
-        let ignore_rules = resolve_frame_ignore_rules(root, &frame)?;
+        let ignore_rules = resolve_frame_ignore_rules(root, &frame);
         // #63: an unreadable directory (transient EMFILE/EACCES, unmounted
         // FUSE/network path) must not read as "empty".
         let Some(entries) = read_dir_or_record(&frame.current_path, diagnostics) else {
@@ -901,9 +895,9 @@ mod tests {
     }
 
     #[test]
-    fn unset_max_depth_defaults_to_cap_with_explicit_opt_out() {
-        // 300 > DEFAULT_MAX_SCAN_DEPTH: the iterative walk terminates and
-        // the default cap excludes the deep file; u32::MAX opts out.
+    fn unset_max_depth_scans_deep_trees_and_explicit_cap_still_applies() {
+        // #75: no implicit 256 cap; a 300-deep file is found when unset,
+        // while an explicit small max_depth still bounds the walk.
         let dir = tempfile::tempdir().expect("tempdir");
         let mut deep = dir.path().to_path_buf();
         for _ in 0..300 {
@@ -920,13 +914,13 @@ mod tests {
 
         let default = full_scan_relative(&dir, &base_root(&dir, None));
         assert!(default.contains("shallow.txt"), "{default:?}");
-        assert!(!default.contains(&deep_rel), "{default:?}");
+        assert!(default.contains(&deep_rel), "{default:?}");
 
-        let mut unlimited = base_root(&dir, None);
-        unlimited.max_depth = Some(u32::MAX);
-        let scanned = full_scan_relative(&dir, &unlimited);
+        let mut capped = base_root(&dir, None);
+        capped.max_depth = Some(2);
+        let scanned = full_scan_relative(&dir, &capped);
         assert!(scanned.contains("shallow.txt"), "{scanned:?}");
-        assert!(scanned.contains(&deep_rel), "{scanned:?}");
+        assert!(!scanned.contains(&deep_rel), "{scanned:?}");
     }
 
     /// #63: an unreadable directory must be reported and its previously
