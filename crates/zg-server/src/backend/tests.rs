@@ -144,6 +144,102 @@ async fn index_status_search_round_trip() {
     backend.close().await;
 }
 
+/// Pool-constructed stub whose identity follows the load request, so a
+/// per-request embedding (#78) is observable in the recorded manifest.
+struct ReferencedStubModel {
+    inner: zg_core::models::stub::StubEmbeddingModel,
+    info: zg_core::models::EmbeddingModelInfo,
+}
+
+impl zg_core::models::EmbeddingModel for ReferencedStubModel {
+    fn info(&self) -> &zg_core::models::EmbeddingModelInfo {
+        &self.info
+    }
+
+    fn max_batch_size(&self) -> usize {
+        self.inner.max_batch_size()
+    }
+
+    fn embed(
+        &self,
+        purpose: zg_core::models::EmbeddingPurpose,
+        inputs: &[zg_core::models::EmbeddingInput<'_>],
+    ) -> zg_core::error::EngineResult<zg_core::models::embeddings::EmbeddingResult> {
+        self.inner.embed(purpose, inputs)
+    }
+}
+
+#[tokio::test]
+async fn per_request_embedding_selects_the_index_model() {
+    use zg_core::models::catalog::{ModelReference, get_embedding_model_catalog_entry};
+    let backend = DaemonBackend::new(DaemonBackendOptions {
+        pool: crate::model_pool::EmbeddingModelPoolOptions {
+            create_model: Some(Arc::new(|request| {
+                let entry = get_embedding_model_catalog_entry(request.reference.as_str())
+                    .expect("test requests use catalog references");
+                Ok(Arc::new(ReferencedStubModel {
+                    inner: zg_core::models::stub::StubEmbeddingModel::new(entry.dimension()),
+                    info: zg_core::models::EmbeddingModelInfo {
+                        reference: request.reference.to_string(),
+                        provider: entry.provider().to_owned(),
+                        model: entry.model().to_owned(),
+                        dimension: entry.dimension(),
+                        metric: zg_core::types::SearchMetric::Cosine,
+                        supports_images: entry.supports_images(),
+                        max_input_tokens: None,
+                        input_kinds: vec![zg_core::models::EmbeddingInputKind::Text],
+                        endpoint: None,
+                        default_concurrency: None,
+                    },
+                })
+                    as Arc<dyn zg_core::models::EmbeddingModel>)
+            })),
+            ..crate::model_pool::EmbeddingModelPoolOptions::default()
+        },
+        ..DaemonBackendOptions::default()
+    });
+    let dir = fixture();
+    let root = root(&dir);
+    let submitted = backend
+        .index(
+            &root,
+            IndexInput {
+                embedding: Some(ModelReference::new("local/potion-code-16m-v2")),
+                ..IndexInput::default()
+            },
+        )
+        .await
+        .unwrap();
+    let terminal = backend
+        .scheduler()
+        .wait(&submitted.job.id, None)
+        .await
+        .unwrap();
+    assert_eq!(terminal.state, IndexJobState::Succeeded, "{terminal:?}");
+    let status = backend.index_status(&root).await.unwrap();
+    let embedding = status
+        .info
+        .as_ref()
+        .and_then(|info| info.embedding.as_ref())
+        .expect("indexed workspace reports its embedding");
+    assert_eq!(embedding.provider, "local");
+    assert_eq!(embedding.model, "potion-code-16m-v2");
+    // The manifest-recorded model also drives later searches.
+    let searched = backend
+        .search(
+            &root,
+            SearchQuery {
+                query: Some("alpha function".to_owned()),
+                limit: Some(5),
+                ..SearchQuery::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(searched.freshness, ResultFreshness::Fresh);
+    backend.close().await;
+}
+
 #[tokio::test]
 async fn watcher_reports_active_and_pending_search_is_stale() {
     // Regression (#70): the actor never wired the watcher's pending

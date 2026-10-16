@@ -204,12 +204,13 @@ impl RootActor {
         let tx = self.internal_tx.clone();
         let key = self.key.clone();
         let shared = self.shared.clone();
+        let embedding = input.embedding.clone();
         match self.coordinator.enqueue(
             &changes,
             CoordinatorReason::Reconcile,
             &mut self.runtime,
             &self.shared.scheduler,
-            |take| build_index_run(tx, key, shared, self.sessions.clone(), take),
+            |take| build_index_run(tx, key, shared, self.sessions.clone(), take, embedding),
         ) {
             Ok(submitted) => Ok(submitted),
             Err(error) => {
@@ -233,7 +234,7 @@ impl RootActor {
             coordinator_reason,
             &mut self.runtime,
             &self.shared.scheduler,
-            |take| build_index_run(tx, key, shared, self.sessions.clone(), take),
+            |take| build_index_run(tx, key, shared, self.sessions.clone(), take, None),
         );
         if result.is_ok() {
             self.runtime.set_writer_pending(true);

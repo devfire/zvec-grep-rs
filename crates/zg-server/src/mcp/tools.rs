@@ -23,6 +23,7 @@ use rmcp::model::{
 use rmcp::service::Peer;
 use rmcp::{ErrorData, RoleServer, ServerHandler};
 use serde::de::DeserializeOwned;
+use zg_core::models::catalog::{ModelReference, get_embedding_model_catalog_entry};
 use zg_core::types::{UnixMillis, ZERO_FILES_INDEXED_WARNING};
 
 use crate::backend::SearchIndexing;
@@ -36,7 +37,7 @@ use crate::mcp::progress_heartbeat::{ProgressHeartbeat, progress_token_from_meta
 use crate::mcp::result_format::{format_agent_context_result, text_tool_result, tool_result};
 use crate::mcp::schemas::{
     IndexActionOutput, IndexDropInput, IndexDropOutput, IndexInput as WireIndexInput, IndexOutput,
-    IndexStatusInput, IndexStatusOutput, JobErrorOutput, JobStateOutput, RgInput,
+    IndexStatusInput, IndexStatusOutput, JobErrorOutput, JobStateOutput, PreviewInput, RgInput,
     ScanDiagnosticsOutput, SearchInput, ServerModelsOutput, ServerStatusInput, ServerStatusOutput,
     format_index_status, input_schema_for, output_schema_for, parse_root,
 };
@@ -306,12 +307,13 @@ impl ZvecGrepMcpServer {
         let input: SearchInput = parse_arguments(envelope.arguments.as_ref())?;
         let normalized = normalize_search_input(&input)?;
         let trace = normalized.trace;
+        let preview = normalized.preview;
         let root = normalized.root.as_str().to_owned();
         let searched = self
             .backend
             .search(&root, normalized.into_backend_query())
             .await?;
-        Ok(text_tool_result(search_text(&searched, trace)))
+        Ok(text_tool_result(search_text(&searched, trace, preview)))
     }
 
     async fn handle_index(&self, envelope: CallEnvelope) -> Result<CallToolResult, ErrorData> {
@@ -324,8 +326,9 @@ impl ZvecGrepMcpServer {
         let input: WireIndexInput = parse_arguments(envelope.arguments.as_ref())?;
         reject_index_overrides(&input)?;
         let root = parse_root(&input.root)?;
+        let embedding = parse_embedding(input.embedding.as_deref())?;
         if input.drop.unwrap_or(false) {
-            if input.rebuild.unwrap_or(false) {
+            if input.rebuild.unwrap_or(false) || embedding.is_some() {
                 return Err(McpError::invalid_params(
                     "drop must not be combined with indexing options.",
                 ));
@@ -347,6 +350,12 @@ impl ZvecGrepMcpServer {
                 serde_json::to_value(&output).unwrap_or(serde_json::Value::Null),
             ));
         }
+        if let Some(reference) = &embedding
+            && !input.rebuild.unwrap_or(false)
+        {
+            self.reject_embedding_switch(root.as_str(), reference)
+                .await?;
+        }
         let submitted = self
             .backend
             .index(
@@ -354,6 +363,7 @@ impl ZvecGrepMcpServer {
                 IndexInput {
                     rebuild: input.rebuild.unwrap_or(false),
                     changed_paths: Vec::new(),
+                    embedding,
                 },
             )
             .await?;
@@ -388,6 +398,37 @@ impl ZvecGrepMcpServer {
             index_text(&output),
             serde_json::to_value(&output).unwrap_or(serde_json::Value::Null),
         ))
+    }
+
+    /// Rejects a per-request embedding that would silently switch an
+    /// existing index's model (#78): the new model only takes effect on
+    /// a new index or an explicit rebuild, where storage is recreated
+    /// under the new schema. A missing index (status error) is the new-
+    /// index case and passes.
+    async fn reject_embedding_switch(
+        &self,
+        root: &str,
+        reference: &ModelReference,
+    ) -> Result<(), McpError> {
+        let Ok(status) = self.backend.index_status(root).await else {
+            return Ok(());
+        };
+        let Some(info) = status.info else {
+            return Ok(());
+        };
+        let (Some(existing), Some(entry)) = (
+            info.embedding.as_ref(),
+            get_embedding_model_catalog_entry(reference.as_str()),
+        ) else {
+            return Ok(());
+        };
+        if existing.provider != entry.provider() || existing.model != entry.model() {
+            return Err(McpError::invalid_params(format!(
+                "embedding \"{reference}\" differs from the existing index embedding \"{}/{}\"; pass rebuild: true to switch models.",
+                existing.provider, existing.model
+            )));
+        }
+        Ok(())
     }
 
     /// Waits for a submitted index job with progress beats, then reads the
@@ -530,7 +571,8 @@ impl ZvecGrepMcpServer {
         let input: RgInput = parse_arguments(envelope.arguments.as_ref())?;
         let (root, query) = rg_query_from_input(&input)?;
         let searched = self.backend.rg_search(root.as_str(), query).await?;
-        let mut text = format_agent_context_result(&rg_context_result(&searched), false);
+        let mut text =
+            format_agent_context_result(&rg_context_result(&searched), false, PreviewInput::Short);
         if searched.diagnostics.truncated {
             text.push_str("\n\nMore matches were omitted by the explicit output bound. Remove or increase the trailing `head` bound to see them.");
         }
@@ -581,7 +623,7 @@ impl ZvecGrepMcpServer {
     }
 }
 
-/// Rejects per-request credential/device/embedding overrides and
+/// Rejects per-request credential/device overrides and
 /// index-scoping fields the daemon cannot apply per request. The TS tool
 /// accepts these; the port owns index configuration at the daemon layer,
 /// so accepting-and-ignoring them would silently build the wrong index.
@@ -601,15 +643,8 @@ fn reject_index_overrides(input: &WireIndexInput) -> Result<(), McpError> {
             "Per-request endpoint overrides are not supported; configure the daemon instead.",
         ));
     }
-    if input
-        .embedding
-        .as_ref()
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        return Err(McpError::invalid_params(
-            "Per-request embedding selection is not supported; configure the daemon instead.",
-        ));
-    }
+    // `embedding` is supported (#78): validated and applied by
+    // `index_inner` via `parse_embedding`; it is not an override to reject.
     for (name, present) in [
         ("resetPaths", input.reset_paths.is_some()),
         ("globs", input.globs.is_some()),
@@ -634,6 +669,21 @@ fn reject_index_overrides(input: &WireIndexInput) -> Result<(), McpError> {
         }
     }
     Ok(())
+}
+
+/// Validates a per-request `embedding` reference (#78): blank means
+/// absent; anything else must name a catalog model, so a typo fails at
+/// the boundary instead of failing the index job after submission.
+fn parse_embedding(raw: Option<&str>) -> Result<Option<ModelReference>, McpError> {
+    let Some(value) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if get_embedding_model_catalog_entry(value).is_none() {
+        return Err(McpError::invalid_params(format!(
+            "Unknown embedding model \"{value}\"; use a catalog reference such as local/potion-code-16m-v2."
+        )));
+    }
+    Ok(Some(ModelReference::new(value)))
 }
 
 /// Backend failures surface as internal errors, except the fail-closed
@@ -661,7 +711,7 @@ fn is_authorization_refusal(engine: &zg_core::error::EngineError) -> bool {
 }
 
 /// Search response text: freshness lines plus the agent rendering.
-fn search_text(searched: &DaemonSearchResult, trace: bool) -> String {
+fn search_text(searched: &DaemonSearchResult, trace: bool, preview: PreviewInput) -> String {
     let mut lines = vec![format!("freshness: {}", freshness_name(searched.freshness))];
     if let Some(indexing) = &searched.indexing {
         lines.push("results: served_from_current_index".to_owned());
@@ -670,7 +720,11 @@ fn search_text(searched: &DaemonSearchResult, trace: bool) -> String {
             format_search_indexing(indexing)
         ));
     }
-    lines.push(format_agent_context_result(&searched.result, trace));
+    lines.push(format_agent_context_result(
+        &searched.result,
+        trace,
+        preview,
+    ));
     lines.join("\n")
 }
 
@@ -790,4 +844,30 @@ fn progress_message(progress: &zg_core::types::IndexProgress) -> (f64, Option<f6
         (None, None) => "Indexing workspace".to_owned(),
     };
     (completed, total, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_embedding_accepts_catalog_and_blank() {
+        assert_eq!(parse_embedding(None).unwrap(), None);
+        assert_eq!(parse_embedding(Some("  ")).unwrap(), None);
+        assert_eq!(
+            parse_embedding(Some(" local/potion-code-16m-v2 "))
+                .unwrap()
+                .map(|reference| reference.to_string()),
+            Some("local/potion-code-16m-v2".to_owned())
+        );
+    }
+
+    #[test]
+    fn parse_embedding_rejects_unknown_models() {
+        let error = parse_embedding(Some("acme/not-a-model")).unwrap_err();
+        assert!(
+            error.to_string().contains("Unknown embedding model"),
+            "{error}"
+        );
+    }
 }

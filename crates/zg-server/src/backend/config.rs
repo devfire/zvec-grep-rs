@@ -57,6 +57,22 @@ impl ServiceConfig {
         }
     }
 
+    /// Facade options with a per-request embedding reference (#78):
+    /// the request wins over the daemon selection for this run only.
+    #[must_use]
+    pub fn facade_options_for(
+        &self,
+        root: &str,
+        model: Option<Arc<dyn EmbeddingModel>>,
+        embedding: Option<&ModelReference>,
+    ) -> CreateZvecGrepOptions {
+        let mut options = self.facade_options(root, model);
+        if let Some(reference) = embedding {
+            options.embedding = Some(reference.clone());
+        }
+        options
+    }
+
     /// Model construction options for pool loads, with global
     /// config / env resolution applied (explicit daemon options win).
     ///

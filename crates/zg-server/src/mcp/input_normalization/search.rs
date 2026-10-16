@@ -7,8 +7,9 @@ use zg_core::types::{CodeSymbolType as CoreSymbolType, UnixMillis};
 use crate::backend::{SearchFreshness, SearchQuery, SearchRoute, SearchRouteMode};
 use crate::mcp::error::McpError;
 use crate::mcp::schemas::{
-    FreshnessInput, MCP_MAX_PATH_FILTERS, MCP_MAX_QUERY_GROUPS, PathFilter, QueryText, SearchInput,
-    SearchLimit, StringOrList, TimeInput, bound_groups, bound_path_filters, parse_root,
+    FreshnessInput, MCP_MAX_PATH_FILTERS, MCP_MAX_QUERY_GROUPS, PathFilter, PreviewInput,
+    QueryText, SearchInput, SearchLimit, StringOrList, TimeInput, bound_groups, bound_path_filters,
+    parse_root,
 };
 use crate::root_runtime::RootKey;
 
@@ -30,6 +31,8 @@ pub struct NormalizedSearchInput {
     pub limit: Option<SearchLimit>,
     /// Include per-hit trace payloads.
     pub trace: bool,
+    /// Excerpt preview length (defaults to `short`).
+    pub preview: PreviewInput,
     /// Prefer exact indexed symbols.
     pub prefer_symbol: bool,
     /// Symbol-type restrictions.
@@ -162,6 +165,7 @@ pub fn normalize_search_input(input: &SearchInput) -> Result<NormalizedSearchInp
         fuse: input.fuse.unwrap_or(false),
         limit: input.limit.map(SearchLimit::parse).transpose()?,
         trace: input.trace.unwrap_or(false),
+        preview: input.preview.unwrap_or_default(),
         prefer_symbol: input.prefer_symbol.unwrap_or(false),
         symbol_types: input
             .symbol_types
@@ -341,6 +345,20 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "zvec_grep_search requires query, queries, fts, or vector."
+        );
+    }
+
+    #[test]
+    fn preview_defaults_to_short_and_honors_full() {
+        assert_eq!(
+            normalize_search_input(&search("alpha")).unwrap().preview,
+            PreviewInput::Short
+        );
+        let mut input = search("alpha");
+        input.preview = Some(PreviewInput::Full);
+        assert_eq!(
+            normalize_search_input(&input).unwrap().preview,
+            PreviewInput::Full
         );
     }
 

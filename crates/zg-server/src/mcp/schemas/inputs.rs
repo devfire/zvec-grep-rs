@@ -37,6 +37,20 @@ pub enum FreshnessInput {
     WaitForFresh,
 }
 
+/// Search excerpt preview length (mirrors the `"short" | "full"`
+/// preview enum). `short` is the bounded agent window (10 source lines,
+/// 160 columns, 7 outline lines); `full` renders every excerpt line the
+/// engine returned, untruncated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PreviewInput {
+    /// Bounded preview window (default).
+    #[default]
+    Short,
+    /// Full excerpt content, no line/column clipping.
+    Full,
+}
+
 /// Symbol-type restriction (mirrors `codeSymbolTypeSchema`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -88,8 +102,10 @@ pub enum DeviceInput {
 }
 
 /// `zvec_grep_search` input (mirrors `zvecGrepSearchInputSchema`).
+/// Unknown fields are rejected (#78): silently ignoring a field such
+/// as `preview` gave callers different output than they asked for.
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SearchInput {
     /// Absolute workspace root visible to the daemon.
     pub root: String,
@@ -174,6 +190,12 @@ pub struct SearchInput {
     /// Include per-hit search trace in structured output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<bool>,
+    /// Excerpt preview length; defaults to `short`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Excerpt preview length: \"short\" (bounded window) or \"full\" (all excerpt lines, untruncated)."
+    )]
+    pub preview: Option<PreviewInput>,
     /// Whether to search immediately or wait for a fresh index.
     #[serde(default)]
     pub freshness: FreshnessInput,
@@ -188,16 +210,22 @@ const fn default_auto_update() -> bool {
 }
 
 /// `zvec_grep_index` input (mirrors `zvecGrepIndexInputSchema`).
+/// Unknown fields are rejected (#78), as on [`SearchInput`].
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IndexInput {
     /// Absolute workspace root visible to the daemon.
     pub root: String,
     /// Permanently remove the workspace index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drop: Option<bool>,
-    /// Embedding model reference for a new index.
+    /// Embedding model reference for a new or rebuilt index (#78).
+    /// Must name a catalog model; rejected when it differs from an
+    /// existing index without `rebuild: true`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Catalog embedding model reference for a new index, or for a rebuild when switching models."
+    )]
     pub embedding: Option<String>,
     /// Explicitly rebuild the existing index.
     #[serde(default, skip_serializing_if = "Option::is_none")]

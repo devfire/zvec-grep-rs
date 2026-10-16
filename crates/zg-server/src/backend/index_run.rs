@@ -22,6 +22,7 @@ use zg_core::authorization::planner::{
 };
 use zg_core::authorization::types::RemoteEmbeddingPermit;
 use zg_core::error::{EngineError, EngineResult};
+use zg_core::models::catalog::ModelReference;
 use zg_core::models::{EmbeddingModel, EmbeddingModelInfo};
 use zg_core::service::facade::ZvecGrepService;
 use zg_core::service::types::{ZvecGrepIndexOptions, ZvecGrepInfoResult};
@@ -34,7 +35,7 @@ use super::runtime::load_request_for;
 use crate::change_set::ChangeSetSnapshot;
 use crate::index_coordinator::TakePending;
 use crate::job_scheduler::{JobFailure, JobOutcome, JobRun};
-use crate::model_pool::{AcquireError, ModelLease};
+use crate::model_pool::{AcquireError, ModelLease, ModelLoadRequest};
 use crate::read_session_cache::WorkspaceReadSessionCache;
 use crate::root_runtime::RootKey;
 
@@ -47,12 +48,14 @@ pub(crate) fn build_index_run(
     shared: BackendShared,
     sessions: WorkspaceReadSessionCache<CachedSession>,
     take: TakePending,
+    embedding: Option<ModelReference>,
 ) -> JobRun {
     Arc::new(move |reporter, token| {
         let tx = tx.clone();
         let key = key.clone();
         let shared = shared.clone();
         let sessions = sessions.clone();
+        let embedding = embedding.clone();
         // Cloned per invocation: retries replay the same take handle, and
         // `Fn` cannot move the captured original into the future.
         let take = take.clone();
@@ -84,7 +87,7 @@ pub(crate) fn build_index_run(
                 .acquire_owned()
                 .await
                 .map_err(|_| JobFailure::Cancelled)?;
-            let resolved = match resolve_model(&shared, &key).await {
+            let resolved = match resolve_model(&shared, &key, embedding.as_ref()).await {
                 Ok(resolved) => resolved,
                 Err(AcquireError::Closed) => return Err(JobFailure::Cancelled),
                 Err(AcquireError::Load { error, .. }) => return Err(JobFailure::Engine(error)),
@@ -104,7 +107,14 @@ pub(crate) fn build_index_run(
             // the lock again.
             sessions.retire().await;
             let outcome = run_blocking_index(
-                &shared, &key, model, &snapshot, force_full, reporter, &token,
+                &shared,
+                &key,
+                model,
+                embedding.as_ref(),
+                &snapshot,
+                force_full,
+                reporter,
+                &token,
             )
             .await;
             let (outcome, job_result) = match outcome {
@@ -141,20 +151,25 @@ enum IndexRunError {
 
 /// Blocking index body: permit-scoped, cancellation-aware, returning the
 /// fresh status alongside the counters.
+// Run-scoped inputs (shared handles, snapshot, reporter, token, and the
+// optional per-request embedding) are independent values, not a state
+// bundle worth a new type at this single call site.
+#[allow(clippy::too_many_arguments)]
 async fn run_blocking_index(
     shared: &BackendShared,
     key: &RootKey,
     model: Arc<dyn EmbeddingModel>,
+    embedding: Option<&ModelReference>,
     snapshot: &ChangeSetSnapshot,
     force_full: bool,
     reporter: zg_core::pipeline::indexing::IndexProgressSink,
     token: &CancellationToken,
 ) -> Result<Option<FinishedOk>, IndexRunError> {
-    let facade = ZvecGrepService::new(
-        shared
-            .service
-            .facade_options(key.as_str(), Some(model.clone())),
-    );
+    let facade = ZvecGrepService::new(shared.service.facade_options_for(
+        key.as_str(),
+        Some(model.clone()),
+        embedding,
+    ));
     // The manifest read and permit planning below are blocking/synchronous
     // work: they run inside the blocking body, never on the calling async
     // worker (#44). Only owned values cross into the closure.
@@ -213,10 +228,12 @@ struct ResolvedModel {
     _lease: Option<ModelLease>,
 }
 
-/// Resolves the model for one run: override first, pool otherwise.
+/// Resolves the model for one run: injected override first, then the
+/// per-request embedding (#78), then the daemon/manifest selection.
 async fn resolve_model(
     shared: &BackendShared,
     key: &RootKey,
+    embedding: Option<&ModelReference>,
 ) -> Result<ResolvedModel, AcquireError> {
     if let Some(model) = shared.service.model_override.clone() {
         return Ok(ResolvedModel {
@@ -224,12 +241,23 @@ async fn resolve_model(
             _lease: None,
         });
     }
-    let request = load_request_for(&shared.service, key)
-        .await
-        .map_err(|error| AcquireError::Load {
-            reference: key.to_string(),
-            error,
-        })?;
+    let request = match embedding {
+        Some(reference) => ModelLoadRequest {
+            reference: reference.clone(),
+            options: shared.service.load_options(reference).map_err(|error| {
+                AcquireError::Load {
+                    reference: reference.to_string(),
+                    error,
+                }
+            })?,
+        },
+        None => load_request_for(&shared.service, key)
+            .await
+            .map_err(|error| AcquireError::Load {
+                reference: key.to_string(),
+                error,
+            })?,
+    };
     let lease = shared.pool.acquire(&request).await?;
     Ok(ResolvedModel {
         model: lease.model().clone(),

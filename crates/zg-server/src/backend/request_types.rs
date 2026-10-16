@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use zg_core::index_status::IndexCompletion;
 use zg_core::lexical::LexicalSearchOptions;
+use zg_core::models::catalog::ModelReference;
 use zg_core::service::types::ZvecGrepInfoResult;
 use zg_core::types::{FileScanDiagnostics, WorkspaceIndexStatus};
 
@@ -105,6 +106,11 @@ pub struct IndexInput {
     pub rebuild: bool,
     /// Changed paths for an incremental run (empty reconciles fully).
     pub changed_paths: Vec<PathBuf>,
+    /// Per-request embedding model for a new or rebuilt index (#78).
+    /// `None` keeps the daemon/manifest selection. Watcher, catch-up,
+    /// and background runs always pass `None`: they must never switch
+    /// an existing index's model implicitly.
+    pub embedding: Option<ModelReference>,
 }
 
 /// Index status with its live job overlay.

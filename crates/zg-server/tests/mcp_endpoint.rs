@@ -452,6 +452,116 @@ async fn index_wait_and_rg_round_trips() {
 }
 
 #[tokio::test]
+async fn preview_and_embedding_are_honored_not_ignored() {
+    // #78: `preview` must be a real search field and `embedding` a real
+    // index field — neither silently ignored nor advertised-but-rejected.
+    let backend = stub_backend();
+    let (server, base) = start(backend, McpToolset::Full, McpHttpEndpointOptions::default()).await;
+    let session = initialize(&base).await;
+    let dir = fixture();
+    let root = dir.path().to_string_lossy().into_owned();
+
+    // Unknown embedding models fail at the boundary.
+    let (status, rejected) = message(
+        post(
+            &base,
+            &call_body(
+                2,
+                "zvec_grep_index",
+                &json!({"root": root, "embedding": "acme/not-a-model", "wait": true}),
+            ),
+            Some(&session),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    assert_eq!(rejected["error"]["code"], -32602, "{rejected}");
+
+    // A catalog embedding is accepted for the new index.
+    let (status, indexed) = message(
+        post(
+            &base,
+            &call_body(
+                3,
+                "zvec_grep_index",
+                &json!({"root": root, "embedding": "local/potion-code-16m-v2", "wait": true}),
+            ),
+            Some(&session),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    let text = indexed["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_else(|| panic!("index failed: {indexed}"));
+    assert!(text.contains("state: succeeded"), "{text}");
+
+    // Switching models without a rebuild is rejected, not ignored.
+    let (status, rejected) = message(
+        post(
+            &base,
+            &call_body(
+                4,
+                "zvec_grep_index",
+                &json!({"root": root, "embedding": "qwen/text-embedding-v4", "wait": true}),
+            ),
+            Some(&session),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    // The stub override records stub/stub-hash, so any catalog switch
+    // differs from the existing index and must demand a rebuild.
+    assert_eq!(rejected["error"]["code"], -32602, "{rejected}");
+    assert!(
+        rejected["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("rebuild: true"),
+        "{rejected}"
+    );
+
+    // `preview: "full"` searches successfully; bogus values and unknown
+    // fields are rejected instead of silently ignored.
+    for (id, args) in [
+        (
+            5,
+            json!({"root": root, "query": "alpha", "preview": "full"}),
+        ),
+        (
+            6,
+            json!({"root": root, "query": "alpha", "preview": "bogus"}),
+        ),
+        (
+            7,
+            json!({"root": root, "query": "alpha", "previeew": "full"}),
+        ),
+    ] {
+        let (status, answered) = message(
+            post(
+                &base,
+                &call_body(id, "zvec_grep_search", &args),
+                Some(&session),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, reqwest::StatusCode::OK);
+        if id == 5 {
+            assert!(answered["error"].is_null(), "{answered}");
+            let text = answered["result"]["content"][0]["text"].as_str().unwrap();
+            assert!(text.contains("a.rs"), "{text}");
+        } else {
+            assert_eq!(answered["error"]["code"], -32602, "{answered}");
+        }
+    }
+    server.close().await;
+}
+
+#[tokio::test]
 async fn index_wait_on_empty_workspace_warns_zero_files() {
     let backend = stub_backend();
     let (server, base) = start(backend, McpToolset::Full, McpHttpEndpointOptions::default()).await;

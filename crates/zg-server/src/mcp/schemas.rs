@@ -28,7 +28,7 @@ pub use bounds::{
 };
 pub use inputs::{
     CodeSymbolTypeInput, DeviceInput, FreshnessInput, IndexDropInput, IndexInput, IndexStatusInput,
-    RgInput, SearchInput, ServerStatusInput, StringOrList, TimeInput,
+    PreviewInput, RgInput, SearchInput, ServerStatusInput, StringOrList, TimeInput,
 };
 pub use outputs::{
     IndexActionOutput, IndexDropOutput, IndexOutput, JobErrorOutput, JobStateOutput,
