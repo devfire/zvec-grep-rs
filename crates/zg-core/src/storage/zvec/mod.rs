@@ -951,6 +951,12 @@ fn is_retryable_zvec_open_error(message: &str, lock_writable: bool) -> bool {
     if !lower.contains("lock") {
         return false;
     }
+    // zvec phrases contention as "Can't lock read-only collection" /
+    // "Can't lock read-write collection": there "read-only" names the
+    // open mode, not a read-only filesystem, so it must not veto retry.
+    if lower.contains("can't lock") {
+        return true;
+    }
     !(lower.contains("permission")
         || lower.contains("access denied")
         || lower.contains("eacces")
@@ -963,4 +969,40 @@ fn zvec_open_retry_delay_ms(attempt: u32) -> u64 {
     ZVEC_OPEN_RETRY_BASE_DELAY_MS
         .saturating_mul(1u64 << attempt)
         .min(ZVEC_OPEN_RETRY_MAX_DELAY_MS)
+}
+
+#[cfg(test)]
+mod open_retry_tests {
+    use super::is_retryable_zvec_open_error;
+
+    #[test]
+    fn read_only_lock_contention_is_retryable() {
+        // Regression: zvec's contention message for a read-only open held
+        // by a live writer contains "read-only", which previously vetoed
+        // every retry and failed backend searches under parallel load.
+        assert!(is_retryable_zvec_open_error(
+            "Can't lock read-only collection: /tmp/x/index.zvec/LOCK",
+            true,
+        ));
+        assert!(is_retryable_zvec_open_error(
+            "Can't lock read-write collection: /tmp/x/index.zvec/LOCK",
+            true,
+        ));
+    }
+
+    #[test]
+    fn non_contention_open_errors_are_not_retryable() {
+        assert!(!is_retryable_zvec_open_error(
+            "Can't lock read-only collection: /tmp/x/index.zvec/LOCK",
+            false,
+        ));
+        assert!(!is_retryable_zvec_open_error(
+            "failed to lock index: permission denied",
+            true,
+        ));
+        assert!(!is_retryable_zvec_open_error(
+            "collection schema mismatch",
+            true,
+        ));
+    }
 }
