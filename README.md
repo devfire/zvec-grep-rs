@@ -10,9 +10,7 @@ So that this implementation can be installed and run alongside either upstream i
 
 - Global state and config: `~/.zvec-grep-rs/` (config at `~/.zvec-grep-rs/config.json`), not upstream's `~/.zvec-grep/`.
 - Per-workspace index/state: `<workspace>/.zvec-grep-rs/`, not `<workspace>/.zvec-grep/`. Scanners and watchers hard-skip both directory names, so neither implementation ever indexes the other's state.
-- Default daemon port: `18099`, not upstream's default port. No documented upstream-alternative port existed in this repository, so `18099` was chosen as a high, uncommon loopback port that leaves the upstream daemon free to bind its own default at the same time. The binary is still called `zg`: renaming it would break every installed MCP configuration that invokes `zg`, and where `zg` lands on `PATH` is the installer's choice.
-
-**Breaking change:** previous releases of this Rust port used the upstream-compatible locations (`~/.zvec-grep/config.json`, `<workspace>/.zvec-grep/`) and the upstream default daemon port. Those locations are **not** read anymore, and there is no automatic migration: your old config is not picked up and old indexes are not reused. Re-run `zg index` for each workspace (indexes are rebuilt under `.zvec-grep-rs/`), recreate any config you need under `~/.zvec-grep-rs/`, and update any client that hardcoded the old daemon URL. If you deliberately want the old locations, the explicit overrides still work exactly as before — point `ZVEC_GREP_HOME`, `ZVEC_GREP_SERVER_URL`, the authorization key-file environment variable, or the model-cache environment variable at them yourself; explicit user choice is honored, only the defaults moved.
+- Default daemon port: `18099`, not upstream's default port.
 
 ## How it works
 
